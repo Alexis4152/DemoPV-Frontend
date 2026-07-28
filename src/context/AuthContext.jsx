@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { login as apiLogin } from '../api/auth'
+import { login as apiLogin, me as apiMe } from '../api/auth'
 
 const AuthContext = createContext(null)
 
@@ -11,7 +11,19 @@ export function AuthProvider({ children }) {
     const stored = localStorage.getItem('pos_user')
     const token = localStorage.getItem('pos_token')
     if (stored && token) {
-      try { setUser(JSON.parse(stored)) } catch { logout() }
+      try {
+        const parsed = JSON.parse(stored)
+        setUser(parsed)
+        // refresca secciones/rol por si el admin cambió permisos desde el último login
+        apiMe()
+          .then((r) => {
+            const fresh = r.data.data
+            const merged = { ...parsed, role: fresh.role?.name ?? parsed.role, sections: (fresh.role?.sections ?? parsed.sections) }
+            localStorage.setItem('pos_user', JSON.stringify(merged))
+            setUser(merged)
+          })
+          .catch(() => {})
+      } catch { logout() }
     }
     setLoading(false)
   }, [])
@@ -32,9 +44,10 @@ export function AuthProvider({ children }) {
   }
 
   const isAdmin = user?.role === 'ADMIN'
+  const hasSection = (code) => !!user?.sections?.includes(code)
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAdmin, loading }}>
+    <AuthContext.Provider value={{ user, login, logout, isAdmin, hasSection, loading }}>
       {children}
     </AuthContext.Provider>
   )
