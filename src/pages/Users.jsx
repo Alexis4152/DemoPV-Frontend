@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { getUsers, createUser, updateUser, deleteUser } from '../api/users'
+import { getRoles } from '../api/roles'
 
-const ROLES = ['ADMIN', 'CASHIER', 'SELLER']
-const emptyForm = { name: '', email: '', password: '', role: 'SELLER' }
+const emptyForm = { name: '', email: '', password: '', roleId: '' }
 
 export default function Users() {
   const [users, setUsers] = useState([])
+  const [roles, setRoles] = useState([])
   const [showModal, setShowModal] = useState(false)
   const [editUser, setEditUser] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -14,20 +15,21 @@ export default function Users() {
 
   function load() {
     getUsers().then((r) => setUsers(r.data.data ?? []))
+    getRoles().then((r) => setRoles(r.data.data ?? []))
   }
 
   useEffect(() => { load() }, [])
 
   function openNew() {
     setEditUser(null)
-    setForm(emptyForm)
+    setForm({ ...emptyForm, roleId: roles[0]?.id ?? '' })
     setError('')
     setShowModal(true)
   }
 
   function openEdit(u) {
     setEditUser(u)
-    setForm({ name: u.name, email: u.email, password: '', role: u.role })
+    setForm({ name: u.name, email: u.email, password: '', roleId: u.role?.id ?? '' })
     setError('')
     setShowModal(true)
   }
@@ -53,6 +55,7 @@ export default function Users() {
   }
 
   const ROLE_COLORS = { ADMIN: 'bg-purple-100 text-purple-700', CASHIER: 'bg-blue-100 text-blue-700', SELLER: 'bg-green-100 text-green-700' }
+  const roleColor = (name) => ROLE_COLORS[name] ?? 'bg-gray-100 text-gray-600'
 
   return (
     <div>
@@ -76,7 +79,7 @@ export default function Users() {
                 <td className="px-4 py-3 font-medium text-gray-900">{u.name}</td>
                 <td className="px-4 py-3 text-gray-500">{u.email}</td>
                 <td className="px-4 py-3">
-                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${ROLE_COLORS[u.role] ?? ''}`}>{u.role}</span>
+                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${roleColor(u.role?.name)}`}>{u.role?.name}</span>
                 </td>
                 <td className="px-4 py-3">
                   <span className={`text-xs font-medium px-2 py-1 rounded-full ${u.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
@@ -112,8 +115,9 @@ export default function Users() {
               <div><label className="text-xs font-medium text-gray-600">Contraseña {editUser ? '(dejar vacío para no cambiar)' : '*'}</label>
                 <input className="input" type="password" required={!editUser} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></div>
               <div><label className="text-xs font-medium text-gray-600">Rol *</label>
-                <select className="input" required value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                  {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                <select className="input" required value={form.roleId} onChange={(e) => setForm({ ...form, roleId: e.target.value })}>
+                  <option value="" disabled>Selecciona un rol</option>
+                  {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select></div>
               {error && <p className="text-red-600 text-sm">{error}</p>}
               <div className="flex gap-2 justify-end pt-2">

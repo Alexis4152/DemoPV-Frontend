@@ -1,19 +1,10 @@
 import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-
-const nav = [
-  { to: '/', label: 'Dashboard', icon: '📊' },
-  { to: '/pos', label: 'Punto de Venta', icon: '🛒' },
-  { to: '/inventory', label: 'Inventario', icon: '📦' },
-  { to: '/sales', label: 'Ventas', icon: '📋' },
-  { to: '/cash-cuts', label: 'Cortes de Caja', icon: '💰' },
-  { to: '/reports', label: 'Reportes', icon: '📈' },
-  { to: '/users', label: 'Usuarios', icon: '👥', adminOnly: true },
-]
+import { SECTIONS } from '../config/sections'
 
 export default function Layout({ children }) {
-  const { user, logout, isAdmin } = useAuth()
+  const { user, logout, hasSection } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
 
@@ -22,7 +13,7 @@ export default function Layout({ children }) {
     navigate('/login')
   }
 
-  const links = nav.filter((n) => !n.adminOnly || isAdmin)
+  const links = SECTIONS.filter((s) => hasSection(s.code))
 
   return (
     <div className="flex h-screen bg-gray-50">
