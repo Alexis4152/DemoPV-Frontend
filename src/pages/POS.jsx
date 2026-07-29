@@ -16,6 +16,7 @@ export default function POS() {
   const [cart, setCart] = useState([])
   const [paymentMethod, setPaymentMethod] = useState('CASH')
   const [customerName, setCustomerName] = useState('')
+  const [customerEmail, setCustomerEmail] = useState('')
   const [cashCut, setCashCut] = useState(null)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(null)
@@ -96,6 +97,7 @@ export default function POS() {
     try {
       const res = await createSale({
         customerName: customerName || null,
+        customerEmail: customerEmail || null,
         paymentMethod,
         items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
       })
@@ -103,6 +105,7 @@ export default function POS() {
       setSuccess({ ...res.data.data, lowStockWarnings })
       setCart([])
       setCustomerName('')
+      setCustomerEmail('')
     } catch (err) {
       setError(err.response?.data?.message ?? 'Error al registrar venta')
     } finally {
@@ -248,6 +251,11 @@ export default function POS() {
               <label className="text-xs font-medium text-gray-600">Cliente (opcional)</label>
               <input className="input mt-1" placeholder="Nombre del cliente" value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Correo para enviar el ticket (opcional)</label>
+              <input className="input mt-1" type="email" placeholder="cliente@correo.com" value={customerEmail}
+                onChange={(e) => setCustomerEmail(e.target.value)} />
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Método de pago</label>
