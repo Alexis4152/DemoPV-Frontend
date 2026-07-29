@@ -28,7 +28,7 @@ export default function Login() {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
         <div className="text-center mb-8">
           <div className="text-5xl mb-3">🛍️</div>
-          <h1 className="text-2xl font-bold text-gray-900">Boutique POS</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Punto de Venta Demo</h1>
           <p className="text-gray-500 text-sm mt-1">Sistema de Punto de Venta</p>
         </div>
 

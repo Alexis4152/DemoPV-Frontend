@@ -164,12 +164,12 @@ export default function Inventory() {
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
                     {isAdmin && (
-                      <>
-                        <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(p)}>Editar</button>
-                        <button className="text-purple-600 hover:underline text-xs"
-                          onClick={() => { setAdjustModal(p); setAdjustDirection('IN'); setAdjustQty(''); setAdjustReason('') }}>Ajustar</button>
-                        <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(p)}>Desact.</button>
-                      </>
+                      <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(p)}>Editar</button>
+                    )}
+                    <button className="text-purple-600 hover:underline text-xs"
+                      onClick={() => { setAdjustModal(p); setAdjustDirection('IN'); setAdjustQty(''); setAdjustReason('') }}>Ajustar</button>
+                    {isAdmin && (
+                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(p)}>Desact.</button>
                     )}
                   </div>
                 </td>
@@ -230,17 +230,19 @@ export default function Inventory() {
             <form onSubmit={handleAdjust} className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">¿Qué quieres hacer? *</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className={`grid gap-2 ${isAdmin ? 'grid-cols-2' : 'grid-cols-1'}`}>
                   <button type="button"
                     className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
                       adjustDirection === 'IN' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
                     onClick={() => setAdjustDirection('IN')}
                   >➕ Agregar piezas</button>
-                  <button type="button"
-                    className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
-                      adjustDirection === 'OUT' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                    onClick={() => setAdjustDirection('OUT')}
-                  >➖ Quitar piezas</button>
+                  {isAdmin && (
+                    <button type="button"
+                      className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                        adjustDirection === 'OUT' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                      onClick={() => setAdjustDirection('OUT')}
+                    >➖ Quitar piezas</button>
+                  )}
                 </div>
               </div>
               <div>

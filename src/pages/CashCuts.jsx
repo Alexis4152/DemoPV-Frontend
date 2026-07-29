@@ -166,6 +166,12 @@ export default function CashCuts() {
                   <span className="font-medium">{fmt(summary?.cashSales)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Ventas tarjeta/transf.</span>
                   <span className="font-medium">{fmt((summary?.cardSales ?? 0) + (summary?.transferSales ?? 0))}</span></div>
+                {summary?.cancelledCount > 0 && (
+                  <div className="flex justify-between text-red-500">
+                    <span>Ventas canceladas ({summary.cancelledCount})</span>
+                    <span className="font-medium">-{fmt(summary.cancelledTotal)}</span>
+                  </div>
+                )}
               </div>
               <div><label className="text-xs font-medium text-gray-600">Gastos adicionales ($)</label>
                 <input className="input" type="number" step="0.01" min="0" value={expenses} onChange={(e) => setExpenses(e.target.value)} placeholder="0.00" /></div>
@@ -210,6 +216,12 @@ export default function CashCuts() {
                   <span className="font-medium">{v}</span>
                 </div>
               ))}
+              {detail.cancelledCount > 0 && (
+                <div className="flex justify-between text-red-500">
+                  <span>Ventas canceladas ({detail.cancelledCount})</span>
+                  <span className="font-medium">-{fmt(detail.cancelledTotal)}</span>
+                </div>
+              )}
               {detail.notes && <p className="text-gray-400 text-xs mt-2">{detail.notes}</p>}
             </div>
           </div>
