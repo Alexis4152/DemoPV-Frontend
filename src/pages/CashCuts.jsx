@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
-import { getCashCuts, getOpenCashCut, openCashCut, closeCashCut, getCashCutSummary } from '../api/cashCuts'
+import { getCashCuts, getOpenCashCut, getMyTodayCashCut, openCashCut, closeCashCut, getCashCutSummary } from '../api/cashCuts'
+import { useAuth } from '../context/AuthContext'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
 export default function CashCuts() {
+  const { isAdmin } = useAuth()
   const [cuts, setCuts] = useState([])
   const [openCut, setOpenCut] = useState(null)
+  const [myToday, setMyToday] = useState(null)
   const [showOpen, setShowOpen] = useState(false)
   const [showClose, setShowClose] = useState(false)
   const [openAmount, setOpenAmount] = useState('')
@@ -17,8 +20,13 @@ export default function CashCuts() {
   const [summary, setSummary] = useState(null)
 
   function load() {
-    getCashCuts({ size: 30 }).then((r) => setCuts(r.data.data ?? []))
+    // el historial completo (la tabla) solo lo puede ver el administrador
+    if (isAdmin) {
+      getCashCuts({ size: 30 }).then((r) => setCuts(r.data.data ?? [])).catch(() => setCuts([]))
+    }
     getOpenCashCut().then((r) => setOpenCut(r.data.data)).catch(() => setOpenCut(null))
+    // el corte propio de hoy: sigue visible aunque ya se haya cerrado
+    getMyTodayCashCut().then((r) => setMyToday(r.data.data)).catch(() => setMyToday(null))
   }
 
   useEffect(() => { load() }, [])
@@ -100,6 +108,26 @@ export default function CashCuts() {
         </div>
       )}
 
+      {/* corte propio del día, ya cerrado: solo aplica a no-admins, admin lo ve todo en la tabla */}
+      {!isAdmin && !openCut && myToday && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 flex items-center justify-between">
+          <div>
+            <p className="font-semibold text-gray-800">Tu corte de hoy — #{myToday.id} (cerrado)</p>
+            <p className="text-sm text-gray-500">
+              {fmtDate(myToday.openedAt)} – {fmtDate(myToday.closedAt)} · Total: {fmt(myToday.totalSales)}
+            </p>
+          </div>
+          <button className="text-blue-600 hover:underline text-xs" onClick={() => openDetail(myToday)}>Ver detalle</button>
+        </div>
+      )}
+
+      {!isAdmin && !openCut && !myToday && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 text-sm text-gray-500">
+          Aún no has abierto un corte de caja hoy.
+        </div>
+      )}
+
+      {isAdmin && (
       <div className="card p-0 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-100">
@@ -133,6 +161,7 @@ export default function CashCuts() {
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Open modal */}
       {showOpen && (
@@ -166,6 +195,9 @@ export default function CashCuts() {
                   <span className="font-medium">{fmt(summary?.cashSales)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Ventas tarjeta/transf.</span>
                   <span className="font-medium">{fmt((summary?.cardSales ?? 0) + (summary?.transferSales ?? 0))}</span></div>
+                <p className="text-xs text-red-500 italic pt-1">
+                  Tarjeta y transferencia no son dinero físico, por eso no se suman al efectivo esperado en caja.
+                </p>
                 {summary?.cancelledCount > 0 && (
                   <div className="flex justify-between text-red-500">
                     <span>Ventas canceladas ({summary.cancelledCount})</span>
