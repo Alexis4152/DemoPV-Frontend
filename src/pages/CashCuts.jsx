@@ -104,7 +104,10 @@ export default function CashCuts() {
             <p className="font-semibold text-green-800">Corte abierto #{openCut.id}</p>
             <p className="text-sm text-green-600">Desde {fmtDate(openCut.openedAt)} · Apertura: {fmt(openCut.openingAmount)}</p>
           </div>
-          <span className="text-2xl">🟢</span>
+          <div className="flex items-center gap-3">
+            <button className="text-green-700 hover:underline text-xs font-medium" onClick={() => openDetail(openCut)}>Ver detalle</button>
+            <span className="text-2xl">🟢</span>
+          </div>
         </div>
       )}
 
@@ -235,13 +238,13 @@ export default function CashCuts() {
                 ['Apertura', fmtDate(detail.openedAt)],
                 ['Cierre', fmtDate(detail.closedAt)],
                 ['Fondo inicial', fmt(detail.openingAmount)],
-                ['Gastos', detail.status === 'OPEN' ? '— (se captura al cerrar)' : fmt(detail.expenses)],
-                ['Fondo final (calculado)', detail.status === 'OPEN' ? '— (pendiente de cierre)' : fmt(detail.closingAmount)],
-                ['Total ventas', fmt(detail.totalSales)],
+                ['Transacciones', detail.totalTransactions ?? 0],
                 ['  · Efectivo', fmt(detail.cashSales)],
                 ['  · Tarjeta', fmt(detail.cardSales)],
                 ['  · Transferencia', fmt(detail.transferSales)],
-                ['Transacciones', detail.totalTransactions ?? 0],
+                ['Total ventas', fmt(detail.totalSales)],
+                ['Gastos', detail.status === 'OPEN' ? '— (se captura al cerrar)' : fmt(detail.expenses)],
+                ['Fondo final (calculado)', detail.status === 'OPEN' ? '— (pendiente de cierre)' : fmt(detail.closingAmount)],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between">
                   <span className="text-gray-500">{k}</span>
