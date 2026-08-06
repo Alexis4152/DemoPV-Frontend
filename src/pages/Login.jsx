@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { applyDefaultBrand } from '../utils/theme'
+import logo from '../assets/logo.png'
 
 export default function Login() {
   const { login } = useAuth()
@@ -8,6 +10,12 @@ export default function Login() {
   const [form, setForm] = useState({ email: '', password: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // El login siempre es azul Nexora fijo, sin importar el color que haya quedado
+  // aplicado de una sesión anterior con una tienda con color propio.
+  useEffect(() => {
+    applyDefaultBrand()
+  }, [])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -24,10 +32,16 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-purple-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
+    <div className="min-h-screen bg-gradient-to-br from-[#03050c] via-[#050b18] to-[#0d1b3d] flex items-center justify-center p-4 relative overflow-hidden">
+      <img
+        src={logo}
+        alt=""
+        aria-hidden="true"
+        className="pointer-events-none select-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-w-none opacity-[0.05]"
+      />
+      <div className="bg-white rounded-2xl shadow-2xl shadow-[#155dea]/30 w-full max-w-md p-8 relative z-10">
         <div className="text-center mb-8">
-          <div className="text-5xl mb-3">🛍️</div>
+          <img src={logo} alt="Nexora Systems" className="w-24 h-24 rounded-full mx-auto mb-3 shadow-[0_0_24px_rgba(43,132,245,0.5)]" />
           <h1 className="text-2xl font-bold text-gray-900">Punto de Venta Demo</h1>
           <p className="text-gray-500 text-sm mt-1">Sistema de Punto de Venta</p>
         </div>

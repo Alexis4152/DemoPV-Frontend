@@ -79,7 +79,7 @@ export default function Reports() {
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
                 <Tooltip formatter={(v) => fmt(v)} />
-                <Bar dataKey="total" fill="#9333ea" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="total" fill="rgb(var(--brand-600))" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : <p className="text-gray-400 text-sm text-center py-8">Sin datos</p>}
@@ -95,7 +95,7 @@ export default function Reports() {
                 <XAxis type="number" tick={{ fontSize: 11 }} />
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={100} />
                 <Tooltip />
-                <Bar dataKey="qty" fill="#7e22ce" radius={[0, 4, 4, 0]} name="Unidades" />
+                <Bar dataKey="qty" fill="rgb(var(--brand-700))" radius={[0, 4, 4, 0]} name="Unidades" />
               </BarChart>
             </ResponsiveContainer>
           ) : <p className="text-gray-400 text-sm text-center py-8">Sin datos</p>}
