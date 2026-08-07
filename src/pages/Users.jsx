@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react'
 import { getUsers, createUser, updateUser, deleteUser } from '../api/users'
 import { getRoles } from '../api/roles'
+import { useNotify } from '../context/NotifyContext'
+
+const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
 const emptyForm = { name: '', email: '', password: '', roleId: '' }
+const EMPTY_FILTERS = { from: '', to: '', name: '', email: '', roleId: '', isActive: '' }
 
 export default function Users() {
+  const { confirmDialog } = useNotify()
   const [users, setUsers] = useState([])
   const [roles, setRoles] = useState([])
+  const [filters, setFilters] = useState(EMPTY_FILTERS)
+  const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
   const [showModal, setShowModal] = useState(false)
   const [editUser, setEditUser] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -14,11 +21,29 @@ export default function Users() {
   const [loading, setLoading] = useState(false)
 
   function load() {
-    getUsers().then((r) => setUsers(r.data.data ?? []))
+    const params = {
+      name: appliedFilters.name || undefined,
+      email: appliedFilters.email || undefined,
+      roleId: appliedFilters.roleId || undefined,
+      isActive: appliedFilters.isActive || undefined,
+      from: appliedFilters.from ? `${appliedFilters.from}T00:00:00` : undefined,
+      to: appliedFilters.to ? `${appliedFilters.to}T23:59:59` : undefined,
+    }
+    getUsers(params).then((r) => setUsers(r.data.data ?? []))
     getRoles().then((r) => setRoles(r.data.data ?? []))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [appliedFilters])
+
+  function handleApplyFilters(e) {
+    e.preventDefault()
+    setAppliedFilters(filters)
+  }
+
+  function handleClearFilters() {
+    setFilters(EMPTY_FILTERS)
+    setAppliedFilters(EMPTY_FILTERS)
+  }
 
   function openNew() {
     setEditUser(null)
@@ -49,7 +74,7 @@ export default function Users() {
   }
 
   async function handleDelete(u) {
-    if (!confirm(`¿Desactivar a "${u.name}"?`)) return
+    if (!(await confirmDialog(`¿Desactivar a "${u.name}"?`, { confirmText: 'Desactivar' }))) return
     await deleteUser(u.id)
     load()
   }
@@ -64,11 +89,49 @@ export default function Users() {
         <button className="btn-primary" onClick={openNew}>+ Nuevo usuario</button>
       </div>
 
+      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 items-end">
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Desde</label>
+          <input type="date" className="input" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Hasta</label>
+          <input type="date" className="input" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Nombre</label>
+          <input type="text" className="input" placeholder="Nombre" value={filters.name} onChange={(e) => setFilters({ ...filters, name: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Email</label>
+          <input type="text" className="input" placeholder="Email" value={filters.email} onChange={(e) => setFilters({ ...filters, email: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Rol</label>
+          <select className="input" value={filters.roleId} onChange={(e) => setFilters({ ...filters, roleId: e.target.value })}>
+            <option value="">Todos</option>
+            {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Estado</label>
+          <select className="input" value={filters.isActive} onChange={(e) => setFilters({ ...filters, isActive: e.target.value })}>
+            <option value="">Todos</option>
+            <option value="true">Activo</option>
+            <option value="false">Inactivo</option>
+          </select>
+        </div>
+        <div className="flex gap-2">
+          <button type="submit" className="btn-primary flex-1">Filtrar</button>
+          <button type="button" className="btn-secondary" onClick={handleClearFilters}>Limpiar</button>
+        </div>
+      </form>
+
       <div className="card p-0 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              {['Nombre', 'Email', 'Rol', 'Estado', ''].map((h) => (
+              {['Nombre', 'Email', 'Rol', 'Fecha de registro', 'Estado', ''].map((h) => (
                 <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
               ))}
             </tr>
@@ -81,6 +144,7 @@ export default function Users() {
                 <td className="px-4 py-3">
                   <span className={`text-xs font-medium px-2 py-1 rounded-full ${roleColor(u.role?.name)}`}>{u.role?.name}</span>
                 </td>
+                <td className="px-4 py-3 text-gray-600">{fmtDate(u.createdAt)}</td>
                 <td className="px-4 py-3">
                   <span className={`text-xs font-medium px-2 py-1 rounded-full ${u.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                     {u.isActive ? 'Activo' : 'Inactivo'}
@@ -97,7 +161,7 @@ export default function Users() {
               </tr>
             ))}
             {users.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">Sin usuarios</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Sin usuarios</td></tr>
             )}
           </tbody>
         </table>

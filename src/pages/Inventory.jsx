@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getProducts, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts } from '../api/products'
 import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
+import { useNotify } from '../context/NotifyContext'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
@@ -9,6 +10,7 @@ const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '',
 
 export default function Inventory() {
   const { isAdmin } = useAuth()
+  const { notify, confirmDialog } = useNotify()
   const [products, setProducts] = useState([])
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
@@ -95,14 +97,14 @@ export default function Inventory() {
         setAdjustNotice(`⚠️ "${updated.name}" ya está en su nivel mínimo de stock (${updated.stock} ${updated.unit} disponibles)`)
       }
     } catch (err) {
-      alert(err.response?.data?.message ?? 'Error')
+      notify(err.response?.data?.message ?? 'Error')
     } finally {
       setLoading(false)
     }
   }
 
   async function handleDelete(p) {
-    if (!confirm(`¿Desactivar "${p.name}"?`)) return
+    if (!(await confirmDialog(`¿Desactivar "${p.name}"?`, { confirmText: 'Desactivar' }))) return
     await deleteProduct(p.id)
     load()
   }

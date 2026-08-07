@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { getRoles, createRole, updateRole, deleteRole } from '../api/roles'
 import { SECTIONS } from '../config/sections'
+import { useNotify } from '../context/NotifyContext'
 
 const emptyForm = { name: '', description: '', sections: [] }
 
 export default function Roles() {
+  const { notify, confirmDialog } = useNotify()
   const [roles, setRoles] = useState([])
   const [showModal, setShowModal] = useState(false)
   const [editRole, setEditRole] = useState(null)
@@ -57,12 +59,12 @@ export default function Roles() {
   }
 
   async function handleDelete(r) {
-    if (!confirm(`¿Eliminar el rol "${r.name}"?`)) return
+    if (!(await confirmDialog(`¿Eliminar el rol "${r.name}"?`, { confirmText: 'Eliminar' }))) return
     try {
       await deleteRole(r.id)
       load()
     } catch (err) {
-      alert(err.response?.data?.message ?? 'Error al eliminar')
+      notify(err.response?.data?.message ?? 'Error al eliminar')
     }
   }
 

@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
+import { NotifyProvider } from './context/NotifyContext'
 import PrivateRoute from './components/PrivateRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -48,7 +49,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <NotifyProvider>
+          <AppRoutes />
+        </NotifyProvider>
       </AuthProvider>
     </BrowserRouter>
   )
