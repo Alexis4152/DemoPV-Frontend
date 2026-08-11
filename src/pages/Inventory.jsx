@@ -2,13 +2,30 @@ import { useEffect, useState } from 'react'
 import { getProducts, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts } from '../api/products'
 import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
+import { useNotify } from '../context/NotifyContext'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
 const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '', stock: '', minStock: 5, unit: 'pieza', categoryId: '' }
 
+/**
+ * Página "Inventario": administración del catálogo de productos de la tienda del usuario
+ * (alta/edición/desactivación) y ajustes manuales de stock fuera del flujo normal de venta
+ * (entradas por compra, salidas por merma/corrección). También muestra un aviso persistente
+ * con los productos que están en su stock mínimo o por debajo (`lowStockItems`).
+ *
+ * A diferencia de páginas como Sales/CashCuts, esta pantalla NO pagina contra el backend:
+ * `getProducts()` trae el catálogo completo de la tienda y el filtro de texto/categoría
+ * (`filtered`) se aplica en el cliente sobre ese arreglo ya cargado.
+ *
+ * Control de acceso (vía `isAdmin`, solo frontend — el backend es quien realmente lo hace
+ * cumplir): crear/editar/desactivar productos y registrar salidas de stock (ajuste "OUT",
+ * es decir reducir stock manualmente fuera de una venta) están reservados a ADMIN. Cualquier
+ * usuario con acceso a esta pantalla puede registrar entradas de stock ("IN").
+ */
 export default function Inventory() {
   const { isAdmin } = useAuth()
+  const { notify, confirmDialog } = useNotify()
   const [products, setProducts] = useState([])
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
@@ -25,6 +42,14 @@ export default function Inventory() {
   const [lowStockItems, setLowStockItems] = useState([])
   const [adjustNotice, setAdjustNotice] = useState('')
 
+  /**
+   * Recarga, en paralelo, las tres fuentes de datos que usa la pantalla: el catálogo
+   * completo de productos, las categorías (para el filtro y el formulario), y la lista de
+   * productos en stock mínimo o por debajo (`lowStock: true`, hasta 200) que alimenta el
+   * aviso amarillo persistente. Se llama tanto al montar como después de cualquier
+   * operación que pueda cambiar existencias o catálogo (guardar producto, ajustar stock,
+   * desactivar producto).
+   */
   function load() {
     getProducts().then((r) => setProducts(r.data.data ?? []))
     getCategories().then((r) => setCategories(r.data.data ?? []))
@@ -33,6 +58,8 @@ export default function Inventory() {
 
   useEffect(() => { load() }, [])
 
+  // Filtro 100% client-side (no hay paginación server-side en esta pantalla): busca por
+  // nombre o código de barras y opcionalmente restringe a una categoría.
   const filtered = products.filter((p) => {
     const q = search.toLowerCase()
     const matchQ = !q || p.name?.toLowerCase().includes(q) || p.barcode?.includes(q)
@@ -40,6 +67,7 @@ export default function Inventory() {
     return matchQ && matchC
   })
 
+  /** Abre el modal de producto en modo "alta": limpia el formulario y cualquier error previo. */
   function openNew() {
     setEditProduct(null)
     setForm(emptyForm)
@@ -47,6 +75,7 @@ export default function Inventory() {
     setShowModal(true)
   }
 
+  /** Abre el modal de producto en modo "edición", precargando el formulario con los datos del producto seleccionado. */
   function openEdit(p) {
     setEditProduct(p)
     setForm({
@@ -58,6 +87,15 @@ export default function Inventory() {
     setShowModal(true)
   }
 
+  /**
+   * Guarda el formulario de producto, ya sea creando uno nuevo o actualizando
+   * `editProduct` según cuál esté seteado. Convierte los campos numéricos (vienen como
+   * string desde los inputs) antes de enviarlos. Si el backend rechaza la operación,
+   * muestra el mensaje de error dentro del propio modal (no usa `notify`) para que el
+   * usuario pueda corregir sin perder lo capturado. Al guardar con éxito cierra el modal
+   * y recarga el catálogo completo (para reflejar el nuevo/actualizado producto y, si
+   * cambió el stock inicial, el aviso de stock mínimo).
+   */
   async function handleSave(e) {
     e.preventDefault()
     setLoading(true)
@@ -76,10 +114,26 @@ export default function Inventory() {
     }
   }
 
+  // Valores derivados del modal de "Ajustar stock", recalculados en cada render mientras
+  // el modal está abierto:
+  // - adjustQtyNum: cantidad siempre positiva que el usuario capturó (el signo lo decide
+  //   `adjustDirection`, no el input).
+  // - adjustSignedQty: la cantidad ya con signo según la dirección elegida (IN suma, OUT
+  //   resta) — es lo que se manda al backend.
+  // - adjustPreviewStock: stock resultante que se le muestra al usuario ANTES de confirmar,
+  //   para que vea el efecto del ajuste; si queda negativo, el formulario bloquea el envío
+  //   (ver `disabled` del botón "Guardar" más abajo) porque el stock no puede ser negativo.
   const adjustQtyNum = Math.abs(Number(adjustQty) || 0)
   const adjustSignedQty = adjustDirection === 'OUT' ? -adjustQtyNum : adjustQtyNum
   const adjustPreviewStock = adjustModal ? adjustModal.stock + adjustSignedQty : null
 
+  /**
+   * Envía el ajuste manual de stock (entrada o salida, ver `adjustSignedQty`) para el
+   * producto en `adjustModal`. Tras un ajuste exitoso recarga el catálogo/lista de stock
+   * mínimo y, si el producto quedó en su nivel mínimo o por debajo, muestra un aviso rojo
+   * adicional (`adjustNotice`) con el nombre y las existencias restantes — distinto del
+   * aviso amarillo general de `lowStockItems`, que solo se refresca al volver a cargar.
+   */
   async function handleAdjust(e) {
     e.preventDefault()
     if (adjustSignedQty === 0) return
@@ -95,14 +149,21 @@ export default function Inventory() {
         setAdjustNotice(`⚠️ "${updated.name}" ya está en su nivel mínimo de stock (${updated.stock} ${updated.unit} disponibles)`)
       }
     } catch (err) {
-      alert(err.response?.data?.message ?? 'Error')
+      notify(err.response?.data?.message ?? 'Error')
     } finally {
       setLoading(false)
     }
   }
 
+  /**
+   * Da de baja un producto. Pide confirmación primero. El texto de la UI ("Desactivar",
+   * no "Eliminar") sugiere que el backend hace una baja lógica (soft delete) en vez de
+   * borrar el registro, para conservar el historial de ventas/movimientos que lo
+   * referencian — pero esto no puede confirmarse desde el frontend, solo se documenta lo
+   * que la UI comunica.
+   */
   async function handleDelete(p) {
-    if (!confirm(`¿Desactivar "${p.name}"?`)) return
+    if (!(await confirmDialog(`¿Desactivar "${p.name}"?`, { confirmText: 'Desactivar' }))) return
     await deleteProduct(p.id)
     load()
   }
@@ -164,12 +225,12 @@ export default function Inventory() {
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
                     {isAdmin && (
-                      <>
-                        <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(p)}>Editar</button>
-                        <button className="text-purple-600 hover:underline text-xs"
-                          onClick={() => { setAdjustModal(p); setAdjustDirection('IN'); setAdjustQty(''); setAdjustReason('') }}>Ajustar</button>
-                        <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(p)}>Desact.</button>
-                      </>
+                      <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(p)}>Editar</button>
+                    )}
+                    <button className="text-purple-600 hover:underline text-xs"
+                      onClick={() => { setAdjustModal(p); setAdjustDirection('IN'); setAdjustQty(''); setAdjustReason('') }}>Ajustar</button>
+                    {isAdmin && (
+                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(p)}>Desact.</button>
                     )}
                   </div>
                 </td>
@@ -230,17 +291,19 @@ export default function Inventory() {
             <form onSubmit={handleAdjust} className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">¿Qué quieres hacer? *</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className={`grid gap-2 ${isAdmin ? 'grid-cols-2' : 'grid-cols-1'}`}>
                   <button type="button"
                     className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
                       adjustDirection === 'IN' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
                     onClick={() => setAdjustDirection('IN')}
                   >➕ Agregar piezas</button>
-                  <button type="button"
-                    className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
-                      adjustDirection === 'OUT' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                    onClick={() => setAdjustDirection('OUT')}
-                  >➖ Quitar piezas</button>
+                  {isAdmin && (
+                    <button type="button"
+                      className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                        adjustDirection === 'OUT' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                      onClick={() => setAdjustDirection('OUT')}
+                    >➖ Quitar piezas</button>
+                  )}
                 </div>
               </div>
               <div>
