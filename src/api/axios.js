@@ -2,11 +2,14 @@ import axios from 'axios'
 
 /**
  * Instancia central de axios usada por todos los módulos de `src/api/*.js`.
- * `baseURL: '/api'` se apoya en el proxy de Vite hacia el backend Spring Boot,
- * por lo que en desarrollo y producción las peticiones se hacen con rutas relativas
- * (ej. `/api/sales`) sin necesidad de configurar el host del backend en el frontend.
+ *
+ * En desarrollo (sin `VITE_API_URL` definida) usa `/api`, ruta relativa que se apoya en
+ * el proxy de Vite hacia el backend Spring Boot en `localhost`. En producción, el front
+ * se despliega como sitio estático separado del backend (dominios/contenedores distintos),
+ * así que `/api` ya no resolvería a ningún lado — ahí se usa `VITE_API_URL` (variable de
+ * entorno inyectada en build time) apuntando a la URL pública real del backend.
  */
-const api = axios.create({ baseURL: '/api' })
+const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
 /**
  * Interceptor de request: adjunta el JWT de la sesión activa a cada petición saliente.
