@@ -4,6 +4,15 @@ import { useAuth } from '../context/AuthContext'
 import { applyDefaultBrand } from '../utils/theme'
 import logo from '../assets/logo.png'
 
+/**
+ * Pantalla de login. Es la puerta de entrada a la app: no hay sesión ni tienda todavía,
+ * por lo que siempre se muestra con el color de marca azul fijo "Nexora" (nunca el color
+ * personalizado de ninguna tienda, ya que aún no se sabe a qué tienda pertenece el usuario).
+ *
+ * Sirve a todos los roles por igual (`SUPER_ADMIN`, `ADMIN`, `CASHIER`, `SELLER`): tras
+ * autenticarse, `AuthContext` decide a dónde redirigir y qué color de marca aplicar según
+ * el usuario y su tienda.
+ */
 export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
@@ -17,6 +26,11 @@ export default function Login() {
     applyDefaultBrand()
   }, [])
 
+  /**
+   * Envía las credenciales al backend vía `AuthContext.login`. Si la autenticación
+   * es exitosa, `AuthContext` guarda el usuario/token y aplica el color de marca que
+   * corresponda (Nexora o el de la tienda del usuario); aquí solo se navega a la raíz.
+   */
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')

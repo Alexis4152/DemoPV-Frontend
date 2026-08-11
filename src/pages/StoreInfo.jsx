@@ -18,6 +18,20 @@ const FIELDS = [
   { key: 'notasAdicionales', label: 'Otros datos', textarea: true },
 ]
 
+/**
+ * Pantalla "Datos de la tienda": edita los datos fiscales y de contacto de la tienda del
+ * usuario en sesión (razón social, RFC, teléfono, dirección, redes sociales, etc.) y el
+ * logo que se muestra en el sidebar y en el ticket de venta. Solo la puede editar el
+ * `ADMIN` de esa tienda (según el copy de la propia pantalla); el control de acceso a la
+ * ruta ya lo resuelve `PrivateRoute`.
+ *
+ * La dirección se captura en 5 campos separados (calle, colonia, código postal, localidad,
+ * estado) en vez de un solo campo de texto libre, porque el backend imprime cada uno en su
+ * propia línea dentro del ticket PDF de venta.
+ *
+ * Al guardar el nombre de la tienda o el logo, se usa `patchTienda()` de `AuthContext`
+ * para reflejar el cambio de inmediato en el sidebar sin recargar la página.
+ */
 export default function StoreInfo() {
   const { user, patchTienda } = useAuth()
   const tiendaId = user?.tienda?.id
@@ -29,6 +43,7 @@ export default function StoreInfo() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
+  // Carga los datos fiscales/de contacto actuales de la tienda para precargar el formulario.
   useEffect(() => {
     if (!tiendaId) return
     getTiendaInfo(tiendaId).then((r) => {
@@ -50,6 +65,12 @@ export default function StoreInfo() {
     }).finally(() => setLoading(false))
   }, [tiendaId])
 
+  /**
+   * Guarda los datos fiscales/de contacto de la tienda. Solo el nombre (`form.name`) se
+   * refleja de inmediato en `AuthContext` vía `patchTienda`, porque es el único de estos
+   * campos que se muestra en el sidebar; el resto (RFC, dirección, etc.) solo se usa en
+   * el ticket PDF y no necesita propagarse a la sesión en memoria.
+   */
   async function handleSave(e) {
     e.preventDefault()
     setSaving(true)
@@ -66,6 +87,9 @@ export default function StoreInfo() {
     }
   }
 
+  // Sube el archivo de logo elegido y actualiza `AuthContext` con la nueva ruta para que
+  // el sidebar/ticket lo reflejen sin recargar. Limpia el input file al terminar (éxito o
+  // error) para permitir volver a seleccionar el mismo archivo si hace falta reintentar.
   async function handleLogoChange(e) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -84,6 +108,8 @@ export default function StoreInfo() {
     }
   }
 
+  // Quita el logo personalizado de la tienda; a partir de aquí se vuelve a usar el logo
+  // por default (de Nexora) tanto en el sidebar como en el ticket.
   async function handleRemoveLogo() {
     setUploadingLogo(true)
     setError('')

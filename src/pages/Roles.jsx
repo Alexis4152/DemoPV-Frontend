@@ -5,6 +5,18 @@ import { useNotify } from '../context/NotifyContext'
 
 const emptyForm = { name: '', description: '', sections: [] }
 
+/**
+ * Pantalla de "Roles y Permisos": CRUD de los roles disponibles para la tienda del
+ * usuario (o de todas si es `SUPER_ADMIN`). Cada rol define qué `AppSection` (módulos:
+ * Dashboard, POS, Inventario, Ventas, Cortes de Caja, Reportes, Usuarios, Roles) puede ver
+ * y usar un usuario con ese rol — es la base del RBAC de la app. Sirve a los roles con la
+ * sección `ROLES` habilitada (típicamente `ADMIN`/`SUPER_ADMIN`).
+ *
+ * Los roles marcados como `isSystem` (roles predefinidos del sistema, ej. el rol admin
+ * base) tienen restricciones especiales: no se pueden eliminar (el botón "Eliminar" no
+ * se muestra), su nombre no es editable, y no se les puede quitar la sección `ROLES`
+ * (para evitar dejar la tienda sin ningún usuario que pueda administrar roles).
+ */
 export default function Roles() {
   const { notify, confirmDialog } = useNotify()
   const [roles, setRoles] = useState([])
@@ -14,12 +26,14 @@ export default function Roles() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // Recarga el listado completo de roles (tras crear/editar/eliminar, o al montar).
   function load() {
     getRoles().then((r) => setRoles(r.data.data ?? []))
   }
 
   useEffect(() => { load() }, [])
 
+  // Abre el modal en blanco para crear un rol nuevo.
   function openNew() {
     setEditRole(null)
     setForm(emptyForm)
@@ -27,6 +41,7 @@ export default function Roles() {
     setShowModal(true)
   }
 
+  // Abre el modal precargado con los datos del rol a editar.
   function openEdit(r) {
     setEditRole(r)
     setForm({ name: r.name, description: r.description ?? '', sections: r.sections ?? [] })
@@ -34,6 +49,12 @@ export default function Roles() {
     setShowModal(true)
   }
 
+  /**
+   * Activa/desactiva una sección (`AppSection`) dentro del formulario de rol.
+   * Regla de negocio: si el rol que se está editando es `isSystem`, no se le puede quitar
+   * la sección `ROLES` (checkbox deshabilitado en el JSX), para no dejar a la tienda sin
+   * forma de administrar roles/permisos.
+   */
   function toggleSection(code) {
     if (editRole?.isSystem && code === 'ROLES') return // no se puede quitar a un rol del sistema
     setForm((f) => ({
@@ -44,6 +65,7 @@ export default function Roles() {
     }))
   }
 
+  // Crea o actualiza el rol según haya o no un `editRole` en edición, y recarga el listado.
   async function handleSave(e) {
     e.preventDefault()
     setLoading(true)
@@ -58,6 +80,12 @@ export default function Roles() {
     } finally { setLoading(false) }
   }
 
+  /**
+   * Elimina un rol tras confirmación explícita del usuario (los roles `isSystem` nunca
+   * llegan aquí porque su botón "Eliminar" no se renderiza). Cualquier error del backend
+   * (ej. el rol tiene usuarios asignados) se muestra como notificación en vez de bloquear
+   * la UI.
+   */
   async function handleDelete(r) {
     if (!(await confirmDialog(`¿Eliminar el rol "${r.name}"?`, { confirmText: 'Eliminar' }))) return
     try {

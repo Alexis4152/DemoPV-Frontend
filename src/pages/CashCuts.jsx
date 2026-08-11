@@ -5,11 +5,33 @@ import { useNotify } from '../context/NotifyContext'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
+// Un corte cerrado sin `closedBy` significa que lo cerró el job automático del backend
+// (por horario configurado), no una persona; se etiqueta como "Sistema". Mientras el
+// corte sigue abierto no aplica (se muestra "—").
 const closedByLabel = (c) => c.status !== 'CLOSED' ? '—' : (c.closedBy?.name ?? 'Sistema')
 
 const PAGE_SIZES = [10, 20, 50, 100]
 const EMPTY_FILTERS = { from: '', to: '', status: '' }
 
+/**
+ * Página "Cortes de Caja": abre/cierra el corte de caja del cajero autenticado y, si es
+ * administrador, muestra además el historial completo de cortes de la tienda (o de todas
+ * las tiendas si es `SUPER_ADMIN`) con filtros y paginación.
+ *
+ * Un corte de caja pertenece a UN cajero, no a la tienda: en una misma tienda puede haber
+ * varios cortes abiertos simultáneamente (uno por cajero). Por eso esta pantalla distingue
+ * tres vistas de datos:
+ * - `openCut`: el corte abierto del usuario actual (si tiene uno) — solo puede tener uno
+ *   a la vez, es lo que habilita cobrar en el POS.
+ * - `myToday`: el corte de HOY del usuario actual aunque ya esté cerrado, para que un
+ *   cajero sin corte abierto todavía vea el resumen de su turno del día.
+ * - `pageData` (la tabla paginada): el historial completo, solo se carga y se muestra para
+ *   administradores — un cajero normal no ve los cortes de sus compañeros.
+ *
+ * Patrón de filtros + paginación: igual que en Sales — `filters` es lo que se captura en
+ * el formulario, `appliedFilters` es lo que realmente se envía al backend y dispara la
+ * recarga; ver el JSDoc de `Sales` para el detalle completo del patrón.
+ */
 export default function CashCuts() {
   const { isAdmin } = useAuth()
   const { notify } = useNotify()
@@ -29,6 +51,13 @@ export default function CashCuts() {
   const [detail, setDetail] = useState(null)
   const [summary, setSummary] = useState(null)
 
+  /**
+   * Recarga los tres bloques de datos de la pantalla: el historial paginado (solo si
+   * `isAdmin`, usando `page`/`size`/`appliedFilters` — ver el patrón de filtros descrito
+   * en el JSDoc del componente), el corte abierto del usuario actual, y el corte de hoy
+   * del usuario aunque ya esté cerrado. Cada bloque atrapa sus propios errores por
+   * separado y cae a un valor vacío/null, para que un fallo en uno no tumbe a los otros.
+   */
   function load() {
     // el historial completo (la tabla) solo lo puede ver el administrador
     if (isAdmin) {
@@ -50,18 +79,27 @@ export default function CashCuts() {
 
   useEffect(() => { load() }, [page, size, appliedFilters])
 
+  /** Aplica los filtros del formulario (historial de admin) y reinicia a la primera página. */
   function handleApplyFilters(e) {
     e.preventDefault()
     setPage(0)
     setAppliedFilters(filters)
   }
 
+  /** Limpia filtros capturados y aplicados, y vuelve a la primera página. */
   function handleClearFilters() {
     setFilters(EMPTY_FILTERS)
     setAppliedFilters(EMPTY_FILTERS)
     setPage(0)
   }
 
+  /**
+   * Abre un nuevo corte de caja para el usuario actual con el fondo inicial (`openAmount`)
+   * capturado en el modal. Se asume que el backend impide abrir un segundo corte si el
+   * usuario ya tiene uno abierto (esta pantalla solo ofrece el botón "Abrir corte" cuando
+   * `openCut` es null). Al terminar recarga los tres bloques de datos, lo que hace
+   * reaparecer el aviso verde de "Corte abierto" y habilita el cobro en el POS.
+   */
   async function handleOpen(e) {
     e.preventDefault()
     setLoading(true)
@@ -76,6 +114,13 @@ export default function CashCuts() {
     } finally { setLoading(false) }
   }
 
+  /**
+   * Abre el modal de cierre y, antes de mostrarlo listo, trae el resumen (`summary`) del
+   * corte abierto — totales por forma de pago, cancelaciones, etc. — para poder calcular
+   * en vivo el efectivo esperado en caja (`expectedCash`) mientras el cajero captura sus
+   * gastos. Si la llamada falla, deja `summary` en null y el modal simplemente muestra los
+   * totales en blanco en vez de bloquear el cierre.
+   */
   async function openCloseModal() {
     setNotes('')
     setExpenses('')
@@ -89,6 +134,14 @@ export default function CashCuts() {
     }
   }
 
+  /**
+   * Abre el modal de detalle de un corte. Si el corte ya está cerrado, los totales que
+   * trae `c` (de la lista) son definitivos y se muestran tal cual. Si sigue abierto, esos
+   * totales pueden estar desactualizados (se siguen acumulando ventas), así que se vuelve
+   * a pedir el resumen fresco (`getCashCutSummary`) y se combina con `c`; si esa llamada
+   * falla, se deja el detalle con los valores ya cargados (potencialmente en cero) en vez
+   * de bloquear la vista.
+   */
   async function openDetail(c) {
     if (c.status !== 'OPEN') { setDetail(c); return }
     setDetail(c)
@@ -100,10 +153,22 @@ export default function CashCuts() {
     }
   }
 
+  // Efectivo que debería haber físicamente en caja al momento de cerrar: fondo inicial +
+  // ventas en efectivo, menos los gastos capturados en el modal de cierre. Las ventas con
+  // tarjeta/transferencia NO se suman aquí porque no son dinero físico (ver aviso en el
+  // modal de cierre) — solo se reportan aparte, en el resumen del corte.
   const expectedCash = summary
     ? Number(summary.openingAmount) + Number(summary.cashSales) - (Number(expenses) || 0)
     : null
 
+  /**
+   * Cierra el corte de caja abierto del usuario actual, enviando los gastos capturados
+   * (o 0 si no se capturó ninguno) y las notas. El monto final contado en caja no se pide
+   * aquí como input separado — lo que se envía es `expenses`; el "fondo final" que se
+   * muestra después en el detalle es un valor calculado por el backend. Al cerrar,
+   * recarga los tres bloques de datos: desaparece el aviso de corte abierto y, si el
+   * usuario no es admin, pasa a mostrarse como "tu corte de hoy (cerrado)".
+   */
   async function handleClose(e) {
     e.preventDefault()
     setLoading(true)

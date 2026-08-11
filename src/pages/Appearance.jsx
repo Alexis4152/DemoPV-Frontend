@@ -3,6 +3,20 @@ import { useAuth } from '../context/AuthContext'
 import { updateTiendaTheme } from '../api/tiendas'
 import { generateRamp, isValidHex, NEXORA_BLUE } from '../utils/theme'
 
+/**
+ * Pantalla "Apariencia": permite al administrador de la tienda elegir el color de marca
+ * (`primaryColor`) que se usa en botones, menú activo y el fondo del sidebar para todos
+ * los usuarios de esa tienda.
+ *
+ * Acceso: solo tiene sentido para usuarios `ADMIN` con tienda propia (no aplica a
+ * `SUPER_ADMIN`, que no pertenece a ninguna tienda y siempre ve el azul "Nexora" fijo).
+ * La visibilidad de la ruta ya se controla a nivel de `PrivateRoute`/menú; este componente
+ * no vuelve a chequear el rol.
+ *
+ * Al guardar, además de persistir el color en el backend, llama a `patchTienda()` de
+ * `AuthContext` para reflejar el cambio de inmediato en el sidebar y el resto de la UI
+ * sin necesidad de recargar la página ni volver a iniciar sesión.
+ */
 export default function Appearance() {
   const { user, patchTienda } = useAuth()
   const [color, setColor] = useState(user?.tienda?.primaryColor || NEXORA_BLUE)
@@ -10,8 +24,15 @@ export default function Appearance() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
+  // Genera la paleta (rampa de tonos claro→oscuro) a partir del color elegido, solo para
+  // mostrar la vista previa; si el usuario aún no eligió un hex válido no se calcula nada.
   const previewRamp = isValidHex(color) ? generateRamp(color) : null
 
+  /**
+   * Guarda el nuevo color de marca de la tienda en el backend y, si tiene éxito,
+   * actualiza el `AuthContext` en memoria (vía `patchTienda`) para que el cambio se
+   * vea reflejado al instante en el sidebar y demás componentes que usan el color de marca.
+   */
   async function handleSave() {
     setSaving(true)
     setError('')

@@ -21,6 +21,11 @@ const LIGHTNESS_OFFSET = {
   900: -26,
 }
 
+/**
+ * Convierte un color hex (`#rrggbb`) a su representación HSL.
+ * @param {string} hex Color en formato hex de 6 dígitos (ej. '#155dea').
+ * @returns {{h: number, s: number, l: number}} Matiz (0-360), saturación y luminosidad (0-100).
+ */
 function hexToHsl(hex) {
   const r = parseInt(hex.slice(1, 3), 16) / 255
   const g = parseInt(hex.slice(3, 5), 16) / 255
@@ -44,6 +49,13 @@ function hexToHsl(hex) {
   return { h: h * 360, s: s * 100, l: l * 100 }
 }
 
+/**
+ * Convierte un color HSL a su representación hex (`#rrggbb`).
+ * @param {number} h Matiz (0-360).
+ * @param {number} s Saturación (0-100).
+ * @param {number} l Luminosidad (0-100).
+ * @returns {string} Color en formato hex de 6 dígitos.
+ */
 function hslToHex(h, s, l) {
   s /= 100
   l /= 100
@@ -54,16 +66,35 @@ function hslToHex(h, s, l) {
   return `#${toHex(0)}${toHex(8)}${toHex(4)}`
 }
 
+/**
+ * Restringe un número a un rango `[min, max]`.
+ * @param {number} n Valor a acotar.
+ * @param {number} min Límite inferior.
+ * @param {number} max Límite superior.
+ * @returns {number} `n` acotado al rango dado.
+ */
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n))
 }
 
+/**
+ * Valida que un string sea un color hex de 6 dígitos (ej. '#155dea').
+ * Se usa para descartar colores mal formados antes de generar una rampa
+ * (ej. datos corruptos de una tienda), cayendo en ese caso al azul Nexora por defecto.
+ * @param {string} hex Valor a validar.
+ * @returns {boolean} `true` si `hex` tiene el formato `#rrggbb` válido.
+ */
 export function isValidHex(hex) {
   return /^#[0-9A-Fa-f]{6}$/.test(hex)
 }
 
 // "21 93 234" (espacio, no coma) — formato que necesita Tailwind para poder
 // aplicar opacidad con rgb(var(--x) / <alpha>), ej. bg-purple-600/20.
+/**
+ * Convierte un color hex a su terna RGB en formato "R G B" (espacios, sin comas).
+ * @param {string} hex Color en formato hex de 6 dígitos.
+ * @returns {string} Terna RGB como string, ej. '21 93 234'.
+ */
 function hexToRgbTriplet(hex) {
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
@@ -72,6 +103,14 @@ function hexToRgbTriplet(hex) {
 }
 
 // Devuelve { 50: '21 93 234', 100: '...', ..., 900: '...' } listo para variables CSS
+/**
+ * Genera, a partir de un único color base, una rampa completa de 10 tonos (50 a 900,
+ * estilo Tailwind) variando la luminosidad del mismo matiz/saturación. El tono 600
+ * corresponde exactamente al color base (es el color "principal": botones, nav activo).
+ * @param {string} baseHex Color primario elegido por la tienda, en formato hex.
+ * @returns {Object<number, string>} Mapa `{ 50: 'R G B', 100: 'R G B', ..., 900: 'R G B' }`
+ * listo para asignarse a variables CSS.
+ */
 export function generateRamp(baseHex) {
   const { h, s, l } = hexToHsl(baseHex)
   const ramp = {}
@@ -83,6 +122,14 @@ export function generateRamp(baseHex) {
   return ramp
 }
 
+/**
+ * Inyecta una rampa de colores (y los tonos de la barra lateral) como variables CSS
+ * en `document.documentElement`, para que el resto de la app (vía clases Tailwind
+ * arbitrarias como `bg-[var(--brand-600)]`) tome el color de marca actual.
+ * @param {Object<number, string>} ramp Rampa generada por `generateRamp` (`{50: 'R G B', ...}`).
+ * @param {string} sidebarBg Color de fondo de la barra lateral, en formato hex.
+ * @param {string} sidebarBorder Color de borde de la barra lateral, en formato hex.
+ */
 function applyRampToRoot(ramp, sidebarBg, sidebarBorder) {
   const root = document.documentElement
   for (const key of RAMP_KEYS) {
@@ -94,11 +141,22 @@ function applyRampToRoot(ramp, sidebarBg, sidebarBorder) {
 
 // SUPER_ADMIN y el login siempre usan el azul Nexora fijo, sin importar
 // el color que cualquier tienda haya elegido.
+/**
+ * Aplica el tema de marca por defecto (azul Nexora fijo) al documento. Se usa en la
+ * pantalla de login (antes de saber a qué tienda pertenece el usuario) y para
+ * SUPER_ADMIN, que no tiene tienda asociada y por lo tanto no tiene un color propio.
+ */
 export function applyDefaultBrand() {
   const ramp = generateRamp(NEXORA_BLUE)
   applyRampToRoot(ramp, '#050b18', '#0d1b3d')
 }
 
+/**
+ * Aplica el tema de marca de una tienda específica al documento, generando su rampa
+ * de colores y un fondo/borde de barra lateral acordes al mismo matiz. Si `primaryColor`
+ * no es un hex válido, cae de vuelta al azul Nexora por defecto.
+ * @param {string} primaryColor Color primario de la tienda, en formato hex.
+ */
 export function applyTiendaBrand(primaryColor) {
   const base = isValidHex(primaryColor) ? primaryColor : NEXORA_BLUE
   const ramp = generateRamp(base)

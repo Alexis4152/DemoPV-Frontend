@@ -8,6 +8,17 @@ const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'sho
 const emptyForm = { name: '', email: '', password: '', roleId: '' }
 const EMPTY_FILTERS = { from: '', to: '', name: '', email: '', roleId: '', isActive: '' }
 
+/**
+ * Pantalla "Usuarios": CRUD de los usuarios de la tienda del usuario en sesión (o de todas
+ * las tiendas si es `SUPER_ADMIN`, según lo que filtre el backend). Sirve a los roles con
+ * la sección `USERS` habilitada (típicamente `ADMIN`/`SUPER_ADMIN`).
+ *
+ * Incluye filtros de búsqueda por rango de fecha de registro, nombre, email, rol y estado
+ * (activo/inactivo), y una tabla con columna de fecha de registro. "Desactivar" un usuario
+ * es un borrado suave (el backend marca `isActive=false`, no elimina el registro), por eso
+ * la tabla muestra una columna de Estado en vez de que el usuario desaparezca de la lista;
+ * los usuarios inactivos siguen apareciendo salvo que el filtro de Estado los excluya.
+ */
 export default function Users() {
   const { confirmDialog } = useNotify()
   const [users, setUsers] = useState([])
@@ -20,6 +31,13 @@ export default function Users() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  /**
+   * Recarga el listado de usuarios aplicando los filtros ya confirmados (`appliedFilters`,
+   * no los que el usuario esté todavía editando en `filters`) y el catálogo de roles para
+   * el selector del filtro y del formulario. El rango de fecha se expande a inicio/fin de
+   * día (`T00:00:00` / `T23:59:59`) para que el filtro "Desde/Hasta" incluya el día completo
+   * y no solo el instante exacto de medianoche.
+   */
   function load() {
     const params = {
       name: appliedFilters.name || undefined,
@@ -33,18 +51,24 @@ export default function Users() {
     getRoles().then((r) => setRoles(r.data.data ?? []))
   }
 
+  // Recarga cada vez que cambian los filtros aplicados (al confirmar o limpiar el formulario
+  // de filtros), no en cada tecleo — por eso existe la distinción filters vs appliedFilters.
   useEffect(() => { load() }, [appliedFilters])
 
+  // Confirma los filtros en edición como los filtros activos, disparando la recarga.
   function handleApplyFilters(e) {
     e.preventDefault()
     setAppliedFilters(filters)
   }
 
+  // Limpia tanto el formulario de filtros como los filtros aplicados (vuelve a listar todo).
   function handleClearFilters() {
     setFilters(EMPTY_FILTERS)
     setAppliedFilters(EMPTY_FILTERS)
   }
 
+  // Abre el modal en blanco para crear un usuario nuevo, preseleccionando el primer rol
+  // disponible como valor por default del select.
   function openNew() {
     setEditUser(null)
     setForm({ ...emptyForm, roleId: roles[0]?.id ?? '' })
@@ -52,6 +76,8 @@ export default function Users() {
     setShowModal(true)
   }
 
+  // Abre el modal precargado con los datos del usuario a editar. La contraseña se deja
+  // vacía a propósito: en edición, un campo vacío significa "no cambiar la contraseña".
   function openEdit(u) {
     setEditUser(u)
     setForm({ name: u.name, email: u.email, password: '', roleId: u.role?.id ?? '' })
@@ -59,6 +85,8 @@ export default function Users() {
     setShowModal(true)
   }
 
+  // Crea o actualiza el usuario según haya o no un `editUser` en edición, y recarga el
+  // listado (respetando los filtros aplicados).
   async function handleSave(e) {
     e.preventDefault()
     setLoading(true)
@@ -73,12 +101,21 @@ export default function Users() {
     } finally { setLoading(false) }
   }
 
+  /**
+   * "Elimina" (desactiva) un usuario tras confirmación explícita. Es un borrado suave:
+   * el backend marca `isActive=false` en vez de borrar el registro, por lo que el usuario
+   * sigue apareciendo en la tabla (con estado "Inactivo") salvo que el filtro de Estado lo
+   * oculte. Por eso el botón de acción en la tabla solo se muestra para usuarios activos
+   * (`u.isActive`) — ya no tiene sentido "desactivar" a alguien ya inactivo.
+   */
   async function handleDelete(u) {
     if (!(await confirmDialog(`¿Desactivar a "${u.name}"?`, { confirmText: 'Desactivar' }))) return
     await deleteUser(u.id)
     load()
   }
 
+  // Colores de la etiqueta de rol en la tabla; los roles sin color definido (roles
+  // personalizados creados por el admin) caen en el gris por default.
   const ROLE_COLORS = { ADMIN: 'bg-purple-100 text-purple-700', CASHIER: 'bg-blue-100 text-blue-700', SELLER: 'bg-green-100 text-green-700' }
   const roleColor = (name) => ROLE_COLORS[name] ?? 'bg-gray-100 text-gray-600'
 

@@ -4,6 +4,14 @@ import { useAuth } from '../context/AuthContext'
 import { SECTIONS } from '../config/sections'
 import defaultLogo from '../assets/logo.png'
 
+/**
+ * Fábrica de la función `className` que consume `NavLink` de react-router para
+ * resaltar el link activo del sidebar, adaptando el estilo según si el sidebar
+ * está colapsado (modo solo íconos, centrado) o expandido.
+ *
+ * @param {boolean} collapsed - Si el sidebar está en modo colapsado.
+ * @returns {(navData: { isActive: boolean }) => string} Función que `NavLink` invoca para obtener las clases CSS.
+ */
 const navLinkClass = (collapsed) => ({ isActive }) =>
   `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
     collapsed ? 'justify-center' : ''
@@ -13,8 +21,23 @@ const navLinkClass = (collapsed) => ({ isActive }) =>
       : 'text-slate-400 hover:bg-white/5 hover:text-white'
   }`
 
+// Rutas agrupadas bajo el submenú colapsable "Configuración" del sidebar.
 const CONFIG_ROUTES = ['/roles', '/appearance', '/store-info']
 
+/**
+ * Shell visual de toda la app autenticada: arma el sidebar de navegación (logo de
+ * la tienda, links según las `AppSection` habilitadas del usuario, submenú
+ * "Configuración") y envuelve el contenido de la ruta actual (`children`) junto
+ * con el pie de página.
+ *
+ * El menú principal se arma filtrando `SECTIONS` por las secciones que el usuario
+ * tiene habilitadas (excluyendo `ROLES`, que se agrupa aparte). El submenú
+ * "Configuración" agrupa Roles y Permisos (si tiene la sección `ROLES`) y, solo si
+ * `isAdmin`, Apariencia y Datos de la tienda. El estado de colapsado del sidebar y
+ * de expandido de "Configuración" persiste en `localStorage` entre sesiones.
+ *
+ * @param {{ children: import('react').ReactNode }} props
+ */
 export default function Layout({ children }) {
   const { user, logout, hasSection, isAdmin } = useAuth()
   const navigate = useNavigate()
@@ -24,11 +47,16 @@ export default function Layout({ children }) {
     () => localStorage.getItem('pos_config_menu_open') !== '0' || CONFIG_ROUTES.includes(location.pathname)
   )
 
+  /** Cierra la sesión del usuario actual y lo redirige a la pantalla de login. */
   function handleLogout() {
     logout()
     navigate('/login')
   }
 
+  /**
+   * Alterna el sidebar entre expandido y colapsado (modo solo íconos), persistiendo
+   * la preferencia en `localStorage` (`pos_sidebar_collapsed`) para futuras sesiones.
+   */
   function toggleCollapsed() {
     setCollapsed((c) => {
       const next = !c
@@ -37,6 +65,11 @@ export default function Layout({ children }) {
     })
   }
 
+  /**
+   * Alterna el submenú "Configuración" (Roles, Apariencia, Datos de la tienda)
+   * entre expandido y colapsado, persistiendo la preferencia en `localStorage`
+   * (`pos_config_menu_open`) para futuras sesiones.
+   */
   function toggleConfig() {
     setConfigOpen((c) => {
       const next = !c

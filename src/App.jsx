@@ -15,6 +15,16 @@ import Roles from './pages/Roles'
 import Appearance from './pages/Appearance'
 import StoreInfo from './pages/StoreInfo'
 
+/**
+ * Árbol de rutas de la aplicación.
+ *
+ * `/login` es pública. Todo lo demás vive bajo un `PrivateRoute` genérico (solo
+ * exige sesión iniciada) que envuelve el `Layout` (sidebar + contenido), y dentro
+ * de este cada ruta hija está envuelta en su propio `PrivateRoute` con `section`
+ * (código de `AppSection` para el chequeo fino de permisos RBAC) o `adminOnly`
+ * (para las pantallas de configuración de tienda: Apariencia y Datos de la tienda).
+ * Cualquier ruta no reconocida redirige a `/`.
+ */
 function AppRoutes() {
   return (
     <Routes>
@@ -45,6 +55,13 @@ function AppRoutes() {
   )
 }
 
+/**
+ * Componente raíz de la aplicación.
+ *
+ * Envuelve todo el árbol en `BrowserRouter` → `AuthProvider` (sesión/RBAC/tienda)
+ * → `NotifyProvider` (toasts y confirmaciones) → {@link AppRoutes}, de forma que
+ * cualquier componente descendiente tiene acceso a `useAuth()` y `useNotify()`.
+ */
 export default function App() {
   return (
     <BrowserRouter>

@@ -4,6 +4,11 @@ const NotifyContext = createContext(null)
 
 let idCounter = 0
 
+/**
+ * Estilos visuales (clases Tailwind + ícono) para cada tipo de toast soportado por
+ * {@link NotifyProvider}. Se usa como fallback `TOAST_STYLES.error` cuando el tipo
+ * recibido no coincide con ninguna clave conocida.
+ */
 const TOAST_STYLES = {
   error: { box: 'bg-red-50 border-red-200 text-red-700', icon: '⚠️' },
   success: { box: 'bg-green-50 border-green-200 text-green-700', icon: '✅' },
@@ -14,26 +19,64 @@ const TOAST_STYLES = {
 // Reemplaza los alert()/confirm() nativos del navegador (los feos "localhost dice") por
 // toasts y un modal de confirmación con el estilo de la app — el botón de confirmar usa
 // btn-primary/btn-danger, que ya siguen el color elegido por el admin de cada tienda.
+/**
+ * Proveedor de contexto de notificaciones de la aplicación.
+ *
+ * Sustituye a los `alert()`/`confirm()` nativos del navegador por un sistema de
+ * toasts (con auto-dismiss) y un modal de confirmación propio, ambos con el estilo
+ * visual de la app y ligados al color de marca de la tienda del usuario. Renderiza
+ * el contenedor de toasts y el modal de confirmación como hijos flotantes junto al
+ * `children` recibido, y expone `notify`/`confirmDialog` vía {@link useNotify}.
+ *
+ * @param {{ children: import('react').ReactNode }} props
+ */
 export function NotifyProvider({ children }) {
   const [toasts, setToasts] = useState([])
   const [confirmState, setConfirmState] = useState(null)
 
+  /**
+   * Quita un toast de la lista visible por su `id` (llamado por el botón de cierre
+   * manual o automáticamente tras el timeout de auto-dismiss de {@link notify}).
+   * @param {number} id
+   */
   const dismiss = useCallback((id) => {
     setToasts((t) => t.filter((x) => x.id !== id))
   }, [])
 
+  /**
+   * Muestra un toast no bloqueante. Se retira solo a los 4.5s (auto-dismiss) o antes
+   * si el usuario lo cierra manualmente.
+   *
+   * @param {string} message - Texto a mostrar.
+   * @param {'error'|'success'|'info'} [type='error'] - Estilo/ícono del toast.
+   */
   const notify = useCallback((message, type = 'error') => {
     const id = ++idCounter
     setToasts((t) => [...t, { id, message, type }])
     setTimeout(() => dismiss(id), 4500)
   }, [dismiss])
 
+  /**
+   * Reemplazo de `window.confirm` que no bloquea el hilo: abre el modal de
+   * confirmación y devuelve una promesa que se resuelve con `true`/`false` cuando
+   * el usuario hace clic en Confirmar/Cancelar (ver {@link handleConfirm}).
+   *
+   * @param {string} message - Pregunta/mensaje a confirmar.
+   * @param {{ title?: string, confirmText?: string, cancelText?: string, danger?: boolean }} [opts]
+   *   `danger` en `false` usa el estilo primario en vez del rojo de peligro para el botón de confirmar.
+   * @returns {Promise<boolean>} Resuelve `true` si el usuario confirma, `false` si cancela.
+   */
   const confirmDialog = useCallback((message, opts = {}) => {
     return new Promise((resolve) => {
       setConfirmState({ message, opts, resolve })
     })
   }, [])
 
+  /**
+   * Resuelve la promesa pendiente de {@link confirmDialog} con el resultado elegido
+   * por el usuario (clic en Confirmar/Cancelar) y cierra el modal.
+   * @param {boolean} result
+   */
   function handleConfirm(result) {
     confirmState?.resolve(result)
     setConfirmState(null)
@@ -82,4 +125,5 @@ export function NotifyProvider({ children }) {
   )
 }
 
+/** Hook de acceso al contexto de notificaciones (`notify`, `confirmDialog`). */
 export const useNotify = () => useContext(NotifyContext)

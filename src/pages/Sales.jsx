@@ -11,6 +11,28 @@ const PAGE_SIZES = [10, 20, 50, 100]
 
 const EMPTY_FILTERS = { from: '', to: '', customerName: '', paymentMethod: '', status: '' }
 
+/**
+ * Página "Ventas": historial paginado de las ventas registradas en el POS (de la tienda
+ * del usuario, o de todas si es `SUPER_ADMIN` — el backend ya aplica ese filtro, aquí solo
+ * se muestra lo recibido). Permite filtrar por rango de fechas, cliente, forma de pago y
+ * estado, ver el detalle (partidas y totales) de una venta, y — solo administradores —
+ * cancelarla.
+ *
+ * Patrón de filtros + paginación (se repite igual en otras páginas de listado, como
+ * CashCuts): existen dos copias del estado de filtros, `filters` (lo que el usuario va
+ * tecleando en el formulario) y `appliedFilters` (lo que realmente se envía al backend).
+ * Solo al enviar el formulario (`handleApplyFilters`) se copian los `filters` a
+ * `appliedFilters`, lo que dispara la recarga vía el `useEffect` de abajo; así se evita
+ * pegarle a la API en cada tecleo. La paginación es server-side: `page`/`size` viajan como
+ * query params y el backend responde `{content, page, size, totalElements, totalPages}`;
+ * el rango "X–Y de Z" que se muestra en el pie de la tabla se calcula localmente a partir
+ * de esos totales.
+ *
+ * Cancelar una venta (`handleCancel`) es una operación destructiva en términos de negocio
+ * (revierte el stock de los productos vendidos) por lo que se pide confirmación explícita
+ * y solo está disponible para ventas `COMPLETED`; la fila nunca se borra, el backend solo
+ * le cambia el `status` a `CANCELLED` (por eso sigue apareciendo en el listado).
+ */
 export default function Sales() {
   const { isAdmin } = useAuth()
   const { confirmDialog } = useNotify()
@@ -22,6 +44,13 @@ export default function Sales() {
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  /**
+   * Trae la página actual de ventas usando `page`/`size` y los `appliedFilters` vigentes.
+   * Las fechas se envían como rango de día completo: `from` se ancla a las 00:00:00 y `to`
+   * a las 23:59:59 para incluir todas las ventas del día seleccionado, no solo la medianoche.
+   * Se re-ejecuta automáticamente (ver `useEffect` de abajo) cada vez que cambian `page`,
+   * `size` o `appliedFilters`.
+   */
   function load() {
     setLoading(true)
     const params = {
@@ -40,18 +69,32 @@ export default function Sales() {
 
   useEffect(() => { load() }, [page, size, appliedFilters])
 
+  /**
+   * Aplica los filtros capturados en el formulario: los copia a `appliedFilters` (lo que
+   * dispara la recarga) y reinicia la paginación a la primera página, para no quedar
+   * "atorado" en una página que ya no existe con el nuevo filtro.
+   */
   function handleApplyFilters(e) {
     e.preventDefault()
     setPage(0)
     setAppliedFilters(filters)
   }
 
+  /** Limpia filtros capturados y aplicados, y vuelve a la primera página. */
   function handleClearFilters() {
     setFilters(EMPTY_FILTERS)
     setAppliedFilters(EMPTY_FILTERS)
     setPage(0)
   }
 
+  /**
+   * Cancela una venta completada. Pide confirmación porque la cancelación revierte el
+   * stock de los productos vendidos (efecto secundario en inventario) y queda registrada
+   * en el backend (quién/cuándo la canceló); la fila de la venta no se elimina, solo cambia
+   * su estado a CANCELLED. Solo se ofrece este botón a administradores y solo sobre ventas
+   * `COMPLETED` (ver JSX de la tabla). Al terminar, recarga el listado para reflejar el
+   * nuevo estado.
+   */
   async function handleCancel(id) {
     if (!(await confirmDialog('¿Cancelar esta venta? Se revertirá el stock.', { confirmText: 'Cancelar venta' }))) return
     await cancelSale(id)
@@ -61,6 +104,8 @@ export default function Sales() {
   const sales = pageData.content ?? []
   const totalPages = pageData.totalPages ?? 0
   const totalElements = pageData.totalElements ?? 0
+  // Rango "X–Y de Z" mostrado junto al selector de tamaño de página, calculado localmente
+  // a partir de la página/tamaño actuales y el total que reporta el backend.
   const from = totalElements === 0 ? 0 : page * size + 1
   const to = Math.min(totalElements, page * size + sales.length)
 
