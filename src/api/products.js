@@ -50,3 +50,4 @@ export const adjustStock = (id, data) => api.post(`/products/${id}/adjust-stock`
  * @returns {Promise} Respuesta de axios confirmando la eliminación.
  */
 export const deleteProduct = (id) => api.delete(`/products/${id}`)
+
