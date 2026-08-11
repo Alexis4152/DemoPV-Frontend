@@ -1,13 +1,38 @@
 import axios from 'axios'
 
+/**
+ * Instancia central de axios usada por todos los módulos de `src/api/*.js`.
+ * `baseURL: '/api'` se apoya en el proxy de Vite hacia el backend Spring Boot,
+ * por lo que en desarrollo y producción las peticiones se hacen con rutas relativas
+ * (ej. `/api/sales`) sin necesidad de configurar el host del backend en el frontend.
+ */
 const api = axios.create({ baseURL: '/api' })
 
+/**
+ * Interceptor de request: adjunta el JWT de la sesión activa a cada petición saliente.
+ *
+ * Lee el token guardado en `localStorage.pos_token` (colocado ahí por `AuthContext`
+ * tras el login) y, si existe, lo agrega como header `Authorization: Bearer <token>`.
+ * Así ningún módulo de `api/*.js` necesita preocuparse por la autenticación:
+ * basta con importar esta instancia `api` para que las peticiones ya vayan autenticadas.
+ */
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('pos_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
 
+/**
+ * Interceptor de response: maneja de forma centralizada la expiración/invalidez de sesión.
+ *
+ * Si el backend responde 401 (token vencido o inválido), se limpia la sesión guardada
+ * (`pos_token`, `pos_user`) y se redirige a `/login`, evitando que cada componente tenga
+ * que detectar y manejar el 401 por su cuenta.
+ *
+ * Se excluye explícitamente la petición de login (`/auth/login`): un 401 ahí significa
+ * "credenciales inválidas", no "sesión expirada", y no debe disparar un logout/redirect
+ * que taparía el mensaje de error de la pantalla de login.
+ */
 api.interceptors.response.use(
   (res) => res,
   (err) => {

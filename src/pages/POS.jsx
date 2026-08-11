@@ -7,6 +7,25 @@ import { getOpenCashCut } from '../api/cashCuts'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
+/**
+ * Página "Punto de Venta" (POS): pantalla operativa donde el cajero busca/escanea
+ * productos, arma el carrito, elige la forma de pago y cobra. Es el flujo central del
+ * sistema — todo lo demás (inventario, cortes de caja, reportes) gira alrededor de las
+ * ventas que se registran aquí.
+ *
+ * Requisito de corte de caja abierto: al montar, la pantalla consulta si el cajero ya
+ * tiene un corte de caja abierto (`getOpenCashCut`). Si no lo tiene, NO bloquea la
+ * búsqueda ni el armado del carrito — el cajero puede seguir explorando productos — pero
+ * sí deshabilita el botón de cobro y muestra un aviso con enlace a "Cortes de Caja" para
+ * abrir uno; solo hasta que exista un corte abierto se puede completar el cobro
+ * (`handleCheckout`).
+ *
+ * Validación de stock: el carrito nunca permite superar las existencias que el buscador
+ * reportó al momento de agregar el producto (`product.stock`, guardado como snapshot en
+ * cada línea del carrito). Como es un snapshot, si el stock real cambia en el servidor
+ * mientras el producto ya está en el carrito (p. ej. otra caja vendió el mismo producto),
+ * esta pantalla no se entera hasta que el backend rechace el cobro.
+ */
 export default function POS() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
@@ -23,11 +42,18 @@ export default function POS() {
   const [error, setError] = useState('')
   const searchInputRef = useRef(null)
 
+  // Al montar: revisa si el cajero ya tiene un corte de caja abierto (silenciosamente —
+  // el .catch vacío trata "no hay corte abierto" como estado normal, no como error) y
+  // carga las categorías para los chips de filtro rápido.
   useEffect(() => {
     getOpenCashCut().then((r) => setCashCut(r.data.data)).catch(() => {})
     getCategories().then((r) => setCategories(r.data.data ?? []))
   }, [])
 
+  // Búsqueda de productos con debounce de 250ms para no golpear la API en cada tecla.
+  // Si no hay texto ni categoría seleccionada, limpia resultados sin llamar al backend.
+  // Con texto se piden hasta 8 coincidencias (autocompletar); solo con categoría (sin
+  // texto) se listan hasta 50, a modo de catálogo navegable por categoría.
   useEffect(() => {
     if (!query.trim() && !categoryId) { setResults([]); return }
     const t = setTimeout(() => {
@@ -37,11 +63,22 @@ export default function POS() {
     return () => clearTimeout(t)
   }, [query, categoryId])
 
+  /** Selecciona una categoría para filtrar el catálogo; volver a hacer clic en la misma la deselecciona (toggle). */
   function selectCategory(id) {
     setCategoryId((prev) => prev === id ? '' : id)
     searchInputRef.current?.focus()
   }
 
+  /**
+   * Agrega un producto al carrito, o incrementa su cantidad si ya estaba. Reglas de stock:
+   * - Si el producto no tiene existencias (`stock <= 0`), no se agrega y se muestra un
+   *   error visible.
+   * - Si ya está en el carrito y sumar una unidad más superaría el stock disponible, la
+   *   línea simplemente no cambia (sin mensaje de error) — el buscador ya muestra las
+   *   existencias junto a cada resultado, así que se asume que el cajero puede verlas.
+   * Al agregar, limpia la búsqueda y regresa el foco al input para poder seguir
+   * escaneando/tecleando el siguiente producto sin usar el mouse.
+   */
   function addToCart(product) {
     if (product.stock <= 0) { setError(`"${product.name}" no tiene stock disponible`); return }
     setError('')
@@ -58,6 +95,13 @@ export default function POS() {
     searchInputRef.current?.focus()
   }
 
+  /**
+   * Navegación por teclado en el dropdown de resultados de búsqueda: flechas para mover
+   * el resaltado, Enter para agregar el producto resaltado al carrito (equivalente a
+   * hacer clic), Escape para cerrar el dropdown. Pensado para que un cajero pueda operar
+   * el POS sin soltar el teclado (o usando una pistola lectora de código de barras que
+   * simula tecleo + Enter).
+   */
   function handleSearchKeyDown(e) {
     if (results.length === 0) return
     if (e.key === 'ArrowDown') {
@@ -75,6 +119,12 @@ export default function POS() {
     }
   }
 
+  /**
+   * Cambia la cantidad de una línea del carrito (usado por los botones +/- de la tabla).
+   * Igual que en `addToCart`, la cantidad nunca puede bajar de 1 (para eso está
+   * `removeItem`) ni superar el stock disponible que se capturó al agregar el producto;
+   * en ambos casos el cambio simplemente se ignora, sin mensaje de error.
+   */
   function updateQty(productId, qty) {
     if (qty < 1) return
     setCart((prev) => prev.map((i) => {
@@ -84,12 +134,29 @@ export default function POS() {
     }))
   }
 
+  /** Quita por completo una línea del carrito. */
   function removeItem(productId) {
     setCart((prev) => prev.filter((i) => i.productId !== productId))
   }
 
+  // El POS no maneja impuestos ni descuentos: el total a cobrar es simplemente la suma de
+  // precio unitario × cantidad de cada línea del carrito.
   const subtotal = cart.reduce((s, i) => s + i.unitPrice * i.quantity, 0)
 
+  /**
+   * Cobra el carrito: registra la venta en el backend (que la asocia al corte de caja
+   * abierto del cajero) y muestra la pantalla de éxito con el ticket. No hace nada si el
+   * carrito está vacío o si no hay corte de caja abierto (`cashCut`) — este último caso ya
+   * debería estar cubierto por el botón deshabilitado, esta es una segunda barrera.
+   *
+   * Aviso de stock mínimo post-venta: antes de vaciar el carrito, calcula qué líneas
+   * quedarán en su stock mínimo o por debajo (`stock - quantity <= minStock`) usando los
+   * valores de stock que ya traía el carrito (no se vuelve a consultar el backend), y se
+   * los pasa a la pantalla de éxito para avisarle al cajero que debe reabastecer pronto.
+   * Si el backend rechaza la venta (p. ej. por stock insuficiente detectado del lado del
+   * servidor), se muestra el mensaje de error y el carrito se conserva intacto para poder
+   * corregir y reintentar.
+   */
   async function handleCheckout() {
     if (cart.length === 0 || !cashCut) return
     setLoading(true)
@@ -113,6 +180,9 @@ export default function POS() {
     }
   }
 
+  // Pantalla de confirmación tras un cobro exitoso: reemplaza toda la pantalla del POS
+  // (early return) hasta que el cajero pulse "Nueva venta", mostrando el folio, el total
+  // y — si aplica — el aviso de productos que quedaron en stock mínimo (ver handleCheckout).
   if (success) {
     return (
       <div className="max-w-md mx-auto mt-16 card text-center">

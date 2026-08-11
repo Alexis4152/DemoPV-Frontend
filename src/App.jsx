@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
+import { NotifyProvider } from './context/NotifyContext'
 import PrivateRoute from './components/PrivateRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -11,7 +12,19 @@ import Reports from './pages/Reports'
 import CashCuts from './pages/CashCuts'
 import Users from './pages/Users'
 import Roles from './pages/Roles'
+import Appearance from './pages/Appearance'
+import StoreInfo from './pages/StoreInfo'
 
+/**
+ * Árbol de rutas de la aplicación.
+ *
+ * `/login` es pública. Todo lo demás vive bajo un `PrivateRoute` genérico (solo
+ * exige sesión iniciada) que envuelve el `Layout` (sidebar + contenido), y dentro
+ * de este cada ruta hija está envuelta en su propio `PrivateRoute` con `section`
+ * (código de `AppSection` para el chequeo fino de permisos RBAC) o `adminOnly`
+ * (para las pantallas de configuración de tienda: Apariencia y Datos de la tienda).
+ * Cualquier ruta no reconocida redirige a `/`.
+ */
 function AppRoutes() {
   return (
     <Routes>
@@ -30,6 +43,8 @@ function AppRoutes() {
                 <Route path="/reports" element={<PrivateRoute section="REPORTS"><Reports /></PrivateRoute>} />
                 <Route path="/users" element={<PrivateRoute section="USERS"><Users /></PrivateRoute>} />
                 <Route path="/roles" element={<PrivateRoute section="ROLES"><Roles /></PrivateRoute>} />
+                <Route path="/appearance" element={<PrivateRoute adminOnly><Appearance /></PrivateRoute>} />
+                <Route path="/store-info" element={<PrivateRoute adminOnly><StoreInfo /></PrivateRoute>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>
@@ -40,11 +55,20 @@ function AppRoutes() {
   )
 }
 
+/**
+ * Componente raíz de la aplicación.
+ *
+ * Envuelve todo el árbol en `BrowserRouter` → `AuthProvider` (sesión/RBAC/tienda)
+ * → `NotifyProvider` (toasts y confirmaciones) → {@link AppRoutes}, de forma que
+ * cualquier componente descendiente tiene acceso a `useAuth()` y `useNotify()`.
+ */
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <NotifyProvider>
+          <AppRoutes />
+        </NotifyProvider>
       </AuthProvider>
     </BrowserRouter>
   )

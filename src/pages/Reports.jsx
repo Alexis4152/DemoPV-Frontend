@@ -4,8 +4,22 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
+// Convierte un objeto Date a 'YYYY-MM-DD' para los inputs de tipo date y los query params.
 function toYYYYMMDD(d) { return d.toISOString().slice(0, 10) }
 
+/**
+ * Pantalla de "Reportes": muestra estadísticas de ventas e inventario de la tienda del
+ * usuario (o de todas si es `SUPER_ADMIN`, según lo que filtre el backend) dentro de un
+ * rango de fechas seleccionable. Sirve a todos los roles con la sección `REPORTS` habilitada.
+ *
+ * Incluye: totales del rango (ventas, transacciones, ticket promedio), una gráfica de
+ * ventas por día, una gráfica de los productos más vendidos, y una tabla de productos con
+ * stock bajo (esta última no depende del rango de fechas, es el estado actual del inventario).
+ *
+ * Nota: las filas de `getSalesByDay`/`getTopProducts`/`getInventoryStatus` llegan como
+ * arreglos posicionales (ej. `row[1]`, `row[2]`) en vez de objetos con nombres de campo —
+ * es el formato en el que el backend devuelve estos reportes agregados.
+ */
 export default function Reports() {
   const today = new Date()
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
@@ -18,6 +32,12 @@ export default function Reports() {
   const [inventory, setInventory] = useState(null)
   const [loading, setLoading] = useState(false)
 
+  /**
+   * Carga en paralelo los cuatro reportes de la pantalla para el rango [from, to] actual
+   * y normaliza las filas posicionales que devuelve el backend a objetos con nombres de
+   * campo, listos para alimentar las gráficas de Recharts (`byDay`, `topProducts`).
+   * Se invoca al montar el componente y cada vez que el usuario pulsa "Aplicar".
+   */
   function load() {
     setLoading(true)
     Promise.all([
@@ -33,6 +53,7 @@ export default function Reports() {
     }).finally(() => setLoading(false))
   }
 
+  // Carga inicial con el rango por defecto (mes en curso a hoy).
   useEffect(() => { load() }, [])
 
   return (
@@ -79,7 +100,7 @@ export default function Reports() {
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
                 <Tooltip formatter={(v) => fmt(v)} />
-                <Bar dataKey="total" fill="#9333ea" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="total" fill="rgb(var(--brand-600))" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : <p className="text-gray-400 text-sm text-center py-8">Sin datos</p>}
@@ -95,7 +116,7 @@ export default function Reports() {
                 <XAxis type="number" tick={{ fontSize: 11 }} />
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={100} />
                 <Tooltip />
-                <Bar dataKey="qty" fill="#7e22ce" radius={[0, 4, 4, 0]} name="Unidades" />
+                <Bar dataKey="qty" fill="rgb(var(--brand-700))" radius={[0, 4, 4, 0]} name="Unidades" />
               </BarChart>
             </ResponsiveContainer>
           ) : <p className="text-gray-400 text-sm text-center py-8">Sin datos</p>}

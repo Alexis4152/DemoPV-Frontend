@@ -4,6 +4,10 @@ import { getSalesSummary } from '../api/reports'
 import { getOpenCashCut } from '../api/cashCuts'
 import { searchProducts } from '../api/products'
 
+/**
+ * Tarjeta de indicador (KPI) reutilizada por el Dashboard para mostrar un valor
+ * destacado (ej. ventas del mes) con una etiqueta y, opcionalmente, un subtítulo.
+ */
 function StatCard({ label, value, sub, color }) {
   return (
     <div className="card">
@@ -14,16 +18,31 @@ function StatCard({ label, value, sub, color }) {
   )
 }
 
+// Formatea un número como moneda MXN para mostrarlo en las tarjetas de indicadores.
 function fmt(n) {
   return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 }
 
+/**
+ * Pantalla de inicio ("Dashboard") con un resumen general del estado de la tienda del
+ * usuario en sesión (o de todas las tiendas si es `SUPER_ADMIN`, según lo que el backend
+ * decida filtrar). Sirve a todos los roles con la sección `DASHBOARD` habilitada.
+ *
+ * Muestra cuatro indicadores: ventas totales del mes en curso, ticket promedio, si hay
+ * un corte de caja abierto en este momento, y cantidad de productos con stock bajo; además
+ * de accesos rápidos a Punto de Venta, Inventario y Reportes.
+ *
+ * Cada indicador se obtiene de un endpoint distinto y se cargan en paralelo (no bloqueante
+ * entre sí); si alguno falla, simplemente no se muestra su valor (los `.catch(() => {})`
+ * evitan que un error en un indicador tumbe a los demás).
+ */
 export default function Dashboard() {
   const [summary, setSummary] = useState(null)
   const [cashCut, setCashCut] = useState(null)
   const [lowStock, setLowStock] = useState(0)
 
   useEffect(() => {
+    // Rango de fechas fijo: del día 1 del mes actual a hoy, para el resumen de ventas del mes.
     const today = new Date().toISOString().slice(0, 10)
     const firstOfMonth = today.slice(0, 8) + '01'
 
@@ -31,10 +50,13 @@ export default function Dashboard() {
       .then((r) => setSummary(r.data.data))
       .catch(() => {})
 
+    // Corte de caja abierto (si existe) en este momento, para el indicador "Corte de caja".
     getOpenCashCut()
       .then((r) => setCashCut(r.data.data))
       .catch(() => {})
 
+    // Solo se usa el conteo de resultados (no la lista completa) para el indicador de
+    // stock bajo; el size:200 es un límite práctico para no traer más de lo necesario.
     searchProducts({ lowStock: true, size: 200 })
       .then((r) => setLowStock(r.data.data?.length ?? 0))
       .catch(() => {})
