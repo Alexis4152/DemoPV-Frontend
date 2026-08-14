@@ -61,7 +61,7 @@ export default function Reports() {
       <h2 className="text-2xl font-bold text-gray-900 mb-6">Reportes</h2>
 
       {/* Date filter */}
-      <div className="flex gap-3 items-end mb-6">
+      <div className="flex flex-wrap gap-3 items-end mb-6">
         <div>
           <label className="text-xs font-medium text-gray-600 block mb-1">Desde</label>
           <input type="date" className="input" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -75,7 +75,7 @@ export default function Reports() {
 
       {/* Summary cards */}
       {summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
           {[
             { label: 'Total ventas', value: fmt(summary.totalSales), color: 'text-purple-700' },
             { label: 'Transacciones', value: summary.totalTransactions, color: 'text-blue-600' },
@@ -127,24 +127,26 @@ export default function Reports() {
       {inventory?.lowStockProducts?.length > 0 && (
         <div className="card">
           <h3 className="font-semibold text-gray-800 mb-4">⚠️ Productos con stock bajo</h3>
-          <table className="w-full text-sm">
-            <thead className="border-b border-gray-100">
-              <tr>
-                {['Producto', 'Stock actual', 'Stock mínimo'].map((h) => (
-                  <th key={h} className="text-left py-2 font-medium text-gray-600">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {inventory.lowStockProducts.map((row, i) => (
-                <tr key={i}>
-                  <td className="py-2 text-gray-800">{row[1]}</td>
-                  <td className="py-2 font-semibold text-red-600">{row[2]}</td>
-                  <td className="py-2 text-gray-500">{row[3]}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[420px]">
+              <thead className="border-b border-gray-100">
+                <tr>
+                  {['Producto', 'Stock actual', 'Stock mínimo'].map((h) => (
+                    <th key={h} className="text-left py-2 font-medium text-gray-600">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {inventory.lowStockProducts.map((row, i) => (
+                  <tr key={i}>
+                    <td className="py-2 text-gray-800">{row[1]}</td>
+                    <td className="py-2 font-semibold text-red-600">{row[2]}</td>
+                    <td className="py-2 text-gray-500">{row[3]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -206,9 +206,9 @@ export default function POS() {
   }
 
   return (
-    <div className="flex gap-6 h-full">
+    <div className="flex flex-col lg:flex-row gap-6 h-full">
       {/* Product search */}
-      <div className="flex-1">
+      <div className="flex-1 min-w-0">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Punto de Venta</h2>
 
         {!cashCut && (
@@ -275,7 +275,8 @@ export default function POS() {
           </div>
         ) : (
           <div className="card p-0 overflow-hidden">
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[560px]">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
                   {['Producto', 'Precio', 'Disp.', 'Cantidad', 'Subtotal', ''].map((h) => (
@@ -307,13 +308,14 @@ export default function POS() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </div>
 
       {/* Checkout panel */}
-      <div className="w-80 flex-shrink-0">
-        <div className="card sticky top-0">
+      <div className="w-full lg:w-80 lg:flex-shrink-0">
+        <div className="card lg:sticky lg:top-0">
           <h3 className="font-bold text-gray-900 mb-4">Resumen</h3>
 
           <div className="space-y-3 mb-4">
