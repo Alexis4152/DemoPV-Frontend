@@ -57,7 +57,7 @@ export default function Appearance() {
       </p>
 
       <div className="card space-y-6">
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <input
             type="color"
             value={color}

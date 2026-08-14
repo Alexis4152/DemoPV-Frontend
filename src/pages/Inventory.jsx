@@ -170,7 +170,7 @@ export default function Inventory() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Inventario</h2>
         {isAdmin && <button className="btn-primary" onClick={openNew}>+ Nuevo producto</button>}
       </div>
@@ -190,10 +190,10 @@ export default function Inventory() {
       )}
 
       {/* Filters */}
-      <div className="flex gap-3 mb-4">
-        <input className="input max-w-xs" placeholder="Buscar por nombre o código..." value={search}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+        <input className="input sm:max-w-xs" placeholder="Buscar por nombre o código..." value={search}
           onChange={(e) => setSearch(e.target.value)} />
-        <select className="input max-w-xs" value={filterCat} onChange={(e) => setFilterCat(e.target.value)}>
+        <select className="input sm:max-w-xs" value={filterCat} onChange={(e) => setFilterCat(e.target.value)}>
           <option value="">Todas las categorías</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
@@ -201,7 +201,8 @@ export default function Inventory() {
 
       {/* Table */}
       <div className="card p-0 overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
               {['Producto', 'Categoría', 'Código', 'Precio', 'Stock', 'Mín.', ''].map((h) => (
@@ -241,15 +242,16 @@ export default function Inventory() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Product modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-4">{editProduct ? 'Editar producto' : 'Nuevo producto'}</h3>
             <form onSubmit={handleSave} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div><label className="text-xs font-medium text-gray-600">Nombre *</label>
                   <input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
                 <div><label className="text-xs font-medium text-gray-600">Código de barras</label>
@@ -285,7 +287,7 @@ export default function Inventory() {
       {/* Adjust modal */}
       {adjustModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-1">Ajustar stock</h3>
             <p className="text-sm text-gray-500 mb-4">{adjustModal.name} — actual: {adjustModal.stock} {adjustModal.unit}</p>
             <form onSubmit={handleAdjust} className="space-y-3">

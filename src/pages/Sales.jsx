@@ -113,7 +113,7 @@ export default function Sales() {
     <div>
       <h2 className="text-2xl font-bold text-gray-900 mb-6">Ventas</h2>
 
-      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
+      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
         <div>
           <label className="text-xs font-medium text-gray-600 block mb-1">Desde</label>
           <input type="date" className="input" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
@@ -150,7 +150,8 @@ export default function Sales() {
       </form>
 
       <div className="card p-0 overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[800px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
               {['#', 'Fecha', 'Cliente', 'Vendedor', 'Método', 'Total', 'Estado', ''].map((h) => (
@@ -187,6 +188,7 @@ export default function Sales() {
             )}
           </tbody>
         </table>
+        </div>
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-sm">
           <div className="flex items-center gap-2 text-gray-500">
@@ -224,7 +226,7 @@ export default function Sales() {
       {/* Detail modal */}
       {detail && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h3 className="text-lg font-bold">Venta #{detail.id}</h3>
@@ -240,7 +242,8 @@ export default function Sales() {
               <div className="flex justify-between"><span className="text-gray-500">Estado</span><span>{detail.status}</span></div>
             </div>
 
-            <table className="w-full text-sm mb-4">
+            <div className="overflow-x-auto">
+            <table className="w-full text-sm mb-4 min-w-[360px]">
               <thead className="border-b border-gray-100">
                 <tr>
                   <th className="text-left py-2 text-gray-600">Producto</th>
@@ -258,6 +261,7 @@ export default function Sales() {
                 ))}
               </tbody>
             </table>
+            </div>
 
             <div className="border-t border-gray-100 pt-3 flex justify-between font-bold text-base">
               <span>Total</span><span className="text-purple-700">{fmt(detail.total)}</span>
