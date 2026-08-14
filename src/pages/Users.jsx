@@ -121,12 +121,12 @@ export default function Users() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Usuarios</h2>
         <button className="btn-primary" onClick={openNew}>+ Nuevo usuario</button>
       </div>
 
-      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 items-end">
+      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
         <div>
           <label className="text-xs font-medium text-gray-600 block mb-1">Desde</label>
           <input type="date" className="input" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
@@ -165,7 +165,8 @@ export default function Users() {
       </form>
 
       <div className="card p-0 overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
               {['Nombre', 'Email', 'Rol', 'Fecha de registro', 'Estado', ''].map((h) => (
@@ -202,11 +203,12 @@ export default function Users() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-4">{editUser ? 'Editar usuario' : 'Nuevo usuario'}</h3>
             <form onSubmit={handleSave} className="space-y-3">
               <div><label className="text-xs font-medium text-gray-600">Nombre *</label>

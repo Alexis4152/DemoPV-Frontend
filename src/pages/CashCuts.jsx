@@ -185,7 +185,7 @@ export default function CashCuts() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Cortes de Caja</h2>
         {openCut ? (
           <button className="btn-danger" onClick={openCloseModal}>Cerrar corte</button>
@@ -195,7 +195,7 @@ export default function CashCuts() {
       </div>
 
       {openCut && (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 flex items-center justify-between">
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <p className="font-semibold text-green-800">Corte abierto #{openCut.id}</p>
             <p className="text-sm text-green-600">Desde {fmtDate(openCut.openedAt)} · Apertura: {fmt(openCut.openingAmount)}</p>
@@ -209,7 +209,7 @@ export default function CashCuts() {
 
       {/* corte propio del día, ya cerrado: solo aplica a no-admins, admin lo ve todo en la tabla */}
       {!isAdmin && !openCut && myToday && (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 flex items-center justify-between">
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <p className="font-semibold text-gray-800">Tu corte de hoy — #{myToday.id} (cerrado)</p>
             <p className="text-sm text-gray-500">
@@ -235,7 +235,7 @@ export default function CashCuts() {
 
         return (
       <>
-      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
+      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
         <div>
           <label className="text-xs font-medium text-gray-600 block mb-1">Desde</label>
           <input type="date" className="input" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
@@ -259,7 +259,8 @@ export default function CashCuts() {
       </form>
 
       <div className="card p-0 overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[900px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
               {['#', 'Apertura', 'Cierre', 'Cajero', 'Cerrado por', 'Ventas', 'Transac.', 'Estado', ''].map((h) => (
@@ -292,6 +293,7 @@ export default function CashCuts() {
             )}
           </tbody>
         </table>
+        </div>
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-sm">
           <div className="flex items-center gap-2 text-gray-500">
@@ -332,7 +334,7 @@ export default function CashCuts() {
       {/* Open modal */}
       {showOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-4">Abrir corte de caja</h3>
             <form onSubmit={handleOpen} className="space-y-3">
               <div><label className="text-xs font-medium text-gray-600">Fondo inicial ($)</label>
@@ -351,7 +353,7 @@ export default function CashCuts() {
       {/* Close modal */}
       {showClose && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-4">Cerrar corte de caja</h3>
             <form onSubmit={handleClose} className="space-y-3">
               <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
@@ -391,7 +393,7 @@ export default function CashCuts() {
       {/* Detail modal */}
       {detail && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start mb-4">
               <h3 className="text-lg font-bold">Corte #{detail.id}</h3>
               <button className="text-gray-400 text-xl" onClick={() => setDetail(null)}>✕</button>

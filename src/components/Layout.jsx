@@ -46,6 +46,9 @@ export default function Layout({ children }) {
   const [configOpen, setConfigOpen] = useState(
     () => localStorage.getItem('pos_config_menu_open') !== '0' || CONFIG_ROUTES.includes(location.pathname)
   )
+  // Drawer del sidebar en mobile/tablet (< lg) — independiente de `collapsed`, que solo
+  // aplica al modo solo-íconos del sidebar fijo de escritorio.
+  const [mobileOpen, setMobileOpen] = useState(false)
 
   /** Cierra la sesión del usuario actual y lo redirige a la pantalla de login. */
   function handleLogout() {
@@ -89,20 +92,17 @@ export default function Layout({ children }) {
   const configActive = CONFIG_ROUTES.includes(location.pathname)
   const sidebarLogo = user?.tienda?.logoPath || defaultLogo
 
-  return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside className={`${collapsed ? 'w-20' : 'w-64'} bg-[var(--brand-sidebar)] border-r border-[var(--brand-sidebar-border)] flex flex-col transition-all duration-200 relative`}>
-        <button
-          onClick={toggleCollapsed}
-          title={collapsed ? 'Expandir menú' : 'Contraer menú'}
-          className="absolute -right-3 top-8 w-6 h-6 rounded-full bg-white border border-gray-200 shadow flex items-center justify-center text-xs text-gray-500 hover:text-purple-700 hover:border-purple-300 z-10"
-        >
-          {collapsed ? '›' : '‹'}
-        </button>
-
+  /**
+   * Contenido interno del sidebar (logo, nav, pie con rol/logout), compartido entre el
+   * `<aside>` fijo de escritorio (`lg:` en adelante, respeta `collapsed`) y el drawer
+   * off-canvas de mobile/tablet (siempre expandido). `onNavigate` se dispara al hacer
+   * click en un link — en el drawer cierra el overlay; en el sidebar fijo no hace nada.
+   */
+  function renderSidebarBody(isCollapsed, onNavigate) {
+    return (
+      <>
         <div className="p-6 border-b border-[var(--brand-sidebar-border)] overflow-hidden">
-          {collapsed ? (
+          {isCollapsed ? (
             <img src={sidebarLogo} alt={user?.tienda?.name || 'Nexora Systems'} className="w-10 h-10 rounded-full mx-auto object-cover shadow-[0_0_12px_rgba(43,132,245,0.5)]" />
           ) : (
             <>
@@ -117,17 +117,17 @@ export default function Layout({ children }) {
 
         <nav className="sidebar-scroll flex-1 p-4 space-y-1 overflow-y-auto overflow-x-hidden">
           {links.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === '/'} title={collapsed ? n.label : undefined} className={navLinkClass(collapsed)}>
+            <NavLink key={n.to} to={n.to} end={n.to === '/'} title={isCollapsed ? n.label : undefined} className={navLinkClass(isCollapsed)} onClick={onNavigate}>
               <span>{n.icon}</span>
-              {!collapsed && <span className="whitespace-nowrap">{n.label}</span>}
+              {!isCollapsed && <span className="whitespace-nowrap">{n.label}</span>}
             </NavLink>
           ))}
 
           {configItems.length > 0 && (
-            collapsed ? (
+            isCollapsed ? (
               // Sin espacio para agrupar en modo icono: se muestran sueltos, igual que el resto.
               configItems.map((n) => (
-                <NavLink key={n.to} to={n.to} title={n.label} className={navLinkClass(true)}>
+                <NavLink key={n.to} to={n.to} title={n.label} className={navLinkClass(true)} onClick={onNavigate}>
                   <span>{n.icon}</span>
                 </NavLink>
               ))
@@ -146,7 +146,7 @@ export default function Layout({ children }) {
                 {configOpen && (
                   <div className="mt-1 ml-4 pl-3 border-l border-[var(--brand-sidebar-border)] space-y-1">
                     {configItems.map((n) => (
-                      <NavLink key={n.to} to={n.to} className={navLinkClass(false)}>
+                      <NavLink key={n.to} to={n.to} className={navLinkClass(false)} onClick={onNavigate}>
                         <span>{n.icon}</span>
                         <span className="whitespace-nowrap">{n.label}</span>
                       </NavLink>
@@ -159,7 +159,7 @@ export default function Layout({ children }) {
         </nav>
 
         <div className="p-4 border-t border-[var(--brand-sidebar-border)]">
-          {!collapsed && (
+          {!isCollapsed && (
             <div className="mb-2 px-3 py-2 text-xs text-slate-400">
               <span className="inline-block bg-purple-600/20 text-purple-300 rounded px-2 py-0.5 font-medium">
                 {user?.role}
@@ -168,23 +168,56 @@ export default function Layout({ children }) {
           )}
           <button
             onClick={handleLogout}
-            title={collapsed ? 'Cerrar sesión' : undefined}
+            title={isCollapsed ? 'Cerrar sesión' : undefined}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors ${
-              collapsed ? 'justify-center' : ''
+              isCollapsed ? 'justify-center' : ''
             }`}
           >
-            <span>🚪</span> {!collapsed && 'Cerrar sesión'}
+            <span>🚪</span> {!isCollapsed && 'Cerrar sesión'}
           </button>
         </div>
+      </>
+    )
+  }
+
+  return (
+    <div className="flex h-screen bg-gray-50">
+      {/* Sidebar fijo — solo visible desde `lg:` en adelante */}
+      <aside className={`hidden lg:flex ${collapsed ? 'w-20' : 'w-64'} bg-[var(--brand-sidebar)] border-r border-[var(--brand-sidebar-border)] flex-col transition-all duration-200 relative shrink-0`}>
+        <button
+          onClick={toggleCollapsed}
+          title={collapsed ? 'Expandir menú' : 'Contraer menú'}
+          className="absolute -right-3 top-8 w-6 h-6 rounded-full bg-white border border-gray-200 shadow flex items-center justify-center text-xs text-gray-500 hover:text-purple-700 hover:border-purple-300 z-10"
+        >
+          {collapsed ? '›' : '‹'}
+        </button>
+        {renderSidebarBody(collapsed, undefined)}
       </aside>
 
+      {/* Drawer off-canvas — solo antes de `lg:` */}
+      {mobileOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 flex">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
+          <aside className="relative w-72 max-w-[85vw] bg-[var(--brand-sidebar)] flex flex-col h-full">
+            {renderSidebarBody(false, () => setMobileOpen(false))}
+          </aside>
+        </div>
+      )}
+
       {/* Main */}
-      <main className="flex-1 overflow-y-auto flex flex-col">
-        <div className="p-8 flex-1">{children}</div>
-        <footer className="px-8 py-4 text-center text-xs text-gray-400 border-t border-gray-100">
-          © {new Date().getFullYear()} Nexora Systems. Todos los derechos reservados.
-        </footer>
-      </main>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <header className="lg:hidden flex items-center gap-3 bg-white border-b border-gray-200 px-4 py-3 shrink-0">
+          <button onClick={() => setMobileOpen(true)} className="p-2 -ml-2 text-gray-600" aria-label="Abrir menú">☰</button>
+          <img src={sidebarLogo} alt={user?.tienda?.name || 'Nexora Systems'} className="w-8 h-8 rounded-full object-cover" />
+          <span className="font-semibold text-gray-800 truncate">{user?.tienda?.name || 'Punto de Venta Demo'}</span>
+        </header>
+        <main className="flex-1 overflow-y-auto flex flex-col">
+          <div className="p-4 sm:p-6 lg:p-8 flex-1">{children}</div>
+          <footer className="px-4 sm:px-6 lg:px-8 py-4 text-center text-xs text-gray-400 border-t border-gray-100">
+            © {new Date().getFullYear()} Nexora Systems. Todos los derechos reservados.
+          </footer>
+        </main>
+      </div>
     </div>
   )
 }

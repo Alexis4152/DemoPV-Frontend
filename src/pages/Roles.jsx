@@ -98,13 +98,14 @@ export default function Roles() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Roles y Permisos</h2>
         <button className="btn-primary" onClick={openNew}>+ Nuevo rol</button>
       </div>
 
       <div className="card p-0 overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[640px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
               {['Nombre', 'Descripción', 'Secciones', ''].map((h) => (
@@ -140,11 +141,12 @@ export default function Roles() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-4">{editRole ? 'Editar rol' : 'Nuevo rol'}</h3>
             <form onSubmit={handleSave} className="space-y-3">
               <div><label className="text-xs font-medium text-gray-600">Nombre *</label>
@@ -159,7 +161,7 @@ export default function Roles() {
                 <input className="input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
               <div>
                 <label className="text-xs font-medium text-gray-600">Secciones visibles *</label>
-                <div className="mt-1 grid grid-cols-2 gap-2">
+                <div className="mt-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                   {SECTIONS.map((s) => (
                     <label key={s.code} className="flex items-center gap-2 text-sm">
                       <input

@@ -139,7 +139,7 @@ export default function StoreInfo() {
 
       <div className="card mb-6">
         <p className="text-sm font-medium text-gray-700 mb-3">Logo</p>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <img src={logoSrc} alt="Logo de la tienda" className="w-20 h-20 rounded-full object-cover border border-gray-200" />
           <div className="flex flex-col gap-2">
             <label className="btn-secondary text-sm cursor-pointer inline-block">
@@ -157,27 +157,29 @@ export default function StoreInfo() {
       </div>
 
       <form onSubmit={handleSave} className="card space-y-4">
-        {FIELDS.map((f) => (
-          <div key={f.key}>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
-            {f.textarea ? (
-              <textarea
-                className="input"
-                rows={2}
-                value={form[f.key]}
-                onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
-              />
-            ) : (
-              <input
-                type="text"
-                className="input"
-                value={form[f.key]}
-                required={f.required}
-                onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
-              />
-            )}
-          </div>
-        ))}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {FIELDS.map((f) => (
+            <div key={f.key} className={f.textarea ? 'sm:col-span-2' : ''}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
+              {f.textarea ? (
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={form[f.key]}
+                  onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                />
+              ) : (
+                <input
+                  type="text"
+                  className="input"
+                  value={form[f.key]}
+                  required={f.required}
+                  onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                />
+              )}
+            </div>
+          ))}
+        </div>
 
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
