@@ -1,0 +1,31 @@
+# Dependencias — se regeneran con `npm install`, nunca deben versionarse (arrastran
+# binarios nativos compilados para el sistema de quien los instaló, rompen el build en
+# otro sistema operativo, ej. el contenedor Linux de producción).
+node_modules/
+
+# Build de producción (`npm run build`) — se genera en el deploy, no es código fuente.
+dist/
+dist-ssr/
+
+# Configuración local con secretos — nunca debe versionarse
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
