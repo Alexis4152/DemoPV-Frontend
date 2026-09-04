@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { getTiendaInfo, updateTiendaInfo, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
+import { useNotify } from '../context/NotifyContext'
 import defaultLogo from '../assets/logo.png'
 
 const FIELDS = [
@@ -34,6 +35,7 @@ const FIELDS = [
  */
 export default function StoreInfo() {
   const { user, patchTienda } = useAuth()
+  const { confirmDialog } = useNotify()
   const tiendaId = user?.tienda?.id
 
   const [form, setForm] = useState(null)
@@ -61,6 +63,8 @@ export default function StoreInfo() {
         estado: info.estado || '',
         redesSociales: info.redesSociales || '',
         notasAdicionales: info.notasAdicionales || '',
+        maxDiscountAmount: info.tienda?.maxDiscountAmount ?? '',
+        maxDiscountPercent: info.tienda?.maxDiscountPercent ?? '',
       })
     }).finally(() => setLoading(false))
   }, [tiendaId])
@@ -70,15 +74,25 @@ export default function StoreInfo() {
    * refleja de inmediato en `AuthContext` vía `patchTienda`, porque es el único de estos
    * campos que se muestra en el sidebar; el resto (RFC, dirección, etc.) solo se usa en
    * el ticket PDF y no necesita propagarse a la sesión en memoria.
+   *
+   * Pide confirmación explícita antes de guardar: estos datos van directo al ticket que
+   * se le entrega al cliente, así que un error aquí no se nota hasta que ya se imprimió.
+   *
+   * Los límites de descuento (`maxDiscountAmount`/`maxDiscountPercent`) se reflejan de
+   * inmediato en `AuthContext` igual que el nombre, porque el POS los lee de `user.tienda`
+   * para validar los descuentos del cajero sin tener que volver a iniciar sesión.
    */
   async function handleSave(e) {
     e.preventDefault()
+    if (!(await confirmDialog('¿Deseas guardar estos datos? Se usarán en el ticket de venta.', { confirmText: 'Guardar datos', danger: false }))) return
     setSaving(true)
     setError('')
     setMessage('')
     try {
-      await updateTiendaInfo(tiendaId, form)
-      patchTienda({ name: form.name })
+      const maxDiscountAmount = form.maxDiscountAmount === '' ? null : Number(form.maxDiscountAmount)
+      const maxDiscountPercent = form.maxDiscountPercent === '' ? null : Number(form.maxDiscountPercent)
+      await updateTiendaInfo(tiendaId, { ...form, maxDiscountAmount, maxDiscountPercent })
+      patchTienda({ name: form.name, maxDiscountAmount, maxDiscountPercent })
       setMessage('Datos guardados')
     } catch (err) {
       setError(err.response?.data?.message || 'No se pudieron guardar los datos')
@@ -179,6 +193,34 @@ export default function StoreInfo() {
               )}
             </div>
           ))}
+        </div>
+
+        <div className="border-t border-gray-100 pt-4">
+          <p className="text-sm font-semibold text-gray-800">Límite de descuento en ventas</p>
+          <p className="text-xs text-gray-500 mb-3">
+            Evita que un cajero deje un producto prácticamente gratis: si defines uno o los dos, ningún
+            descuento por producto en el Punto de Venta podrá superarlos. Déjalos en blanco para no limitar.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Monto máximo de descuento ($)</label>
+              <input
+                type="number" min="0" step="0.01"
+                className="input" placeholder="Sin límite"
+                value={form.maxDiscountAmount}
+                onChange={(e) => setForm({ ...form, maxDiscountAmount: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Porcentaje máximo de descuento (%)</label>
+              <input
+                type="number" min="0" max="100" step="1"
+                className="input" placeholder="Sin límite"
+                value={form.maxDiscountPercent}
+                onChange={(e) => setForm({ ...form, maxDiscountPercent: e.target.value })}
+              />
+            </div>
+          </div>
         </div>
 
         {error && (

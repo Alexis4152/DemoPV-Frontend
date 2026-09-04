@@ -65,9 +65,14 @@ export default function Roles() {
     }))
   }
 
-  // Crea o actualiza el rol según haya o no un `editRole` en edición, y recarga el listado.
+  // Crea o actualiza el rol según haya o no un `editRole` en edición (previa confirmación
+  // explícita, para evitar altas/ediciones accidentales de permisos), y recarga el listado.
   async function handleSave(e) {
     e.preventDefault()
+    const confirmMsg = editRole
+      ? `¿Deseas guardar los cambios del rol "${form.name}"?`
+      : `¿Deseas crear el rol "${form.name}"?`
+    if (!(await confirmDialog(confirmMsg, { confirmText: editRole ? 'Guardar cambios' : 'Crear', danger: false }))) return
     setLoading(true)
     setError('')
     try {

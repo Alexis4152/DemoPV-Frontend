@@ -34,7 +34,7 @@ const EMPTY_FILTERS = { from: '', to: '', status: '' }
  */
 export default function CashCuts() {
   const { isAdmin } = useAuth()
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
   const [page, setPage] = useState(0)
@@ -102,6 +102,8 @@ export default function CashCuts() {
    */
   async function handleOpen(e) {
     e.preventDefault()
+    const amount = Number(openAmount) || 0
+    if (!(await confirmDialog(`¿Deseas abrir un corte de caja con fondo inicial de ${fmt(amount)}?`, { confirmText: 'Abrir corte', danger: false }))) return
     setLoading(true)
     try {
       await openCashCut({ amount: Number(openAmount), notes })
@@ -171,6 +173,7 @@ export default function CashCuts() {
    */
   async function handleClose(e) {
     e.preventDefault()
+    if (!(await confirmDialog(`¿Deseas cerrar el corte de caja? Efectivo esperado en caja: ${fmt(expectedCash)}`, { confirmText: 'Cerrar corte' }))) return
     setLoading(true)
     try {
       await closeCashCut(openCut.id, { expenses: Number(expenses) || 0, notes })

@@ -6,6 +6,7 @@ import { createSale } from '../api/sales'
 import { getOpenCashCut } from '../api/cashCuts'
 import { printSaleTicket } from '../utils/printer'
 import { useNotify } from '../context/NotifyContext'
+import { useAuth } from '../context/AuthContext'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
@@ -34,7 +35,12 @@ const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency:
  * backend vuelve a calcularlo y a guardarlo con la venta (aparece también en el ticket).
  */
 export default function POS() {
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
+  const { user } = useAuth()
+  // Límites de descuento por línea que el ADMIN fijó en "Datos de la tienda" (ver
+  // `resolveDiscountCap`); llegan como parte de la sesión (`user.tienda`), sin necesitar
+  // una llamada aparte — se actualizan solos si el admin los cambia y refresca su sesión.
+  const tienda = user?.tienda
   const [printing, setPrinting] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
@@ -46,11 +52,16 @@ export default function POS() {
   const [amountReceived, setAmountReceived] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
+  // 'physical': imprime en la impresora térmica al cobrar, igual que siempre. 'digital': no
+  // imprime nada, solo envía el ticket en PDF por correo — por eso exige capturar el email
+  // (ver `digitalEmailMissing` y el label del campo, más abajo).
+  const [ticketType, setTicketType] = useState('physical')
   const [cashCut, setCashCut] = useState(null)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(null)
   const [error, setError] = useState('')
   const searchInputRef = useRef(null)
+  const successRef = useRef(success)
 
   // Al montar: revisa si el cajero ya tiene un corte de caja abierto (silenciosamente —
   // el .catch vacío trata "no hay corte abierto" como estado normal, no como error) y
@@ -58,6 +69,54 @@ export default function POS() {
   useEffect(() => {
     getOpenCashCut().then((r) => setCashCut(r.data.data)).catch(() => {})
     getCategories().then((r) => setCategories(r.data.data ?? []))
+  }, [])
+
+  useEffect(() => { successRef.current = success }, [success])
+
+  // Captura de escaneo "global": una pistola lectora de código de barras funciona como un
+  // teclado que teclea cada carácter en milisegundos y termina con Enter — mucho más rápido
+  // que cualquier persona escribiendo a mano. Este listener vive en todo el documento (no
+  // solo en el input de búsqueda) para que un escaneo agregue el producto al carrito sin
+  // importar en qué campo esté el foco (cliente, correo, monto recibido, o ninguno).
+  //
+  // Para no confundir un tecleo humano normal con un escaneo, se descarta cualquier
+  // secuencia donde el tiempo entre teclas supere SCAN_GAP_MS: si al momento de Enter la
+  // última tecla no llegó "pegada" a las anteriores, se asume que fue un Enter cualquiera
+  // (enviar un formulario, etc.) y se ignora. Cuando el foco ya está en el buscador del POS,
+  // se deja pasar: ese input ya maneja su propio Enter con prioridad a código exacto.
+  useEffect(() => {
+    const SCAN_GAP_MS = 50
+    const MIN_CODE_LENGTH = 3
+    let buffer = ''
+    let lastTime = 0
+
+    function onKeyDown(e) {
+      if (successRef.current || e.ctrlKey || e.metaKey || e.altKey) return
+      const now = Date.now()
+      const gap = now - lastTime
+      lastTime = now
+
+      if (e.key === 'Enter') {
+        const code = buffer
+        buffer = ''
+        if (code.length < MIN_CODE_LENGTH || gap >= SCAN_GAP_MS) return
+        if (document.activeElement === searchInputRef.current) return
+        e.preventDefault()
+        getProductByBarcode(code).then((r) => {
+          const product = r?.data?.data
+          if (product) addToCart(product)
+          else notify(`Código "${code}" no encontrado`, 'error')
+        }).catch(() => notify(`Código "${code}" no encontrado`, 'error'))
+        return
+      }
+
+      if (e.key.length === 1) {
+        buffer = gap < SCAN_GAP_MS ? buffer + e.key : e.key
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
   }, [])
 
   // Búsqueda de productos con debounce de 250ms para no golpear la API en cada tecla.
@@ -98,11 +157,93 @@ export default function POS() {
         if (existing.quantity + 1 > product.stock) return prev
         return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i)
       }
-      return [...prev, { productId: product.id, productName: product.name, unitPrice: product.price, quantity: 1, stock: product.stock, minStock: product.minStock }]
+      return [...prev, {
+        productId: product.id, productName: product.name, unitPrice: product.price, quantity: 1,
+        stock: product.stock, minStock: product.minStock,
+        // Descuento por línea: 'amount' ($ fijo) o 'percent' (%) sobre esta línea — ver
+        // `lineDiscount`/`lineSubtotal` para cómo se resuelve a un monto en pesos.
+        discountType: 'amount', discountValue: '',
+      }]
     })
     setQuery('')
     setResults([])
     searchInputRef.current?.focus()
+  }
+
+  /**
+   * Resuelve el descuento de una línea del carrito a un monto en pesos, sin importar si
+   * el cajero lo capturó como monto fijo o como porcentaje. Siempre queda acotado entre 0
+   * y el importe bruto de la línea (`unitPrice * quantity`), para que nunca pueda dejar
+   * esa línea en subtotal negativo ni un porcentaje mayor a 100 la deje en negativo.
+   */
+  function lineDiscount(item) {
+    const gross = item.unitPrice * item.quantity
+    const raw = Number(item.discountValue) || 0
+    const amount = item.discountType === 'percent' ? gross * (raw / 100) : raw
+    return Math.min(Math.max(amount, 0), gross)
+  }
+
+  /** Importe final de una línea del carrito, ya con su descuento aplicado. */
+  function lineSubtotal(item) {
+    return item.unitPrice * item.quantity - lineDiscount(item)
+  }
+
+  /**
+   * Resuelve, para una línea del carrito, el tope de descuento (en pesos) que fijó el ADMIN
+   * en "Datos de la tienda" (`tienda.maxDiscountAmount`/`maxDiscountPercent` — ver
+   * `StoreInfo.jsx`). Ambos límites son independientes y opcionales: si los dos están
+   * definidos, aplica el que resulte más restrictivo para esta línea en particular. Sin
+   * ningún límite configurado, el tope es el importe bruto de la línea (sin restricción
+   * real, más allá de no poder descontar más de lo que vale).
+   *
+   * @returns {{ capAmount: number, reason: 'amount'|'percent'|null, maxAmount: number|null, maxPercent: number|null }}
+   */
+  function resolveDiscountCap(item) {
+    const gross = item.unitPrice * item.quantity
+    const maxAmount = tienda?.maxDiscountAmount != null ? Number(tienda.maxDiscountAmount) : null
+    const maxPercent = tienda?.maxDiscountPercent != null ? Number(tienda.maxDiscountPercent) : null
+    const fromPercent = maxPercent != null ? gross * maxPercent / 100 : null
+
+    let capAmount = gross
+    let reason = null
+    if (maxAmount != null && maxAmount < capAmount) { capAmount = maxAmount; reason = 'amount' }
+    if (fromPercent != null && fromPercent < capAmount) { capAmount = fromPercent; reason = 'percent' }
+    return { capAmount, reason, maxAmount, maxPercent }
+  }
+
+  /** Cambia el tipo de descuento ($/%) de una línea; conserva el valor capturado tal cual. */
+  function updateDiscountType(productId, discountType) {
+    setCart((prev) => prev.map((i) => i.productId === productId ? { ...i, discountType } : i))
+  }
+
+  /**
+   * Cambia el valor de descuento capturado para una línea (interpretado según su
+   * discountType). Si el monto que implica supera el límite configurado por el ADMIN (ver
+   * `resolveDiscountCap`), se avisa con un toast y el valor se ajusta al máximo permitido
+   * en vez de dejarlo tal cual — "restringir", no solo advertir.
+   */
+  function updateDiscountValue(productId, rawValue) {
+    setCart((prev) => prev.map((i) => {
+      if (i.productId !== productId) return i
+      const num = Number(rawValue)
+      if (rawValue === '' || Number.isNaN(num)) return { ...i, discountValue: rawValue }
+
+      const gross = i.unitPrice * i.quantity
+      const attemptedAmount = i.discountType === 'percent' ? gross * num / 100 : num
+      const { capAmount, reason, maxAmount, maxPercent } = resolveDiscountCap(i)
+
+      if (attemptedAmount > capAmount + 0.001) {
+        notify(
+          reason === 'percent'
+            ? `Ese porcentaje de descuento no está permitido, el porcentaje máximo permitido es ${maxPercent}%`
+            : `Ese descuento no está permitido, el monto máximo permitido es ${fmt(maxAmount)}`,
+          'error'
+        )
+        const clamped = i.discountType === 'percent' ? (gross > 0 ? (capAmount / gross) * 100 : 0) : capAmount
+        return { ...i, discountValue: String(Math.round(clamped * 100) / 100) }
+      }
+      return { ...i, discountValue: rawValue }
+    }))
   }
 
   /**
@@ -162,9 +303,12 @@ export default function POS() {
     setCart((prev) => prev.filter((i) => i.productId !== productId))
   }
 
-  // El POS no maneja impuestos ni descuentos: el total a cobrar es simplemente la suma de
-  // precio unitario × cantidad de cada línea del carrito.
-  const subtotal = cart.reduce((s, i) => s + i.unitPrice * i.quantity, 0)
+  // El total a cobrar es la suma de cada línea YA con su descuento aplicado (ver
+  // `lineSubtotal`). `totalDiscount` es solo para mostrarlo desglosado en el resumen y en
+  // el ticket (que también reciben este mismo total agregado, calculado por el backend a
+  // partir del descuento de cada línea que se manda en `handleCheckout`).
+  const subtotal = cart.reduce((s, i) => s + lineSubtotal(i), 0)
+  const totalDiscount = cart.reduce((s, i) => s + lineDiscount(i), 0)
 
   // Cambio a entregar en efectivo: solo tiene sentido para CASH, y solo una vez que el
   // cajero capturó un monto recibido válido (numérico y >= al total) — con cualquier otro
@@ -176,6 +320,9 @@ export default function POS() {
   // En efectivo, cobrar exige un monto recibido válido que alcance para cubrir el total —
   // el backend vuelve a validar esto de todas formas, esta es solo la barrera de UI.
   const cashAmountMissing = paymentMethod === 'CASH' && (change === null || change < 0)
+  // Ticket digital exige correo del cliente (es el único medio de entrega en ese modo,
+  // a diferencia del físico donde el correo es opcional).
+  const digitalEmailMissing = ticketType === 'digital' && !customerEmail.trim()
 
   /** Cambia el método de pago, limpiando el monto recibido si ya no aplica (no es CASH). */
   function handlePaymentMethodChange(value) {
@@ -196,9 +343,18 @@ export default function POS() {
    * Si el backend rechaza la venta (p. ej. por stock insuficiente detectado del lado del
    * servidor), se muestra el mensaje de error y el carrito se conserva intacto para poder
    * corregir y reintentar.
+   *
+   * Pide confirmación explícita antes de registrar el cobro, para evitar cerrar una venta
+   * por accidente (p. ej. un doble clic o un Enter de más).
+   *
+   * Ticket físico vs digital (`ticketType`): en físico, tras cobrar se manda a imprimir
+   * a la térmica igual que siempre. En digital NO se imprime nada — el ticket en PDF ya
+   * lo manda el backend por correo (ver `SaleService.create`, dispara el envío cuando hay
+   * `customerEmail`), que en este modo es obligatorio (`digitalEmailMissing`).
    */
   async function handleCheckout() {
-    if (cart.length === 0 || !cashCut || cashAmountMissing) return
+    if (cart.length === 0 || !cashCut || cashAmountMissing || digitalEmailMissing) return
+    if (!(await confirmDialog(`¿Deseas realizar esta venta por ${fmt(subtotal)}?`, { confirmText: 'Realizar venta', danger: false }))) return
     setLoading(true)
     setError('')
     try {
@@ -209,18 +365,19 @@ export default function POS() {
         // Solo se manda en efectivo; el backend lo exige ahí y lo ignora para los demás
         // métodos, pero no tiene sentido enviarlo si el cajero ni lo capturó.
         amountReceived: paymentMethod === 'CASH' ? amountReceivedNum : undefined,
-        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
+        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice, discount: lineDiscount(i) })),
       })
       const lowStockWarnings = cart.filter((i) => i.minStock != null && (i.stock - i.quantity) <= i.minStock)
-      setSuccess({ ...res.data.data, lowStockWarnings })
+      setSuccess({ ...res.data.data, lowStockWarnings, ticketType })
       setCart([])
       setCustomerName('')
       setCustomerEmail('')
       setAmountReceived('')
-      // Se imprime "al vuelo": si la caja no tiene QZ Tray instalado/corriendo, o la
-      // impresora está apagada, no debe tumbar la venta ya registrada — solo se avisa
-      // para que el cajero pueda usar "Reimprimir ticket" en cuanto lo resuelva.
-      printTicket(res.data.data.id)
+      setTicketType('physical')
+      // Se imprime "al vuelo" SOLO en modo físico: si la caja no tiene QZ Tray instalado/
+      // corriendo, o la impresora está apagada, no debe tumbar la venta ya registrada —
+      // solo se avisa para que el cajero pueda usar "Reimprimir ticket" en cuanto lo resuelva.
+      if (ticketType === 'physical') printTicket(res.data.data.id)
     } catch (err) {
       setError(err.response?.data?.message ?? 'Error al registrar venta')
     } finally {
@@ -255,13 +412,20 @@ export default function POS() {
         <h3 className="text-xl font-bold text-gray-900 mb-2">Venta registrada</h3>
         <p className="text-gray-500 mb-1">Ticket #{success.id}</p>
         <p className="text-2xl font-bold text-purple-700 mb-1">{fmt(success.total)}</p>
+        {success.discount > 0 && (
+          <p className="text-sm text-green-600 mb-1">Descuento aplicado: -{fmt(success.discount)}</p>
+        )}
         {success.amountReceived != null && (
-          <div className="text-sm text-gray-500 mb-6">
+          <div className="text-sm text-gray-500 mb-1">
             <p>Recibido: {fmt(success.amountReceived)}</p>
             <p className="font-semibold text-gray-700">Cambio: {fmt(success.changeGiven)}</p>
           </div>
         )}
-        {success.amountReceived == null && <div className="mb-6" />}
+        {success.ticketType === 'digital' ? (
+          <p className="text-sm text-purple-700 mb-6">📧 Ticket enviado a {success.customerEmail}</p>
+        ) : (
+          success.amountReceived == null && <div className="mb-6" />
+        )}
         {success.lowStockWarnings?.length > 0 && (
           <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded-lg px-4 py-3 mb-6 text-left">
             ⚠️ Producto{success.lowStockWarnings.length > 1 ? 's' : ''} en nivel mínimo de stock:
@@ -355,16 +519,18 @@ export default function POS() {
         ) : (
           <div className="card p-0 overflow-hidden">
             <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[560px]">
+            <table className="w-full text-sm min-w-[680px]">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {['Producto', 'Precio', 'Disp.', 'Cantidad', 'Subtotal', ''].map((h) => (
+                  {['Producto', 'Precio', 'Disp.', 'Cantidad', 'Descuento', 'Subtotal', ''].map((h) => (
                     <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {cart.map((item) => (
+                {cart.map((item) => {
+                  const discount = lineDiscount(item)
+                  return (
                   <tr key={item.productId}>
                     <td className="px-4 py-3 font-medium text-gray-900">{item.productName}</td>
                     <td className="px-4 py-3 text-gray-600">{fmt(item.unitPrice)}</td>
@@ -379,12 +545,37 @@ export default function POS() {
                           onClick={() => updateQty(item.productId, item.quantity + 1)}>+</button>
                       </div>
                     </td>
-                    <td className="px-4 py-3 font-semibold text-gray-900">{fmt(item.unitPrice * item.quantity)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <select
+                          className="input !w-14 !py-1 !px-1 text-xs"
+                          value={item.discountType}
+                          onChange={(e) => updateDiscountType(item.productId, e.target.value)}
+                        >
+                          <option value="amount">$</option>
+                          <option value="percent">%</option>
+                        </select>
+                        <input
+                          type="number" min="0" step="0.01"
+                          className="input !w-20 !py-1 text-xs"
+                          placeholder="0"
+                          value={item.discountValue}
+                          onChange={(e) => updateDiscountValue(item.productId, e.target.value)}
+                        />
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-gray-900">
+                      {fmt(lineSubtotal(item))}
+                      {discount > 0 && (
+                        <span className="block text-xs font-normal text-gray-400 line-through">{fmt(item.unitPrice * item.quantity)}</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <button className="text-red-400 hover:text-red-600" onClick={() => removeItem(item.productId)}>✕</button>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
             </div>
@@ -399,14 +590,40 @@ export default function POS() {
 
           <div className="space-y-3 mb-4">
             <div>
+              <label className="text-xs font-medium text-gray-600">Ticket</label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <button
+                  type="button"
+                  className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                    ticketType === 'physical' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                  onClick={() => setTicketType('physical')}
+                >🖨️ Físico</button>
+                <button
+                  type="button"
+                  className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                    ticketType === 'digital' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                  onClick={() => setTicketType('digital')}
+                >📧 Digital</button>
+              </div>
+            </div>
+            <div>
               <label className="text-xs font-medium text-gray-600">Cliente (opcional)</label>
               <input className="input mt-1" placeholder="Nombre del cliente" value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)} />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-600">Correo para enviar el ticket (opcional)</label>
-              <input className="input mt-1" type="email" placeholder="cliente@correo.com" value={customerEmail}
-                onChange={(e) => setCustomerEmail(e.target.value)} />
+              <label className="text-xs font-medium text-gray-600">
+                Correo para enviar el ticket {ticketType === 'digital' ? <span className="text-red-500">*</span> : '(opcional)'}
+              </label>
+              <input
+                className="input mt-1" type="email" placeholder="cliente@correo.com"
+                required={ticketType === 'digital'}
+                value={customerEmail}
+                onChange={(e) => setCustomerEmail(e.target.value)}
+              />
+              {digitalEmailMissing && (
+                <p className="text-xs text-red-500 mt-1">El ticket digital se manda por correo, captura uno para poder cobrar.</p>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Método de pago</label>
@@ -431,9 +648,15 @@ export default function POS() {
                 />
                 {amountReceived !== '' && (
                   change != null && change >= 0 ? (
-                    <p className="text-sm font-semibold text-green-600 mt-1">Cambio: {fmt(change)}</p>
+                    <div className="mt-2 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 text-center">
+                      <p className="text-xs font-semibold text-green-700 uppercase tracking-wide">Cambio a entregar</p>
+                      <p className="text-3xl font-bold text-green-700 mt-0.5">{fmt(change)}</p>
+                    </div>
                   ) : (
-                    <p className="text-sm font-semibold text-red-500 mt-1">Falta {fmt(subtotal - amountReceivedNum)}</p>
+                    <div className="mt-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-center">
+                      <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Falta por cobrar</p>
+                      <p className="text-3xl font-bold text-red-600 mt-0.5">{fmt(subtotal - amountReceivedNum)}</p>
+                    </div>
                   )
                 )}
               </div>
@@ -442,8 +665,13 @@ export default function POS() {
 
           <div className="border-t border-gray-100 pt-4 mb-4">
             <div className="flex justify-between text-sm text-gray-600 mb-1">
-              <span>Subtotal</span><span>{fmt(subtotal)}</span>
+              <span>Subtotal</span><span>{fmt(subtotal + totalDiscount)}</span>
             </div>
+            {totalDiscount > 0 && (
+              <div className="flex justify-between text-sm text-green-600 mb-1">
+                <span>Descuento</span><span>-{fmt(totalDiscount)}</span>
+              </div>
+            )}
             <div className="flex justify-between font-bold text-lg text-gray-900">
               <span>Total</span><span className="text-purple-700">{fmt(subtotal)}</span>
             </div>
@@ -454,11 +682,12 @@ export default function POS() {
           <button
             className="btn-primary w-full py-3 text-base disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={handleCheckout}
-            disabled={cart.length === 0 || loading || !cashCut || cashAmountMissing}
-            title={!cashCut ? 'Abre un corte de caja para poder cobrar' : cashAmountMissing ? 'Captura cuánto pagó el cliente en efectivo' : undefined}
+            disabled={cart.length === 0 || loading || !cashCut || cashAmountMissing || digitalEmailMissing}
+            title={!cashCut ? 'Abre un corte de caja para poder cobrar' : cashAmountMissing ? 'Captura cuánto pagó el cliente en efectivo' : digitalEmailMissing ? 'Captura el correo del cliente para el ticket digital' : undefined}
           >
             {loading ? 'Procesando...'
               : !cashCut ? 'Abre un corte para cobrar'
+              : digitalEmailMissing ? 'Captura el correo del cliente'
               : cashAmountMissing ? 'Captura el monto recibido'
               : `Cobrar ${fmt(subtotal)}`}
           </button>

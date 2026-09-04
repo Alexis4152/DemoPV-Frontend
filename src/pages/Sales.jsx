@@ -243,11 +243,12 @@ export default function Sales() {
             </div>
 
             <div className="overflow-x-auto">
-            <table className="w-full text-sm mb-4 min-w-[360px]">
+            <table className="w-full text-sm mb-4 min-w-[420px]">
               <thead className="border-b border-gray-100">
                 <tr>
                   <th className="text-left py-2 text-gray-600">Producto</th>
                   <th className="text-right py-2 text-gray-600">Cant.</th>
+                  <th className="text-right py-2 text-gray-600">Descuento</th>
                   <th className="text-right py-2 text-gray-600">Subtotal</th>
                 </tr>
               </thead>
@@ -256,6 +257,7 @@ export default function Sales() {
                   <tr key={i}>
                     <td className="py-2 text-gray-800">{item.productName}</td>
                     <td className="py-2 text-right text-gray-600">{item.quantity}</td>
+                    <td className="py-2 text-right text-green-600">{item.discount > 0 ? `-${fmt(item.discount)}` : '—'}</td>
                     <td className="py-2 text-right font-medium">{fmt(item.subtotal)}</td>
                   </tr>
                 ))}
@@ -263,8 +265,18 @@ export default function Sales() {
             </table>
             </div>
 
-            <div className="border-t border-gray-100 pt-3 flex justify-between font-bold text-base">
-              <span>Total</span><span className="text-purple-700">{fmt(detail.total)}</span>
+            <div className="border-t border-gray-100 pt-3 text-sm space-y-1">
+              <div className="flex justify-between text-gray-600">
+                <span>Subtotal</span><span>{fmt(detail.subtotal)}</span>
+              </div>
+              {detail.discount > 0 && (
+                <div className="flex justify-between text-green-600">
+                  <span>Descuento</span><span>-{fmt(detail.discount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-bold text-base text-gray-900">
+                <span>Total</span><span className="text-purple-700">{fmt(detail.total)}</span>
+              </div>
             </div>
             {detail.amountReceived != null && (
               <div className="text-sm text-gray-500 mt-1">

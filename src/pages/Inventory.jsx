@@ -8,6 +8,11 @@ const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency:
 
 const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '', stock: '', minStock: 5, unit: 'pieza', categoryId: '' }
 
+// Valor centinela para la opción "Otra..." del selector de categoría: no puede colisionar
+// con un id real (los ids de categoría son numéricos), así que sirve para distinguir
+// "el usuario quiere crear una categoría nueva" de una categoría existente seleccionada.
+const NEW_CATEGORY_VALUE = '__new__'
+
 /**
  * Página "Inventario": administración del catálogo de productos de la tienda del usuario
  * (alta/edición/desactivación) y ajustes manuales de stock fuera del flujo normal de venta
@@ -23,12 +28,14 @@ const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '',
  * es decir reducir stock manualmente fuera de una venta) están reservados a ADMIN. Cualquier
  * usuario con acceso a esta pantalla puede registrar entradas de stock ("IN").
  *
- * Lector de código de barras (altas/bajas): el campo "Escanear código de barras" es
- * independiente del filtro de texto — al presionar Enter (lo que manda un lector
- * automáticamente tras "teclear" el código) hace una búsqueda EXACTA. Si el código ya
- * existe, abre directo el modal de "Ajustar stock" de ese producto (en modo "Agregar
- * piezas", pensado para registrar mercancía que va llegando); si no existe, abre el modal
- * de "Nuevo producto" con el código ya precargado, para dar de alta sin volver a teclearlo.
+ * Lector de código de barras (altas/bajas): el escaneo se captura a nivel de documento
+ * (no hace falta tener el foco en ningún campo en particular — ver el `useEffect` de
+ * `onKeyDown` más abajo, que distingue un escaneo de tecleo humano por la velocidad entre
+ * teclas) y hace una búsqueda EXACTA por código. Si el código ya existe, le pregunta al
+ * usuario (solo ADMIN, que es quien puede editar) si quiere "Editar producto" o "Ajustar
+ * stock" — un usuario sin ese permiso va directo a "Ajustar stock" (modo "Agregar piezas"),
+ * la única opción que puede hacer de todas formas. Si no existe, abre el modal de "Nuevo
+ * producto" con el código ya precargado, para dar de alta sin volver a teclearlo.
  */
 export default function Inventory() {
   const { isAdmin } = useAuth()
@@ -49,7 +56,10 @@ export default function Inventory() {
   const [lowStockItems, setLowStockItems] = useState([])
   const [adjustNotice, setAdjustNotice] = useState('')
   const [scanCode, setScanCode] = useState('')
+  const [choiceModal, setChoiceModal] = useState(null)
+  const [newCategoryName, setNewCategoryName] = useState('')
   const scanInputRef = useRef(null)
+  const modalOpenRef = useRef(false)
 
   /**
    * Recarga, en paralelo, las tres fuentes de datos que usa la pantalla: el catálogo
@@ -84,6 +94,7 @@ export default function Inventory() {
   function openNew(prefillBarcode) {
     setEditProduct(null)
     setForm({ ...emptyForm, barcode: prefillBarcode ?? '' })
+    setNewCategoryName('')
     setError('')
     setShowModal(true)
   }
@@ -96,35 +107,92 @@ export default function Inventory() {
       price: p.price, cost: p.cost ?? '', stock: p.stock,
       minStock: p.minStock, unit: p.unit, categoryId: p.category?.id ?? ''
     })
+    setNewCategoryName('')
     setError('')
     setShowModal(true)
   }
 
+  /** Abre el modal de "Ajustar stock" para `p` en modo "Agregar piezas" (el modo por default tras un escaneo). */
+  function openAdjust(p) {
+    setAdjustModal(p)
+    setAdjustDirection('IN')
+    setAdjustQty('')
+    setAdjustReason('')
+  }
+
   /**
-   * Maneja el Enter del campo "Escanear código de barras" (lo manda automáticamente un
-   * lector tras "teclear" el código). Busca coincidencia EXACTA: si el producto ya existe,
-   * abre directo su modal de "Ajustar stock" en modo "Agregar piezas" (pensado para
-   * registrar mercancía entrante); si no existe, abre "Nuevo producto" con el código ya
-   * precargado. En ambos casos limpia el campo para poder seguir escaneando de corrido.
+   * Punto único al que llegan tanto el campo "Escanear código de barras" como el listener
+   * global de teclado (ver más abajo): busca coincidencia EXACTA por código. Si el producto
+   * ya existe, le pregunta al usuario qué quiere hacer (editar o ajustar stock) mediante
+   * `choiceModal` — salvo que no tenga permiso de editar (no ADMIN), en cuyo caso va
+   * directo a "Ajustar stock", su única opción real. Si no existe, abre "Nuevo producto"
+   * con el código ya precargado, para dar de alta sin volver a teclearlo.
    */
+  async function handleScannedCode(code) {
+    const found = (await getProductByBarcode(code).catch(() => null))?.data?.data
+    if (found) {
+      if (isAdmin) setChoiceModal(found)
+      else openAdjust(found)
+    } else {
+      notify(`Código "${code}" no encontrado — completa los datos para darlo de alta`, 'info')
+      openNew(code)
+    }
+  }
+
+  /** Maneja el Enter del campo "Escanear código de barras" (lo manda automáticamente un lector tras "teclear" el código). */
   async function handleScanKeyDown(e) {
     if (e.key !== 'Enter') return
     e.preventDefault()
     const code = scanCode.trim()
     if (!code) return
     setScanCode('')
-    const found = (await getProductByBarcode(code).catch(() => null))?.data?.data
-    if (found) {
-      setAdjustModal(found)
-      setAdjustDirection('IN')
-      setAdjustQty('')
-      setAdjustReason('')
-    } else {
-      notify(`Código "${code}" no encontrado — completa los datos para darlo de alta`, 'info')
-      openNew(code)
-    }
+    await handleScannedCode(code)
     scanInputRef.current?.focus()
   }
+
+  // Mantiene al día si hay algún modal abierto (producto, ajuste, o la elección
+  // editar/ajustar), para que el listener global de escaneo no interfiera con lo que el
+  // usuario esté tecleando dentro de esos modales (p. ej. el campo código de barras del
+  // formulario de "Nuevo producto").
+  useEffect(() => { modalOpenRef.current = showModal || !!adjustModal || !!choiceModal }, [showModal, adjustModal, choiceModal])
+
+  // Captura de escaneo "global": igual que en el POS, una pistola lectora teclea cada
+  // carácter en milisegundos y termina con Enter, mucho más rápido que una persona
+  // escribiendo a mano — así que no hace falta tener el foco en el campo de escaneo
+  // específico. Se descarta cualquier secuencia con tiempo entre teclas mayor a
+  // SCAN_GAP_MS (probablemente un Enter humano, no un escaneo) y se ignora mientras haya
+  // algún modal abierto o el foco ya esté en el campo de escaneo (que maneja su propio
+  // Enter arriba).
+  useEffect(() => {
+    const SCAN_GAP_MS = 50
+    const MIN_CODE_LENGTH = 3
+    let buffer = ''
+    let lastTime = 0
+
+    function onKeyDown(e) {
+      if (modalOpenRef.current || e.ctrlKey || e.metaKey || e.altKey) return
+      const now = Date.now()
+      const gap = now - lastTime
+      lastTime = now
+
+      if (e.key === 'Enter') {
+        const code = buffer
+        buffer = ''
+        if (code.length < MIN_CODE_LENGTH || gap >= SCAN_GAP_MS) return
+        if (document.activeElement === scanInputRef.current) return
+        e.preventDefault()
+        handleScannedCode(code)
+        return
+      }
+
+      if (e.key.length === 1) {
+        buffer = gap < SCAN_GAP_MS ? buffer + e.key : e.key
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   /**
    * Guarda el formulario de producto, ya sea creando uno nuevo o actualizando
@@ -134,14 +202,36 @@ export default function Inventory() {
    * usuario pueda corregir sin perder lo capturado. Al guardar con éxito cierra el modal
    * y recarga el catálogo completo (para reflejar el nuevo/actualizado producto y, si
    * cambió el stock inicial, el aviso de stock mínimo).
+   *
+   * Categoría nueva ("Otra..."): si el selector quedó en `NEW_CATEGORY_VALUE`, primero
+   * crea la categoría con el nombre capturado en `newCategoryName` y usa el id que
+   * devuelve el backend para el producto — todo en un solo Guardar, sin que el usuario
+   * tenga que ir a otra pantalla a darla de alta antes. Si la creación de la categoría
+   * falla (nombre repetido, etc.), el producto tampoco se guarda: se corta ahí y se
+   * muestra el error, para no dejar a medias un producto sin categoría real.
+   *
+   * Pide confirmación explícita antes de tocar el backend (crear o editar), para evitar
+   * altas/ediciones accidentales por un clic de más.
    */
   async function handleSave(e) {
     e.preventDefault()
+    const confirmMsg = editProduct
+      ? `¿Deseas guardar los cambios de "${form.name}"?`
+      : `¿Deseas agregar el producto "${form.name}"?`
+    if (!(await confirmDialog(confirmMsg, { confirmText: editProduct ? 'Guardar cambios' : 'Agregar', danger: false }))) return
     setLoading(true)
     setError('')
     try {
+      let categoryId = form.categoryId
+      if (categoryId === NEW_CATEGORY_VALUE) {
+        const name = newCategoryName.trim()
+        if (!name) { setError('Escribe el nombre de la nueva categoría'); setLoading(false); return }
+        const newCategory = (await createCategory({ name })).data.data
+        setCategories((prev) => [...prev, newCategory])
+        categoryId = newCategory.id
+      }
       const payload = { ...form, price: Number(form.price), cost: form.cost ? Number(form.cost) : null,
-        stock: Number(form.stock), minStock: Number(form.minStock), categoryId: Number(form.categoryId) }
+        stock: Number(form.stock), minStock: Number(form.minStock), categoryId: Number(categoryId) }
       if (editProduct) await updateProduct(editProduct.id, payload)
       else await createProduct(payload)
       setShowModal(false)
@@ -172,10 +262,17 @@ export default function Inventory() {
    * mínimo y, si el producto quedó en su nivel mínimo o por debajo, muestra un aviso rojo
    * adicional (`adjustNotice`) con el nombre y las existencias restantes — distinto del
    * aviso amarillo general de `lowStockItems`, que solo se refresca al volver a cargar.
+   *
+   * Pide confirmación explícita antes de tocar el backend, con el verbo (agregar/quitar)
+   * y la cantidad ya resueltos según `adjustDirection`.
    */
   async function handleAdjust(e) {
     e.preventDefault()
     if (adjustSignedQty === 0) return
+    const verb = adjustDirection === 'IN' ? 'agregar' : 'quitar'
+    const prep = adjustDirection === 'IN' ? 'a' : 'de'
+    const confirmMsg = `¿Deseas ${verb} ${adjustQtyNum} ${adjustModal.unit} ${prep} "${adjustModal.name}"?`
+    if (!(await confirmDialog(confirmMsg, { confirmText: 'Confirmar', danger: adjustDirection === 'OUT' }))) return
     setLoading(true)
     try {
       const res = await adjustStock(adjustModal.id, { quantity: adjustSignedQty, reason: adjustReason })
@@ -280,8 +377,7 @@ export default function Inventory() {
                     {isAdmin && (
                       <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(p)}>Editar</button>
                     )}
-                    <button className="text-purple-600 hover:underline text-xs"
-                      onClick={() => { setAdjustModal(p); setAdjustDirection('IN'); setAdjustQty(''); setAdjustReason('') }}>Ajustar</button>
+                    <button className="text-purple-600 hover:underline text-xs" onClick={() => openAdjust(p)}>Ajustar</button>
                     {isAdmin && (
                       <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(p)}>Desact.</button>
                     )}
@@ -322,7 +418,13 @@ export default function Inventory() {
                   <select className="input" required value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
                     <option value="">Seleccionar...</option>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    <option value={NEW_CATEGORY_VALUE}>Otra...</option>
                   </select></div>
+                {form.categoryId === NEW_CATEGORY_VALUE && (
+                  <div><label className="text-xs font-medium text-gray-600">Nombre de la nueva categoría *</label>
+                    <input className="input" required autoFocus value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)} placeholder="Ej. Electrónica" /></div>
+                )}
               </div>
               <div><label className="text-xs font-medium text-gray-600">Descripción</label>
                 <textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
@@ -332,6 +434,29 @@ export default function Inventory() {
                 <button type="submit" className="btn-primary" disabled={loading}>{loading ? 'Guardando...' : 'Guardar'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Choice modal: tras un escaneo de un código ya existente, pregunta qué hacer (solo ADMIN llega aquí) */}
+      {choiceModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h3 className="text-lg font-bold mb-1">Producto encontrado</h3>
+            <p className="text-sm text-gray-500 mb-4">{choiceModal.name} — código {choiceModal.barcode}</p>
+            <div className="grid grid-cols-1 gap-2">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => { const p = choiceModal; setChoiceModal(null); openEdit(p) }}
+              >✏️ Editar producto</button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => { const p = choiceModal; setChoiceModal(null); openAdjust(p) }}
+              >➕ Ajustar stock</button>
+            </div>
+            <button type="button" className="text-sm text-gray-400 hover:text-gray-600 mt-4 w-full text-center" onClick={() => setChoiceModal(null)}>Cancelar</button>
           </div>
         </div>
       )}

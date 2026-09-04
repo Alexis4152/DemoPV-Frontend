@@ -85,10 +85,15 @@ export default function Users() {
     setShowModal(true)
   }
 
-  // Crea o actualiza el usuario según haya o no un `editUser` en edición, y recarga el
+  // Crea o actualiza el usuario según haya o no un `editUser` en edición (previa
+  // confirmación explícita, para evitar altas/ediciones accidentales), y recarga el
   // listado (respetando los filtros aplicados).
   async function handleSave(e) {
     e.preventDefault()
+    const confirmMsg = editUser
+      ? `¿Deseas guardar los cambios de "${form.name}"?`
+      : `¿Deseas crear el usuario "${form.name}"?`
+    if (!(await confirmDialog(confirmMsg, { confirmText: editUser ? 'Guardar cambios' : 'Crear', danger: false }))) return
     setLoading(true)
     setError('')
     try {
