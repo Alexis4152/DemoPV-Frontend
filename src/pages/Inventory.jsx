@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { getProducts, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts } from '../api/products'
+import { useEffect, useRef, useState } from 'react'
+import { getProducts, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode } from '../api/products'
 import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
@@ -22,6 +22,13 @@ const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '',
  * cumplir): crear/editar/desactivar productos y registrar salidas de stock (ajuste "OUT",
  * es decir reducir stock manualmente fuera de una venta) están reservados a ADMIN. Cualquier
  * usuario con acceso a esta pantalla puede registrar entradas de stock ("IN").
+ *
+ * Lector de código de barras (altas/bajas): el campo "Escanear código de barras" es
+ * independiente del filtro de texto — al presionar Enter (lo que manda un lector
+ * automáticamente tras "teclear" el código) hace una búsqueda EXACTA. Si el código ya
+ * existe, abre directo el modal de "Ajustar stock" de ese producto (en modo "Agregar
+ * piezas", pensado para registrar mercancía que va llegando); si no existe, abre el modal
+ * de "Nuevo producto" con el código ya precargado, para dar de alta sin volver a teclearlo.
  */
 export default function Inventory() {
   const { isAdmin } = useAuth()
@@ -41,6 +48,8 @@ export default function Inventory() {
   const [error, setError] = useState('')
   const [lowStockItems, setLowStockItems] = useState([])
   const [adjustNotice, setAdjustNotice] = useState('')
+  const [scanCode, setScanCode] = useState('')
+  const scanInputRef = useRef(null)
 
   /**
    * Recarga, en paralelo, las tres fuentes de datos que usa la pantalla: el catálogo
@@ -67,10 +76,14 @@ export default function Inventory() {
     return matchQ && matchC
   })
 
-  /** Abre el modal de producto en modo "alta": limpia el formulario y cualquier error previo. */
-  function openNew() {
+  /**
+   * Abre el modal de producto en modo "alta": limpia el formulario y cualquier error
+   * previo. Si viene de un escaneo de un código desconocido (`prefillBarcode`), lo
+   * precarga en el formulario para no tener que volver a teclearlo.
+   */
+  function openNew(prefillBarcode) {
     setEditProduct(null)
-    setForm(emptyForm)
+    setForm({ ...emptyForm, barcode: prefillBarcode ?? '' })
     setError('')
     setShowModal(true)
   }
@@ -85,6 +98,32 @@ export default function Inventory() {
     })
     setError('')
     setShowModal(true)
+  }
+
+  /**
+   * Maneja el Enter del campo "Escanear código de barras" (lo manda automáticamente un
+   * lector tras "teclear" el código). Busca coincidencia EXACTA: si el producto ya existe,
+   * abre directo su modal de "Ajustar stock" en modo "Agregar piezas" (pensado para
+   * registrar mercancía entrante); si no existe, abre "Nuevo producto" con el código ya
+   * precargado. En ambos casos limpia el campo para poder seguir escaneando de corrido.
+   */
+  async function handleScanKeyDown(e) {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    const code = scanCode.trim()
+    if (!code) return
+    setScanCode('')
+    const found = (await getProductByBarcode(code).catch(() => null))?.data?.data
+    if (found) {
+      setAdjustModal(found)
+      setAdjustDirection('IN')
+      setAdjustQty('')
+      setAdjustReason('')
+    } else {
+      notify(`Código "${code}" no encontrado — completa los datos para darlo de alta`, 'info')
+      openNew(code)
+    }
+    scanInputRef.current?.focus()
   }
 
   /**
@@ -172,7 +211,7 @@ export default function Inventory() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Inventario</h2>
-        {isAdmin && <button className="btn-primary" onClick={openNew}>+ Nuevo producto</button>}
+        {isAdmin && <button className="btn-primary" onClick={() => openNew()}>+ Nuevo producto</button>}
       </div>
 
       {adjustNotice && (
@@ -188,6 +227,19 @@ export default function Inventory() {
           {lowStockItems.map((p) => p.name).join(', ')}
         </div>
       )}
+
+      {/* Escaneo de código de barras: alta/ajuste rápido, independiente del filtro de abajo */}
+      <div className="card mb-4 bg-purple-50/50 border-purple-100">
+        <label className="text-xs font-medium text-gray-600 block mb-1">📷 Escanear código de barras (alta / ajuste rápido)</label>
+        <input
+          ref={scanInputRef}
+          className="input"
+          placeholder="Escanea o teclea el código y presiona Enter..."
+          value={scanCode}
+          onChange={(e) => setScanCode(e.target.value)}
+          onKeyDown={handleScanKeyDown}
+        />
+      </div>
 
       {/* Filters */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">

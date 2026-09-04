@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { searchProducts } from '../api/products'
+import { searchProducts, getProductByBarcode } from '../api/products'
 import { getCategories } from '../api/categories'
 import { createSale } from '../api/sales'
 import { getOpenCashCut } from '../api/cashCuts'
+import { printSaleTicket } from '../utils/printer'
+import { useNotify } from '../context/NotifyContext'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
@@ -25,8 +27,15 @@ const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency:
  * cada línea del carrito). Como es un snapshot, si el stock real cambia en el servidor
  * mientras el producto ya está en el carrito (p. ej. otra caja vendió el mismo producto),
  * esta pantalla no se entera hasta que el backend rechace el cobro.
+ *
+ * Cambio en efectivo: cuando el método de pago es CASH, el cajero debe capturar con
+ * cuánto paga el cliente antes de poder cobrar (el botón queda deshabilitado hasta que el
+ * monto alcance el total) — el cambio a entregar se calcula en pantalla al instante, y el
+ * backend vuelve a calcularlo y a guardarlo con la venta (aparece también en el ticket).
  */
 export default function POS() {
+  const { notify } = useNotify()
+  const [printing, setPrinting] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [highlighted, setHighlighted] = useState(0)
@@ -34,6 +43,7 @@ export default function POS() {
   const [categoryId, setCategoryId] = useState('')
   const [cart, setCart] = useState([])
   const [paymentMethod, setPaymentMethod] = useState('CASH')
+  const [amountReceived, setAmountReceived] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
   const [cashCut, setCashCut] = useState(null)
@@ -97,12 +107,29 @@ export default function POS() {
 
   /**
    * Navegación por teclado en el dropdown de resultados de búsqueda: flechas para mover
-   * el resaltado, Enter para agregar el producto resaltado al carrito (equivalente a
-   * hacer clic), Escape para cerrar el dropdown. Pensado para que un cajero pueda operar
-   * el POS sin soltar el teclado (o usando una pistola lectora de código de barras que
-   * simula tecleo + Enter).
+   * el resaltado, Enter para agregar un producto al carrito, Escape para cerrar el
+   * dropdown. Pensado para que un cajero pueda operar el POS sin soltar el teclado, o
+   * usando una pistola lectora de código de barras que simula tecleo + Enter.
+   *
+   * Al presionar Enter, se prioriza una búsqueda EXACTA por código de barras sobre el
+   * resultado resaltado de la búsqueda por texto (`results`): un lector manda el Enter
+   * casi de inmediato después de "teclear" el código, más rápido que el debounce de
+   * 250ms de la búsqueda por texto, así que `results` puede seguir vacío/desactualizado
+   * en ese instante. Si el texto no parece un código (trae espacios, es un nombre
+   * tecleado a mano) o no hay coincidencia exacta, cae de vuelta al resaltado normal.
    */
-  function handleSearchKeyDown(e) {
+  async function handleSearchKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const code = query.trim()
+      if (code && !code.includes(' ')) {
+        const exact = (await getProductByBarcode(code).catch(() => null))?.data?.data
+        if (exact) { addToCart(exact); return }
+      }
+      const product = results[highlighted]
+      if (product) addToCart(product)
+      return
+    }
     if (results.length === 0) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -110,10 +137,6 @@ export default function POS() {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setHighlighted((h) => Math.max(h - 1, 0))
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      const product = results[highlighted]
-      if (product) addToCart(product)
     } else if (e.key === 'Escape') {
       setResults([])
     }
@@ -143,6 +166,23 @@ export default function POS() {
   // precio unitario × cantidad de cada línea del carrito.
   const subtotal = cart.reduce((s, i) => s + i.unitPrice * i.quantity, 0)
 
+  // Cambio a entregar en efectivo: solo tiene sentido para CASH, y solo una vez que el
+  // cajero capturó un monto recibido válido (numérico y >= al total) — con cualquier otro
+  // método de pago, o sin capturar nada todavía, queda en null (no se muestra ni se cobra).
+  const amountReceivedNum = amountReceived === '' ? null : Number(amountReceived)
+  const change = paymentMethod === 'CASH' && amountReceivedNum != null && !Number.isNaN(amountReceivedNum)
+    ? amountReceivedNum - subtotal
+    : null
+  // En efectivo, cobrar exige un monto recibido válido que alcance para cubrir el total —
+  // el backend vuelve a validar esto de todas formas, esta es solo la barrera de UI.
+  const cashAmountMissing = paymentMethod === 'CASH' && (change === null || change < 0)
+
+  /** Cambia el método de pago, limpiando el monto recibido si ya no aplica (no es CASH). */
+  function handlePaymentMethodChange(value) {
+    setPaymentMethod(value)
+    if (value !== 'CASH') setAmountReceived('')
+  }
+
   /**
    * Cobra el carrito: registra la venta en el backend (que la asocia al corte de caja
    * abierto del cajero) y muestra la pantalla de éxito con el ticket. No hace nada si el
@@ -158,7 +198,7 @@ export default function POS() {
    * corregir y reintentar.
    */
   async function handleCheckout() {
-    if (cart.length === 0 || !cashCut) return
+    if (cart.length === 0 || !cashCut || cashAmountMissing) return
     setLoading(true)
     setError('')
     try {
@@ -166,6 +206,9 @@ export default function POS() {
         customerName: customerName || null,
         customerEmail: customerEmail || null,
         paymentMethod,
+        // Solo se manda en efectivo; el backend lo exige ahí y lo ignora para los demás
+        // métodos, pero no tiene sentido enviarlo si el cajero ni lo capturó.
+        amountReceived: paymentMethod === 'CASH' ? amountReceivedNum : undefined,
         items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
       })
       const lowStockWarnings = cart.filter((i) => i.minStock != null && (i.stock - i.quantity) <= i.minStock)
@@ -173,10 +216,32 @@ export default function POS() {
       setCart([])
       setCustomerName('')
       setCustomerEmail('')
+      setAmountReceived('')
+      // Se imprime "al vuelo": si la caja no tiene QZ Tray instalado/corriendo, o la
+      // impresora está apagada, no debe tumbar la venta ya registrada — solo se avisa
+      // para que el cajero pueda usar "Reimprimir ticket" en cuanto lo resuelva.
+      printTicket(res.data.data.id)
     } catch (err) {
       setError(err.response?.data?.message ?? 'Error al registrar venta')
     } finally {
       setLoading(false)
+    }
+  }
+
+  /**
+   * Manda el ticket de una venta ya registrada a la impresora térmica vía QZ Tray (ver
+   * `utils/printer.js`). Nunca bloquea el flujo de venta: si falla (impresora apagada,
+   * QZ Tray no instalado, etc.) solo se avisa al cajero, quien puede reimprimir cuando
+   * quiera desde la pantalla de éxito.
+   */
+  async function printTicket(saleId) {
+    setPrinting(true)
+    try {
+      await printSaleTicket(saleId)
+    } catch (err) {
+      notify(err.message ?? 'No se pudo imprimir el ticket', 'error')
+    } finally {
+      setPrinting(false)
     }
   }
 
@@ -189,7 +254,14 @@ export default function POS() {
         <div className="text-5xl mb-4">✅</div>
         <h3 className="text-xl font-bold text-gray-900 mb-2">Venta registrada</h3>
         <p className="text-gray-500 mb-1">Ticket #{success.id}</p>
-        <p className="text-2xl font-bold text-purple-700 mb-6">{fmt(success.total)}</p>
+        <p className="text-2xl font-bold text-purple-700 mb-1">{fmt(success.total)}</p>
+        {success.amountReceived != null && (
+          <div className="text-sm text-gray-500 mb-6">
+            <p>Recibido: {fmt(success.amountReceived)}</p>
+            <p className="font-semibold text-gray-700">Cambio: {fmt(success.changeGiven)}</p>
+          </div>
+        )}
+        {success.amountReceived == null && <div className="mb-6" />}
         {success.lowStockWarnings?.length > 0 && (
           <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded-lg px-4 py-3 mb-6 text-left">
             ⚠️ Producto{success.lowStockWarnings.length > 1 ? 's' : ''} en nivel mínimo de stock:
@@ -200,6 +272,13 @@ export default function POS() {
             </ul>
           </div>
         )}
+        <button
+          className="btn-secondary w-full mb-3"
+          onClick={() => printTicket(success.id)}
+          disabled={printing}
+        >
+          🖨️ {printing ? 'Imprimiendo…' : 'Reimprimir ticket'}
+        </button>
         <button className="btn-primary" onClick={() => setSuccess(null)}>Nueva venta</button>
       </div>
     )
@@ -331,12 +410,34 @@ export default function POS() {
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Método de pago</label>
-              <select className="input mt-1" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+              <select className="input mt-1" value={paymentMethod} onChange={(e) => handlePaymentMethodChange(e.target.value)}>
                 <option value="CASH">💵 Efectivo</option>
                 <option value="CARD">💳 Tarjeta</option>
                 <option value="TRANSFER">🏦 Transferencia</option>
               </select>
             </div>
+
+            {paymentMethod === 'CASH' && (
+              <div>
+                <label className="text-xs font-medium text-gray-600">¿Con cuánto paga el cliente?</label>
+                <input
+                  className="input mt-1"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={amountReceived}
+                  onChange={(e) => setAmountReceived(e.target.value)}
+                />
+                {amountReceived !== '' && (
+                  change != null && change >= 0 ? (
+                    <p className="text-sm font-semibold text-green-600 mt-1">Cambio: {fmt(change)}</p>
+                  ) : (
+                    <p className="text-sm font-semibold text-red-500 mt-1">Falta {fmt(subtotal - amountReceivedNum)}</p>
+                  )
+                )}
+              </div>
+            )}
           </div>
 
           <div className="border-t border-gray-100 pt-4 mb-4">
@@ -353,10 +454,13 @@ export default function POS() {
           <button
             className="btn-primary w-full py-3 text-base disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={handleCheckout}
-            disabled={cart.length === 0 || loading || !cashCut}
-            title={!cashCut ? 'Abre un corte de caja para poder cobrar' : undefined}
+            disabled={cart.length === 0 || loading || !cashCut || cashAmountMissing}
+            title={!cashCut ? 'Abre un corte de caja para poder cobrar' : cashAmountMissing ? 'Captura cuánto pagó el cliente en efectivo' : undefined}
           >
-            {loading ? 'Procesando...' : !cashCut ? 'Abre un corte para cobrar' : `Cobrar ${fmt(subtotal)}`}
+            {loading ? 'Procesando...'
+              : !cashCut ? 'Abre un corte para cobrar'
+              : cashAmountMissing ? 'Captura el monto recibido'
+              : `Cobrar ${fmt(subtotal)}`}
           </button>
         </div>
       </div>

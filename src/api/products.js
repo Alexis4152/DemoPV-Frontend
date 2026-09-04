@@ -22,6 +22,16 @@ export const searchProducts = (params) => api.get('/products/search', { params }
 export const getProduct = (id) => api.get(`/products/${id}`)
 
 /**
+ * Busca un producto activo por su código de barras EXACTO (pensado para lectores de
+ * código de barras en venta/inventario, a diferencia de `searchProducts` que hace
+ * coincidencia parcial). A diferencia de `getProduct`, un código que no exista no es un
+ * error: la respuesta llega igual con `data: null`, no lanza excepción.
+ * @param {string} barcode Código de barras exacto a buscar.
+ * @returns {Promise} Respuesta de axios con el producto encontrado, o `data: null`.
+ */
+export const getProductByBarcode = (barcode) => api.get(`/products/by-barcode/${encodeURIComponent(barcode)}`)
+
+/**
  * Crea un nuevo producto.
  * @param {Object} data Datos del producto (nombre, precio, categoría, stock, etc.).
  * @returns {Promise} Respuesta de axios con el producto creado.

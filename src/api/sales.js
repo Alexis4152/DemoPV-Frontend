@@ -28,3 +28,15 @@ export const createSale = (data) => api.post('/sales', data)
  * @returns {Promise} Respuesta de axios confirmando la cancelación.
  */
 export const cancelSale = (id) => api.delete(`/sales/${id}`)
+
+/**
+ * Arma el ticket de una venta en formato ESC/POS (texto + comandos de control), listo
+ * para pasárselo directo a un puente local de impresión (ver `utils/printer.js`) — no es
+ * un PDF, es lo que la impresora térmica USB entiende byte por byte. Viene como una sola
+ * cadena hexadecimal (dos caracteres por byte) para que no se corrompa ningún byte de
+ * control al viajar por JSON/HTTP. Incluye el comando de apertura del cajón al final si
+ * la venta fue en efectivo.
+ * @param {number|string} id Id de la venta a imprimir.
+ * @returns {Promise} Respuesta de axios con el ticket completo en hexadecimal (`data.data`).
+ */
+export const getSaleTicketEscPos = (id) => api.get(`/sales/${id}/ticket-escpos`)

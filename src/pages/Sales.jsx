@@ -266,6 +266,12 @@ export default function Sales() {
             <div className="border-t border-gray-100 pt-3 flex justify-between font-bold text-base">
               <span>Total</span><span className="text-purple-700">{fmt(detail.total)}</span>
             </div>
+            {detail.amountReceived != null && (
+              <div className="text-sm text-gray-500 mt-1">
+                <div className="flex justify-between"><span>Recibido</span><span>{fmt(detail.amountReceived)}</span></div>
+                <div className="flex justify-between font-medium text-gray-700"><span>Cambio</span><span>{fmt(detail.changeGiven)}</span></div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -108,7 +108,7 @@ export default function Layout({ children }) {
             <>
               <div className="flex items-center gap-3">
                 <img src={sidebarLogo} alt={user?.tienda?.name || 'Nexora Systems'} className="w-11 h-11 rounded-full shrink-0 object-cover shadow-[0_0_12px_rgba(43,132,245,0.5)]" />
-                <h1 className="text-base font-bold text-white leading-tight">Punto de Venta Demo</h1>
+                <h1 className="text-base font-bold text-white leading-tight">{user?.tienda?.name || 'Punto de Venta Demo'}</h1>
               </div>
               <p className="text-xs text-purple-300/70 mt-2 whitespace-nowrap">{user?.name}</p>
             </>
