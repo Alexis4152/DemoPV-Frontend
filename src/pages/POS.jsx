@@ -41,13 +41,24 @@ export default function POS() {
   // `resolveDiscountCap`); llegan como parte de la sesión (`user.tienda`), sin necesitar
   // una llamada aparte — se actualizan solos si el admin los cambia y refresca su sesión.
   const tienda = user?.tienda
+  // Sin ningún límite configurado por el ADMIN, los descuentos quedan deshabilitados por
+  // completo (ver `resolveDiscountCap`) — no hay un "sin restricción" implícito.
+  const discountsDisabled = tienda?.maxDiscountAmount == null && tienda?.maxDiscountPercent == null
   const [printing, setPrinting] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [highlighted, setHighlighted] = useState(0)
   const [categories, setCategories] = useState([])
   const [categoryId, setCategoryId] = useState('')
+  // Se incrementa cada vez que se hace clic en un chip de categoría (incluso el que ya
+  // está activo) para forzar una recarga del catálogo — ver `selectCategory` y el
+  // `useEffect` de búsqueda: sin esto, clicar de nuevo la misma categoría no cambia
+  // `categoryId` y por lo tanto no dispara ninguna recarga por sí solo.
+  const [browseRefresh, setBrowseRefresh] = useState(0)
   const [cart, setCart] = useState([])
+  // Ids de las líneas del carrito marcadas con su checkbox, para quitar varias a la vez
+  // sin tener que darle ✕ una por una (ver `toggleSelectAll`/`removeSelected`).
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [paymentMethod, setPaymentMethod] = useState('CASH')
   const [amountReceived, setAmountReceived] = useState('')
   const [customerName, setCustomerName] = useState('')
@@ -62,6 +73,7 @@ export default function POS() {
   const [error, setError] = useState('')
   const searchInputRef = useRef(null)
   const successRef = useRef(success)
+  const searchBoxRef = useRef(null)
 
   // Al montar: revisa si el cajero ya tiene un corte de caja abierto (silenciosamente —
   // el .catch vacío trata "no hay corte abierto" como estado normal, no como error) y
@@ -120,21 +132,50 @@ export default function POS() {
   }, [])
 
   // Búsqueda de productos con debounce de 250ms para no golpear la API en cada tecla.
-  // Si no hay texto ni categoría seleccionada, limpia resultados sin llamar al backend.
-  // Con texto se piden hasta 8 coincidencias (autocompletar); solo con categoría (sin
-  // texto) se listan hasta 50, a modo de catálogo navegable por categoría.
+  // Con texto se piden hasta 8 coincidencias (autocompletar); sin texto se listan hasta 50
+  // (con o sin categoría — "Todas" también es un catálogo navegable, no solo las
+  // categorías específicas). `browseRefresh` fuerza una recarga cuando se hace clic en un
+  // chip de categoría aunque `categoryId` no cambie de valor (ver `selectCategory`).
   useEffect(() => {
-    if (!query.trim() && !categoryId) { setResults([]); return }
     const t = setTimeout(() => {
       searchProducts({ q: query || undefined, categoryId: categoryId || undefined, size: query.trim() ? 8 : 50 })
         .then((r) => { setResults(r.data.data ?? []); setHighlighted(0) })
     }, 250)
     return () => clearTimeout(t)
-  }, [query, categoryId])
+  }, [query, categoryId, browseRefresh])
 
-  /** Selecciona una categoría para filtrar el catálogo; volver a hacer clic en la misma la deselecciona (toggle). */
+  // Cierra la lista de resultados/catálogo con un clic afuera o Escape — sobre todo
+  // importante navegando por categoría, donde la lista ya no se cierra sola al agregar un
+  // producto (ver `addToCart`) y antes no había ninguna forma de quitarla de encima sin
+  // cambiar de categoría. Van en un listener del documento (no en el `onKeyDown` del
+  // input) para que funcionen aunque el foco ya no esté en el buscador — p. ej. después de
+  // hacer scroll dentro de la lista con el mouse.
+  useEffect(() => {
+    function onPointerDown(e) {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target)) setResults([])
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setResults([])
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [])
+
+  /**
+   * Selecciona una categoría para filtrar el catálogo (o "Todas" con `id=''`, que quita el
+   * filtro). Ya NO alterna al volver a hacer clic en la misma categoría — antes eso la
+   * deseleccionaba (toggle), lo cual, combinado con cerrar la lista con clic afuera/Escape,
+   * dejaba sin ninguna forma de "recargarla" sin cambiar de categoría e ir y volver.
+   * `browseRefresh` fuerza la recarga siempre, incluso si `categoryId` termina en el mismo
+   * valor que ya tenía.
+   */
   function selectCategory(id) {
-    setCategoryId((prev) => prev === id ? '' : id)
+    setCategoryId(id)
+    setBrowseRefresh((n) => n + 1)
     searchInputRef.current?.focus()
   }
 
@@ -145,16 +186,28 @@ export default function POS() {
    * - Si ya está en el carrito y sumar una unidad más superaría el stock disponible, la
    *   línea simplemente no cambia (sin mensaje de error) — el buscador ya muestra las
    *   existencias junto a cada resultado, así que se asume que el cajero puede verlas.
-   * Al agregar, limpia la búsqueda y regresa el foco al input para poder seguir
-   * escaneando/tecleando el siguiente producto sin usar el mouse.
+   * Al agregar, si el cajero estaba tecleando una búsqueda por texto, la limpia junto con
+   * los resultados (buscó un producto puntual, lo agregó, listo para el siguiente). Pero
+   * si solo estaba navegando una categoría (sin texto, el buscador funciona como catálogo
+   * navegable — ver el `useEffect` de arriba), la lista se queda tal cual: limpiarla ahí
+   * dejaba la pantalla sin nada que mostrar hasta cambiar de categoría y regresar, ya que
+   * nada vuelve a pedirla sola (el `useEffect` solo reacciona a cambios de `query`/
+   * `categoryId`, no a que la lista se haya vaciado). Siempre regresa el foco al input
+   * para poder seguir escaneando/tecleando o clicando el siguiente producto sin fricción.
+   *
+   * Muestra un toast rápido ("<producto> agregado") cada vez que sí se agrega — sobre
+   * todo útil navegando por categoría, donde el carrito no siempre está a la vista y sin
+   * esto no había ninguna confirmación de qué se acababa de agregar. No se muestra si el
+   * intento no cambió nada (sin stock, o ya en el tope de existencias).
    */
   function addToCart(product) {
     if (product.stock <= 0) { setError(`"${product.name}" no tiene stock disponible`); return }
+    const existingBefore = cart.find((i) => i.productId === product.id)
+    if (existingBefore && existingBefore.quantity + 1 > product.stock) return
     setError('')
     setCart((prev) => {
       const existing = prev.find((i) => i.productId === product.id)
       if (existing) {
-        if (existing.quantity + 1 > product.stock) return prev
         return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i)
       }
       return [...prev, {
@@ -165,8 +218,11 @@ export default function POS() {
         discountType: 'amount', discountValue: '',
       }]
     })
-    setQuery('')
-    setResults([])
+    notify(`"${product.name}" agregado al carrito`, 'success')
+    if (query.trim()) {
+      setQuery('')
+      setResults([])
+    }
     searchInputRef.current?.focus()
   }
 
@@ -192,18 +248,25 @@ export default function POS() {
    * Resuelve, para una línea del carrito, el tope de descuento (en pesos) que fijó el ADMIN
    * en "Datos de la tienda" (`tienda.maxDiscountAmount`/`maxDiscountPercent` — ver
    * `StoreInfo.jsx`). Ambos límites son independientes y opcionales: si los dos están
-   * definidos, aplica el que resulte más restrictivo para esta línea en particular. Sin
-   * ningún límite configurado, el tope es el importe bruto de la línea (sin restricción
-   * real, más allá de no poder descontar más de lo que vale).
+   * definidos, aplica el que resulte más restrictivo para esta línea en particular.
    *
-   * @returns {{ capAmount: number, reason: 'amount'|'percent'|null, maxAmount: number|null, maxPercent: number|null }}
+   * Si el ADMIN no configuró NINGUNO de los dos, los descuentos quedan deshabilitados por
+   * completo (tope $0, `reason: 'disabled'`) — no existe un límite "sin restricción"
+   * implícito. El backend aplica exactamente la misma regla (ver `validateDiscountLimit`
+   * en `SaleService.java`), así que esto es solo para avisar de inmediato en el navegador.
+   *
+   * @returns {{ capAmount: number, reason: 'amount'|'percent'|'disabled'|null, maxAmount: number|null, maxPercent: number|null }}
    */
   function resolveDiscountCap(item) {
     const gross = item.unitPrice * item.quantity
     const maxAmount = tienda?.maxDiscountAmount != null ? Number(tienda.maxDiscountAmount) : null
     const maxPercent = tienda?.maxDiscountPercent != null ? Number(tienda.maxDiscountPercent) : null
-    const fromPercent = maxPercent != null ? gross * maxPercent / 100 : null
 
+    if (maxAmount == null && maxPercent == null) {
+      return { capAmount: 0, reason: 'disabled', maxAmount, maxPercent }
+    }
+
+    const fromPercent = maxPercent != null ? gross * maxPercent / 100 : null
     let capAmount = gross
     let reason = null
     if (maxAmount != null && maxAmount < capAmount) { capAmount = maxAmount; reason = 'amount' }
@@ -234,9 +297,11 @@ export default function POS() {
 
       if (attemptedAmount > capAmount + 0.001) {
         notify(
-          reason === 'percent'
-            ? `Ese porcentaje de descuento no está permitido, el porcentaje máximo permitido es ${maxPercent}%`
-            : `Ese descuento no está permitido, el monto máximo permitido es ${fmt(maxAmount)}`,
+          reason === 'disabled'
+            ? 'Los descuentos están deshabilitados: el administrador debe configurar un límite de descuento en Datos de la tienda.'
+            : reason === 'percent'
+              ? `Ese porcentaje de descuento no está permitido, el porcentaje máximo permitido es ${maxPercent}%`
+              : `Ese descuento no está permitido, el monto máximo permitido es ${fmt(maxAmount)}`,
           'error'
         )
         const clamped = i.discountType === 'percent' ? (gross > 0 ? (capAmount / gross) * 100 : 0) : capAmount
@@ -298,9 +363,55 @@ export default function POS() {
     }))
   }
 
-  /** Quita por completo una línea del carrito. */
+  /**
+   * Quita por completo una línea del carrito. Si era la última que quedaba, también
+   * limpia "¿Con cuánto paga el cliente?" (ver el `disabled` de ese input): sin productos
+   * no tiene sentido dejar un monto capturado esperando a que el carrito se vuelva a
+   * llenar, podría quedar mostrando un cambio que ya no corresponde a nada.
+   */
   function removeItem(productId) {
     setCart((prev) => prev.filter((i) => i.productId !== productId))
+    setSelectedIds((prev) => {
+      if (!prev.has(productId)) return prev
+      const next = new Set(prev)
+      next.delete(productId)
+      return next
+    })
+    if (cart.length <= 1) setAmountReceived('')
+  }
+
+  /** Marca/desmarca el checkbox de una línea del carrito. */
+  function toggleSelect(productId) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(productId)) next.delete(productId)
+      else next.add(productId)
+      return next
+    })
+  }
+
+  /** Marca todas las líneas si no están todas ya marcadas; si ya lo estaban, las desmarca. */
+  function toggleSelectAll() {
+    setSelectedIds((prev) => (prev.size === cart.length ? new Set() : new Set(cart.map((i) => i.productId))))
+  }
+
+  /** Quita del carrito todas las líneas marcadas de una sola vez. Igual que en `removeItem`,
+   * si con eso el carrito queda vacío, también limpia "¿Con cuánto paga el cliente?". */
+  function removeSelected() {
+    const emptiesCart = selectedIds.size >= cart.length
+    setCart((prev) => prev.filter((i) => !selectedIds.has(i.productId)))
+    setSelectedIds(new Set())
+    if (emptiesCart) setAmountReceived('')
+  }
+
+  /** Vacía el carrito por completo, previa confirmación (es fácil de deshacer con un vistazo,
+   * pero un solo click borra todo, así que conviene preguntar antes). También limpia
+   * "¿Con cuánto paga el cliente?" — ver `removeItem`. */
+  async function clearCart() {
+    if (!(await confirmDialog('¿Vaciar todo el carrito? Se quitarán todos los productos agregados.', { confirmText: 'Vaciar carrito', danger: true }))) return
+    setCart([])
+    setSelectedIds(new Set())
+    setAmountReceived('')
   }
 
   // El total a cobrar es la suma de cada línea YA con su descuento aplicado (ver
@@ -370,6 +481,7 @@ export default function POS() {
       const lowStockWarnings = cart.filter((i) => i.minStock != null && (i.stock - i.quantity) <= i.minStock)
       setSuccess({ ...res.data.data, lowStockWarnings, ticketType })
       setCart([])
+      setSelectedIds(new Set())
       setCustomerName('')
       setCustomerEmail('')
       setAmountReceived('')
@@ -475,7 +587,7 @@ export default function POS() {
           ))}
         </div>
 
-        <div className="relative mb-4">
+        <div className="relative mb-4" ref={searchBoxRef}>
           <input
             ref={searchInputRef}
             className="input pr-10"
@@ -485,7 +597,11 @@ export default function POS() {
             onKeyDown={handleSearchKeyDown}
           />
           {results.length > 0 && (
-            <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg z-20 mt-1 max-h-80 overflow-y-auto">
+            // No es "absolute": si flotara sobre el carrito de abajo, con la lista de
+            // resultados abierta se llegaba a tapar productos que el cajero ya había
+            // agregado. Al quedar en el flujo normal, empuja el carrito hacia abajo en
+            // vez de taparlo — nunca esconde nada que ya esté en la venta.
+            <div className="bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-80 overflow-y-auto">
               {results.map((p, idx) => (
                 <button
                   key={p.id}
@@ -518,10 +634,39 @@ export default function POS() {
           </div>
         ) : (
           <div className="card p-0 overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 bg-gray-50">
+              <span className="text-xs text-gray-500">
+                {selectedIds.size > 0 ? `${selectedIds.size} seleccionado${selectedIds.size === 1 ? '' : 's'}` : `${cart.length} producto${cart.length === 1 ? '' : 's'}`}
+              </span>
+              <div className="flex items-center gap-2">
+                {selectedIds.size > 0 && (
+                  <button
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-600 text-white hover:bg-purple-700 transition-colors"
+                    onClick={removeSelected}
+                  >
+                    Quitar seleccionados ({selectedIds.size})
+                  </button>
+                )}
+                <button
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-purple-600 text-purple-600 hover:bg-purple-50 transition-colors"
+                  onClick={clearCart}
+                >
+                  Vaciar carrito
+                </button>
+              </div>
+            </div>
             <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[680px]">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
+                  <th className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={cart.length > 0 && selectedIds.size === cart.length}
+                      onChange={toggleSelectAll}
+                      aria-label="Seleccionar todos los productos"
+                    />
+                  </th>
                   {['Producto', 'Precio', 'Disp.', 'Cantidad', 'Descuento', 'Subtotal', ''].map((h) => (
                     <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
                   ))}
@@ -531,7 +676,15 @@ export default function POS() {
                 {cart.map((item) => {
                   const discount = lineDiscount(item)
                   return (
-                  <tr key={item.productId}>
+                  <tr key={item.productId} className={selectedIds.has(item.productId) ? 'bg-purple-50/50' : undefined}>
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(item.productId)}
+                        onChange={() => toggleSelect(item.productId)}
+                        aria-label={`Seleccionar ${item.productName}`}
+                      />
+                    </td>
                     <td className="px-4 py-3 font-medium text-gray-900">{item.productName}</td>
                     <td className="px-4 py-3 text-gray-600">{fmt(item.unitPrice)}</td>
                     <td className="px-4 py-3 text-gray-400">{item.stock}</td>
@@ -546,23 +699,32 @@ export default function POS() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        <select
-                          className="input !w-14 !py-1 !px-1 text-xs"
-                          value={item.discountType}
-                          onChange={(e) => updateDiscountType(item.productId, e.target.value)}
+                      {discountsDisabled ? (
+                        <span
+                          className="text-xs text-gray-400 italic"
+                          title="El administrador debe configurar un límite de descuento en Datos de la tienda para poder usar esta opción"
                         >
-                          <option value="amount">$</option>
-                          <option value="percent">%</option>
-                        </select>
-                        <input
-                          type="number" min="0" step="0.01"
-                          className="input !w-20 !py-1 text-xs"
-                          placeholder="0"
-                          value={item.discountValue}
-                          onChange={(e) => updateDiscountValue(item.productId, e.target.value)}
-                        />
-                      </div>
+                          No disponible
+                        </span>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <select
+                            className="input !w-14 !py-1 !px-1 text-xs"
+                            value={item.discountType}
+                            onChange={(e) => updateDiscountType(item.productId, e.target.value)}
+                          >
+                            <option value="amount">$</option>
+                            <option value="percent">%</option>
+                          </select>
+                          <input
+                            type="number" min="0" step="0.01"
+                            className="input !w-20 !py-1 text-xs"
+                            placeholder="0"
+                            value={item.discountValue}
+                            onChange={(e) => updateDiscountValue(item.productId, e.target.value)}
+                          />
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 font-semibold text-gray-900">
                       {fmt(lineSubtotal(item))}
@@ -638,15 +800,16 @@ export default function POS() {
               <div>
                 <label className="text-xs font-medium text-gray-600">¿Con cuánto paga el cliente?</label>
                 <input
-                  className="input mt-1"
+                  className="input mt-1 disabled:opacity-60 disabled:bg-gray-100 disabled:cursor-not-allowed"
                   type="number"
                   min="0"
                   step="0.01"
                   placeholder="0.00"
                   value={amountReceived}
                   onChange={(e) => setAmountReceived(e.target.value)}
+                  disabled={cart.length === 0}
                 />
-                {amountReceived !== '' && (
+                {cart.length > 0 && amountReceived !== '' && (
                   change != null && change >= 0 ? (
                     <div className="mt-2 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 text-center">
                       <p className="text-xs font-semibold text-green-700 uppercase tracking-wide">Cambio a entregar</p>

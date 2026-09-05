@@ -7,15 +7,23 @@ import { searchProducts } from '../api/products'
 /**
  * Tarjeta de indicador (KPI) reutilizada por el Dashboard para mostrar un valor
  * destacado (ej. ventas del mes) con una etiqueta y, opcionalmente, un subtítulo.
+ *
+ * Si recibe `to`, la tarjeta completa es un link (con hover) hacia esa ruta — usado por
+ * "Stock bajo" para llevar directo a Inventario con el filtro ya aplicado; el resto de
+ * las tarjetas no son clicables (no pasan `to`).
  */
-function StatCard({ label, value, sub, color }) {
-  return (
-    <div className="card">
+function StatCard({ label, value, sub, color, to }) {
+  const content = (
+    <>
       <p className="text-sm text-gray-500">{label}</p>
       <p className={`text-2xl font-bold mt-1 ${color}`}>{value}</p>
       {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
-    </div>
+    </>
   )
+  if (to) {
+    return <Link to={to} className="card hover:shadow-md transition-shadow block">{content}</Link>
+  }
+  return <div className="card">{content}</div>
 }
 
 // Formatea un número como moneda MXN para mostrarlo en las tarjetas de indicadores.
@@ -32,20 +40,33 @@ function fmt(n) {
  * un corte de caja abierto en este momento, y cantidad de productos con stock bajo; además
  * de accesos rápidos a Punto de Venta, Inventario y Reportes.
  *
+ * Cuando hay productos en stock bajo, esa tarjeta es un link a Inventario con el filtro
+ * "Stock bajo" ya aplicado (`?availability=lowStock`, que `Inventory.jsx` lee al montar);
+ * si no hay ninguno, la tarjeta no es clicable (no tendría nada que filtrar). "Ventas del
+ * mes" enlaza a Ventas con el mismo rango de fechas del mes en curso ya aplicado
+ * (`?from=...&to=...`, que `Sales.jsx` lee al montar) y "Corte de caja" enlaza directo a
+ * Cortes de Caja (sin filtro — solo lleva a la pantalla, sin importar si hay uno abierto).
+ *
  * Cada indicador se obtiene de un endpoint distinto y se cargan en paralelo (no bloqueante
  * entre sí); si alguno falla, simplemente no se muestra su valor (los `.catch(() => {})`
  * evitan que un error en un indicador tumbe a los demás).
  */
+// Rango de fechas fijo: del día 1 del mes actual a hoy. Se usa tanto para pedir el
+// resumen de ventas del mes como para armar el link de "Ventas del mes" hacia Sales.jsx
+// (`?from=...&to=...`), así que vive fuera del componente en vez de dentro del useEffect.
+function currentMonthRange() {
+  const today = new Date().toISOString().slice(0, 10)
+  const firstOfMonth = today.slice(0, 8) + '01'
+  return { firstOfMonth, today }
+}
+
 export default function Dashboard() {
   const [summary, setSummary] = useState(null)
   const [cashCut, setCashCut] = useState(null)
   const [lowStock, setLowStock] = useState(0)
+  const { firstOfMonth, today } = currentMonthRange()
 
   useEffect(() => {
-    // Rango de fechas fijo: del día 1 del mes actual a hoy, para el resumen de ventas del mes.
-    const today = new Date().toISOString().slice(0, 10)
-    const firstOfMonth = today.slice(0, 8) + '01'
-
     getSalesSummary(firstOfMonth, today)
       .then((r) => setSummary(r.data.data))
       .catch(() => {})
@@ -72,6 +93,7 @@ export default function Dashboard() {
           value={fmt(summary?.totalSales)}
           sub={`${summary?.totalTransactions ?? 0} transacciones`}
           color="text-purple-700"
+          to={`/sales?from=${firstOfMonth}&to=${today}`}
         />
         <StatCard
           label="Ticket promedio"
@@ -83,12 +105,14 @@ export default function Dashboard() {
           value={cashCut ? 'Abierto' : 'Cerrado'}
           sub={cashCut ? `Desde ${new Date(cashCut.openedAt).toLocaleString('es-MX')}` : ''}
           color={cashCut ? 'text-green-600' : 'text-gray-400'}
+          to="/cash-cuts"
         />
         <StatCard
           label="Stock bajo"
           value={lowStock}
-          sub="productos con bajo inventario"
+          sub={lowStock > 0 ? 'Ver en inventario →' : 'productos con bajo inventario'}
           color={lowStock > 0 ? 'text-red-600' : 'text-green-600'}
+          to={lowStock > 0 ? '/inventory?availability=lowStock' : undefined}
         />
       </div>
 

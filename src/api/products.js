@@ -15,6 +15,17 @@ export const getProducts = (params) => api.get('/products', { params })
 export const searchProducts = (params) => api.get('/products/search', { params })
 
 /**
+ * Búsqueda paginada de productos para Inventario (metadatos completos de paginación),
+ * con los mismos filtros que `searchProducts` más uno opcional por historial de ventas
+ * (`sold: 'NEVER_SOLD' | 'TOP_SELLERS'`). A diferencia de `searchProducts` (usado por
+ * POS/Dashboard, devuelve solo un arreglo), esta pagina en el servidor para que
+ * Inventario no tenga que cargar el catálogo completo de un jalón.
+ * @param {Object} [params] Query params: `q`, `categoryId`, `lowStock`, `sold`, `page`, `size`.
+ * @returns {Promise} Respuesta de axios con `{content, page, size, totalElements, totalPages}`.
+ */
+export const getProductsPage = (params) => api.get('/products/page', { params })
+
+/**
  * Obtiene el detalle de un producto por id.
  * @param {number|string} id Id del producto.
  * @returns {Promise} Respuesta de axios con el producto solicitado.
@@ -30,6 +41,13 @@ export const getProduct = (id) => api.get(`/products/${id}`)
  * @returns {Promise} Respuesta de axios con el producto encontrado, o `data: null`.
  */
 export const getProductByBarcode = (barcode) => api.get(`/products/by-barcode/${encodeURIComponent(barcode)}`)
+
+/**
+ * Total histórico de unidades vendidas de cada producto activo (incluye los que nunca se
+ * han vendido, con 0) — usado para los filtros "sin ventas" / "más vendidos" de Inventario.
+ * @returns {Promise} Respuesta de axios con filas `[productId, cantidadVendida]`.
+ */
+export const getProductSalesStats = () => api.get('/products/sales-stats')
 
 /**
  * Crea un nuevo producto.

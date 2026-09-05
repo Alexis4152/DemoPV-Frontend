@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { getSales, cancelSale } from '../api/sales'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
@@ -32,12 +33,24 @@ const EMPTY_FILTERS = { from: '', to: '', customerName: '', paymentMethod: '', s
  * (revierte el stock de los productos vendidos) por lo que se pide confirmación explícita
  * y solo está disponible para ventas `COMPLETED`; la fila nunca se borra, el backend solo
  * le cambia el `status` a `CANCELLED` (por eso sigue apareciendo en el listado).
+ *
+ * Permite llegar con un rango de fechas ya aplicado desde afuera (ej. la tarjeta "Ventas
+ * del mes" del Dashboard enlaza a `/sales?from=YYYY-MM-DD&to=YYYY-MM-DD`) — se lee una
+ * sola vez al montar, tanto en `filters` (para que el formulario lo muestre) como en
+ * `appliedFilters` (para que cargue de inmediato, sin esperar a que el usuario pulse
+ * "Aplicar").
  */
 export default function Sales() {
   const { isAdmin } = useAuth()
   const { confirmDialog } = useNotify()
-  const [filters, setFilters] = useState(EMPTY_FILTERS)
-  const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
+  const [searchParams] = useSearchParams()
+  const initialFilters = () => ({
+    ...EMPTY_FILTERS,
+    from: searchParams.get('from') || EMPTY_FILTERS.from,
+    to: searchParams.get('to') || EMPTY_FILTERS.to,
+  })
+  const [filters, setFilters] = useState(initialFilters)
+  const [appliedFilters, setAppliedFilters] = useState(initialFilters)
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })

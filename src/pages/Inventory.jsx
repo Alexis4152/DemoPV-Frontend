@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { getProducts, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode } from '../api/products'
+import { useSearchParams } from 'react-router-dom'
+import { getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductSalesStats } from '../api/products'
 import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
@@ -7,6 +8,17 @@ import { useNotify } from '../context/NotifyContext'
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
 const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '', stock: '', minStock: 5, unit: 'pieza', categoryId: '' }
+const PAGE_SIZES = [10, 20, 50, 100]
+
+const AVAILABILITY_VALUES = ['lowStock', 'neverSold', 'topSellers']
+
+// 'all' | 'lowStock' | 'neverSold' | 'topSellers' -> los params que espera GET /products/page.
+function availabilityParams(availability) {
+  if (availability === 'lowStock') return { lowStock: true }
+  if (availability === 'neverSold') return { sold: 'NEVER_SOLD' }
+  if (availability === 'topSellers') return { sold: 'TOP_SELLERS' }
+  return {}
+}
 
 // Valor centinela para la opción "Otra..." del selector de categoría: no puede colisionar
 // con un id real (los ids de categoría son numéricos), así que sirve para distinguir
@@ -19,9 +31,13 @@ const NEW_CATEGORY_VALUE = '__new__'
  * (entradas por compra, salidas por merma/corrección). También muestra un aviso persistente
  * con los productos que están en su stock mínimo o por debajo (`lowStockItems`).
  *
- * A diferencia de páginas como Sales/CashCuts, esta pantalla NO pagina contra el backend:
- * `getProducts()` trae el catálogo completo de la tienda y el filtro de texto/categoría
- * (`filtered`) se aplica en el cliente sobre ese arreglo ya cargado.
+ * Paginación server-side (igual patrón que Sales/CashCuts): `GET /products/page` hace la
+ * búsqueda de texto, el filtro de categoría, el de stock bajo y el de historial de ventas
+ * ("sin ventas"/"más vendidos") todo en el servidor, para que esta pantalla siga
+ * respondiendo rápido aunque el catálogo crezca a miles de productos — a diferencia de
+ * antes, que traía el catálogo completo de un jalón y filtraba en el cliente. El texto de
+ * búsqueda lleva un debounce de 250ms (ver el `useEffect` que llama a `loadPage`) para no
+ * pegarle a la API en cada tecla.
  *
  * Control de acceso (vía `isAdmin`, solo frontend — el backend es quien realmente lo hace
  * cumplir): crear/editar/desactivar productos y registrar salidas de stock (ajuste "OUT",
@@ -40,10 +56,28 @@ const NEW_CATEGORY_VALUE = '__new__'
 export default function Inventory() {
   const { isAdmin } = useAuth()
   const { notify, confirmDialog } = useNotify()
-  const [products, setProducts] = useState([])
+  // Permite llegar con el filtro ya aplicado desde afuera (ej. la tarjeta "Stock bajo" del
+  // Dashboard enlaza a `/inventory?availability=lowStock`). Solo se lee al montar — un
+  // valor desconocido o ausente cae en 'all', el default de siempre.
+  const [searchParams] = useSearchParams()
+  const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
   const [filterCat, setFilterCat] = useState('')
+  // 'all' | 'lowStock' | 'neverSold' | 'topSellers' — se traduce a query params vía
+  // `availabilityParams` y el filtro/orden lo resuelve el backend, no esta pantalla.
+  const [availability, setAvailability] = useState(() => {
+    const fromUrl = searchParams.get('availability')
+    return AVAILABILITY_VALUES.includes(fromUrl) ? fromUrl : 'all'
+  })
+  const [page, setPage] = useState(0)
+  const [size, setSize] = useState(20)
+  // Map productId -> unidades vendidas históricas (todas las ventas completadas, sin
+  // acotar por fecha), solo para mostrar la columna "Vendidos" — el filtrado real por
+  // ventas ya lo hace el backend (ver `availabilityParams`). Cubre TODO el catálogo (no
+  // solo la página actual) porque es un query agregado ligero (2 columnas), no el
+  // catálogo completo con todos sus campos.
+  const [salesStats, setSalesStats] = useState(new Map())
   const [showModal, setShowModal] = useState(false)
   const [editProduct, setEditProduct] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -52,6 +86,10 @@ export default function Inventory() {
   const [adjustQty, setAdjustQty] = useState('')
   const [adjustReason, setAdjustReason] = useState('')
   const [loading, setLoading] = useState(false)
+  // Carga de la tabla paginada (loadPage), separado de `loading` (que es del formulario de
+  // guardar/ajustar) para que un refresco en segundo plano de la tabla no deshabilite ni
+  // cambie el texto del botón "Guardar"/"Confirmar" de un modal abierto al mismo tiempo.
+  const [tableLoading, setTableLoading] = useState(true)
   const [error, setError] = useState('')
   const [lowStockItems, setLowStockItems] = useState([])
   const [adjustNotice, setAdjustNotice] = useState('')
@@ -62,29 +100,59 @@ export default function Inventory() {
   const modalOpenRef = useRef(false)
 
   /**
-   * Recarga, en paralelo, las tres fuentes de datos que usa la pantalla: el catálogo
-   * completo de productos, las categorías (para el filtro y el formulario), y la lista de
-   * productos en stock mínimo o por debajo (`lowStock: true`, hasta 200) que alimenta el
-   * aviso amarillo persistente. Se llama tanto al montar como después de cualquier
-   * operación que pueda cambiar existencias o catálogo (guardar producto, ajustar stock,
-   * desactivar producto).
+   * Trae la página actual del catálogo usando `page`/`size`, el texto de búsqueda y los
+   * filtros de categoría/disponibilidad vigentes — todo resuelto en el servidor (ver
+   * `GET /products/page`). Se re-ejecuta automáticamente (ver el `useEffect` de abajo,
+   * con debounce de 250ms sobre el texto) cada vez que cambia cualquiera de esos valores.
    */
-  function load() {
-    getProducts().then((r) => setProducts(r.data.data ?? []))
-    getCategories().then((r) => setCategories(r.data.data ?? []))
-    searchProducts({ lowStock: true, size: 200 }).then((r) => setLowStockItems(r.data.data ?? []))
+  function loadPage() {
+    setTableLoading(true)
+    getProductsPage({
+      q: search.trim() || undefined,
+      categoryId: filterCat || undefined,
+      ...availabilityParams(availability),
+      page,
+      size,
+    }).then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
+      .finally(() => setTableLoading(false))
   }
 
-  useEffect(() => { load() }, [])
+  // Debounce de 250ms sobre el texto de búsqueda (mismo patrón que POS.jsx), para no
+  // pegarle a la API en cada tecla; categoría/disponibilidad/página/tamaño no necesitan
+  // debounce, son cambios discretos (un select o un botón), así que disparan de inmediato.
+  useEffect(() => {
+    const t = setTimeout(loadPage, 250)
+    return () => clearTimeout(t)
+  }, [search, filterCat, availability, page, size])
 
-  // Filtro 100% client-side (no hay paginación server-side en esta pantalla): busca por
-  // nombre o código de barras y opcionalmente restringe a una categoría.
-  const filtered = products.filter((p) => {
-    const q = search.toLowerCase()
-    const matchQ = !q || p.name?.toLowerCase().includes(q) || p.barcode?.includes(q)
-    const matchC = !filterCat || String(p.category?.id) === filterCat
-    return matchQ && matchC
-  })
+  /**
+   * Recarga las fuentes de datos "auxiliares" que no dependen de la página/filtro actual:
+   * las categorías (para el filtro y el formulario), la lista de productos en stock
+   * mínimo o por debajo (`lowStock: true`, hasta 200) que alimenta el aviso amarillo
+   * persistente, y el total histórico vendido por producto (columna "Vendidos" — ver
+   * `salesStats`). Se llama al montar y después de cualquier operación que pueda cambiar
+   * existencias o catálogo (guardar producto, ajustar stock, desactivar producto), junto
+   * con `loadPage()` para refrescar también la tabla.
+   */
+  function loadAux() {
+    getCategories().then((r) => setCategories(r.data.data ?? []))
+    searchProducts({ lowStock: true, size: 200 }).then((r) => setLowStockItems(r.data.data ?? []))
+    getProductSalesStats().then((r) => setSalesStats(new Map((r.data.data ?? []).map(([id, qty]) => [id, Number(qty)]))))
+  }
+
+  useEffect(() => { loadAux() }, [])
+
+  /** Refresca tabla + datos auxiliares tras una operación que puede afectar a ambos (guardar, ajustar, desactivar). */
+  function reloadAll() {
+    loadPage()
+    loadAux()
+  }
+
+  const products = pageData.content ?? []
+  const totalElements = pageData.totalElements ?? 0
+  const totalPages = pageData.totalPages ?? 0
+  const rangeFrom = totalElements === 0 ? 0 : page * size + 1
+  const rangeTo = Math.min(totalElements, page * size + products.length)
 
   /**
    * Abre el modal de producto en modo "alta": limpia el formulario y cualquier error
@@ -235,7 +303,7 @@ export default function Inventory() {
       if (editProduct) await updateProduct(editProduct.id, payload)
       else await createProduct(payload)
       setShowModal(false)
-      load()
+      reloadAll()
     } catch (err) {
       setError(err.response?.data?.message ?? 'Error al guardar')
     } finally {
@@ -280,7 +348,7 @@ export default function Inventory() {
       setAdjustModal(null)
       setAdjustQty('')
       setAdjustReason('')
-      load()
+      reloadAll()
       if (updated && updated.stock <= updated.minStock) {
         setAdjustNotice(`⚠️ "${updated.name}" ya está en su nivel mínimo de stock (${updated.stock} ${updated.unit} disponibles)`)
       }
@@ -301,7 +369,7 @@ export default function Inventory() {
   async function handleDelete(p) {
     if (!(await confirmDialog(`¿Desactivar "${p.name}"?`, { confirmText: 'Desactivar' }))) return
     await deleteProduct(p.id)
-    load()
+    reloadAll()
   }
 
   return (
@@ -339,12 +407,18 @@ export default function Inventory() {
       </div>
 
       {/* Filters */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-        <input className="input sm:max-w-xs" placeholder="Buscar por nombre o código..." value={search}
-          onChange={(e) => setSearch(e.target.value)} />
-        <select className="input sm:max-w-xs" value={filterCat} onChange={(e) => setFilterCat(e.target.value)}>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <input className="input" placeholder="Buscar por nombre o código..." value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(0) }} />
+        <select className="input" value={filterCat} onChange={(e) => { setFilterCat(e.target.value); setPage(0) }}>
           <option value="">Todas las categorías</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select className="input" value={availability} onChange={(e) => { setAvailability(e.target.value); setPage(0) }}>
+          <option value="all">Todos los productos</option>
+          <option value="lowStock">⚠️ Stock bajo</option>
+          <option value="neverSold">🚫 Sin ventas</option>
+          <option value="topSellers">🔥 Más vendidos</option>
         </select>
       </div>
 
@@ -354,13 +428,13 @@ export default function Inventory() {
         <table className="w-full text-sm min-w-[720px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              {['Producto', 'Categoría', 'Código', 'Precio', 'Stock', 'Mín.', ''].map((h) => (
+              {['Producto', 'Categoría', 'Código', 'Precio', 'Stock', 'Mín.', 'Vendidos', ''].map((h) => (
                 <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {filtered.map((p) => (
+            {products.map((p) => (
               <tr key={p.id} className="hover:bg-gray-50">
                 <td className="px-4 py-3 font-medium text-gray-900">{p.name}</td>
                 <td className="px-4 py-3 text-gray-500">{p.category?.name}</td>
@@ -372,6 +446,9 @@ export default function Inventory() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-gray-400">{p.minStock}</td>
+                <td className="px-4 py-3 text-gray-500">
+                  {salesStats.has(p.id) ? (salesStats.get(p.id) || <span className="text-gray-300 italic">Sin ventas</span>) : '—'}
+                </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
                     {isAdmin && (
@@ -385,11 +462,43 @@ export default function Inventory() {
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Sin productos</td></tr>
+            {products.length === 0 && (
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">{tableLoading ? 'Cargando...' : 'Sin productos'}</td></tr>
             )}
           </tbody>
         </table>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-sm">
+          <div className="flex items-center gap-2 text-gray-500">
+            <span>Mostrar</span>
+            <select
+              className="input !w-auto py-1"
+              value={size}
+              onChange={(e) => { setSize(Number(e.target.value)); setPage(0) }}
+            >
+              {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span>por página · {totalElements === 0 ? 'sin resultados' : `${rangeFrom}–${rangeTo} de ${totalElements}`}</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-secondary py-1 px-3 text-xs disabled:opacity-40"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              ‹ Anterior
+            </button>
+            <span className="text-gray-500 text-xs">Página {totalPages === 0 ? 0 : page + 1} de {totalPages}</span>
+            <button
+              className="btn-secondary py-1 px-3 text-xs disabled:opacity-40"
+              disabled={page + 1 >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Siguiente ›
+            </button>
+          </div>
         </div>
       </div>
 

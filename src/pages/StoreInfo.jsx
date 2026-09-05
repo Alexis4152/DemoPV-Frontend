@@ -198,15 +198,17 @@ export default function StoreInfo() {
         <div className="border-t border-gray-100 pt-4">
           <p className="text-sm font-semibold text-gray-800">Límite de descuento en ventas</p>
           <p className="text-xs text-gray-500 mb-3">
-            Evita que un cajero deje un producto prácticamente gratis: si defines uno o los dos, ningún
-            descuento por producto en el Punto de Venta podrá superarlos. Déjalos en blanco para no limitar.
+            Por seguridad, el Punto de Venta <span className="font-medium">no permite ningún descuento</span> hasta
+            que definas al menos uno de estos dos límites — así evitas que un cajero deje un producto
+            prácticamente gratis. Si defines los dos, ningún descuento por producto podrá superar cualquiera de
+            los dos.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto máximo de descuento ($)</label>
               <input
                 type="number" min="0" step="0.01"
-                className="input" placeholder="Sin límite"
+                className="input" placeholder="Sin definir (descuentos deshabilitados)"
                 value={form.maxDiscountAmount}
                 onChange={(e) => setForm({ ...form, maxDiscountAmount: e.target.value })}
               />
@@ -215,7 +217,7 @@ export default function StoreInfo() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Porcentaje máximo de descuento (%)</label>
               <input
                 type="number" min="0" max="100" step="1"
-                className="input" placeholder="Sin límite"
+                className="input" placeholder="Sin definir (descuentos deshabilitados)"
                 value={form.maxDiscountPercent}
                 onChange={(e) => setForm({ ...form, maxDiscountPercent: e.target.value })}
               />
