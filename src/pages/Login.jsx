@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { applyDefaultBrand } from '../utils/theme'
 import logo from '../assets/logo.png'
@@ -93,6 +93,9 @@ export default function Login() {
           <button type="submit" className="btn-primary w-full py-3" disabled={loading}>
             {loading ? 'Iniciando sesión...' : 'Iniciar sesión'}
           </button>
+          <Link to="/forgot-password" className="block text-center text-sm text-gray-500 hover:text-gray-700">
+            ¿Olvidaste tu contraseña?
+          </Link>
         </form>
       </div>
     </div>

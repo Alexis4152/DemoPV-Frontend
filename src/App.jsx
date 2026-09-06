@@ -4,6 +4,8 @@ import { NotifyProvider } from './context/NotifyContext'
 import PrivateRoute from './components/PrivateRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
 import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
 import POS from './pages/POS'
@@ -18,7 +20,7 @@ import StoreInfo from './pages/StoreInfo'
 /**
  * Árbol de rutas de la aplicación.
  *
- * `/login` es pública. Todo lo demás vive bajo un `PrivateRoute` genérico (solo
+ * `/login`, `/forgot-password` y `/reset-password` son públicas. Todo lo demás vive bajo un `PrivateRoute` genérico (solo
  * exige sesión iniciada) que envuelve el `Layout` (sidebar + contenido), y dentro
  * de este cada ruta hija está envuelta en su propio `PrivateRoute` con `section`
  * (código de `AppSection` para el chequeo fino de permisos RBAC) o `adminOnly`
@@ -29,6 +31,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route
         path="/*"
         element={
