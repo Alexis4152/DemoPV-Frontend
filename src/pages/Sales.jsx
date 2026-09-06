@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { getSales, cancelSale } from '../api/sales'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
+import { printSaleTicket } from '../utils/printer'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
@@ -42,7 +43,7 @@ const EMPTY_FILTERS = { from: '', to: '', customerName: '', paymentMethod: '', s
  */
 export default function Sales() {
   const { isAdmin } = useAuth()
-  const { confirmDialog } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const [searchParams] = useSearchParams()
   const initialFilters = () => ({
     ...EMPTY_FILTERS,
@@ -56,6 +57,9 @@ export default function Sales() {
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Id de la venta que se está reimprimiendo en este momento (o null) — deshabilita solo
+  // el botón de esa fila mientras QZ Tray manda el ticket, sin bloquear el resto de la tabla.
+  const [printingId, setPrintingId] = useState(null)
 
   /**
    * Trae la página actual de ventas usando `page`/`size` y los `appliedFilters` vigentes.
@@ -112,6 +116,24 @@ export default function Sales() {
     if (!(await confirmDialog('¿Cancelar esta venta? Se revertirá el stock.', { confirmText: 'Cancelar venta' }))) return
     await cancelSale(id)
     load()
+  }
+
+  /**
+   * Reimprime el ticket de una venta ya registrada (misma impresora térmica vía QZ Tray
+   * que usa el POS al cobrar — ver `utils/printer.js`). Pide confirmación primero porque,
+   * a diferencia del ticket que se imprime justo al cobrar, esto es una reimpresión
+   * deliberada y gasta papel de la térmica.
+   */
+  async function handleReprint(id) {
+    if (!(await confirmDialog('¿Reimprimir el ticket de esta venta? Se usará papel de la impresora.', { confirmText: 'Reimprimir' }))) return
+    setPrintingId(id)
+    try {
+      await printSaleTicket(id)
+    } catch (err) {
+      notify(err.message ?? 'No se pudo imprimir el ticket', 'error')
+    } finally {
+      setPrintingId(null)
+    }
   }
 
   const sales = pageData.content ?? []
@@ -189,6 +211,13 @@ export default function Sales() {
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
                     <button className="text-blue-600 hover:underline text-xs" onClick={() => setDetail(s)}>Ver</button>
+                    <button
+                      className="text-gray-500 hover:underline text-xs disabled:opacity-40 disabled:hover:no-underline"
+                      disabled={printingId === s.id}
+                      onClick={() => handleReprint(s.id)}
+                    >
+                      {printingId === s.id ? 'Imprimiendo…' : '🖨️ Reimprimir'}
+                    </button>
                     {isAdmin && s.status === 'COMPLETED' && (
                       <button className="text-red-500 hover:underline text-xs" onClick={() => handleCancel(s.id)}>Cancelar</button>
                     )}
