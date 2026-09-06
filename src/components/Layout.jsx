@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { SECTIONS } from '../config/sections'
+import { getApartadosPendingCount } from '../api/apartados'
 import defaultLogo from '../assets/logo.png'
 
 /**
@@ -49,6 +50,21 @@ export default function Layout({ children }) {
   // Drawer del sidebar en mobile/tablet (< lg) — independiente de `collapsed`, que solo
   // aplica al modo solo-íconos del sidebar fijo de escritorio.
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  // Badge de apartados PENDING (por revisar) junto al link "Apartados" del sidebar — se
+  // revisa cada 60s mientras haya sesión con esa sección habilitada; no hay websockets en
+  // este proyecto, así que un poll ligero es la forma de "notificar" sin nueva infra.
+  const [pendingApartados, setPendingApartados] = useState(0)
+  const canSeeApartados = hasSection('APARTADOS')
+  useEffect(() => {
+    if (!canSeeApartados) return
+    function poll() {
+      getApartadosPendingCount().then((r) => setPendingApartados(r.data.data ?? 0)).catch(() => {})
+    }
+    poll()
+    const id = setInterval(poll, 60_000)
+    return () => clearInterval(id)
+  }, [canSeeApartados])
 
   /** Cierra la sesión del usuario actual y lo redirige a la pantalla de login. */
   function handleLogout() {
@@ -118,8 +134,24 @@ export default function Layout({ children }) {
         <nav className="sidebar-scroll flex-1 p-4 space-y-1 overflow-y-auto overflow-x-hidden">
           {links.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === '/'} title={isCollapsed ? n.label : undefined} className={navLinkClass(isCollapsed)} onClick={onNavigate}>
-              <span>{n.icon}</span>
-              {!isCollapsed && <span className="whitespace-nowrap">{n.label}</span>}
+              <span className="relative">
+                {n.icon}
+                {n.code === 'APARTADOS' && pendingApartados > 0 && (
+                  <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[10px] leading-none rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-0.5">
+                    {pendingApartados > 9 ? '9+' : pendingApartados}
+                  </span>
+                )}
+              </span>
+              {!isCollapsed && (
+                <span className="whitespace-nowrap flex items-center gap-1.5">
+                  {n.label}
+                  {n.code === 'APARTADOS' && pendingApartados > 0 && (
+                    <span className="bg-red-500 text-white text-[10px] leading-none rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1">
+                      {pendingApartados > 99 ? '99+' : pendingApartados}
+                    </span>
+                  )}
+                </span>
+              )}
             </NavLink>
           ))}
 
@@ -181,7 +213,10 @@ export default function Layout({ children }) {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    // bg-purple-50/40: mismo tinte de marca (--brand-50, ver utils/theme.js) que ya se usa
+    // en la vitrina pública de apartados (PublicApartar.jsx) — antes era gris liso
+    // (bg-gray-50) sin relación con el color que la tienda elige en "Apariencia".
+    <div className="flex h-screen bg-purple-50/40">
       {/* Sidebar fijo — solo visible desde `lg:` en adelante */}
       <aside className={`hidden lg:flex ${collapsed ? 'w-20' : 'w-64'} bg-[var(--brand-sidebar)] border-r border-[var(--brand-sidebar-border)] flex-col transition-all duration-200 relative shrink-0`}>
         <button

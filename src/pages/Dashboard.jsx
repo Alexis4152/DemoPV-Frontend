@@ -38,7 +38,7 @@ function fmt(n) {
  *
  * Muestra cuatro indicadores: ventas totales del mes en curso, ticket promedio, si hay
  * un corte de caja abierto en este momento, y cantidad de productos con stock bajo; además
- * de accesos rápidos a Punto de Venta, Inventario y Reportes.
+ * de accesos rápidos a Punto de Venta, Inventario, Apartados y Reportes.
  *
  * Cuando hay productos en stock bajo, esa tarjeta es un link a Inventario con el filtro
  * "Stock bajo" ya aplicado (`?availability=lowStock`, que `Inventory.jsx` lee al montar);
@@ -116,7 +116,7 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
         <Link to="/pos" className="card hover:shadow-md transition-shadow flex items-center gap-4 cursor-pointer">
           <span className="text-3xl">🛒</span>
           <div>
@@ -129,6 +129,13 @@ export default function Dashboard() {
           <div>
             <p className="font-semibold text-gray-900">Inventario</p>
             <p className="text-sm text-gray-500">Gestionar productos</p>
+          </div>
+        </Link>
+        <Link to="/apartados?status=PENDING" className="card hover:shadow-md transition-shadow flex items-center gap-4 cursor-pointer">
+          <span className="text-3xl">🛍️</span>
+          <div>
+            <p className="font-semibold text-gray-900">Apartados</p>
+            <p className="text-sm text-gray-500">Ver pendientes</p>
           </div>
         </Link>
         <Link to="/reports" className="card hover:shadow-md transition-shadow flex items-center gap-4 cursor-pointer">

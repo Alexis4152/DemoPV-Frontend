@@ -50,6 +50,14 @@ export const getProductByBarcode = (barcode) => api.get(`/products/by-barcode/${
 export const getProductSalesStats = () => api.get('/products/sales-stats')
 
 /**
+ * Piezas actualmente comprometidas en apartados abiertos (`PENDING`/`ACTIVE`) de cada
+ * producto activo (incluye los que no tienen ninguno, con 0) — usado para la columna
+ * "Apartados" de Inventario.
+ * @returns {Promise} Respuesta de axios con filas `[productId, cantidadApartada]`.
+ */
+export const getProductReservedStats = () => api.get('/products/reserved-stats')
+
+/**
  * Crea un nuevo producto.
  * @param {Object} data Datos del producto (nombre, precio, categoría, stock, etc.).
  * @returns {Promise} Respuesta de axios con el producto creado.
@@ -78,4 +86,41 @@ export const adjustStock = (id, data) => api.post(`/products/${id}/adjust-stock`
  * @returns {Promise} Respuesta de axios confirmando la eliminación.
  */
 export const deleteProduct = (id) => api.delete(`/products/${id}`)
+
+// ── Fotos del producto (galería para la tienda pública de apartados) ──────────────────
+
+/**
+ * Fotos de un producto, portada primero.
+ * @param {number|string} id Id del producto.
+ * @returns {Promise} Respuesta de axios con la lista de fotos.
+ */
+export const getProductImages = (id) => api.get(`/products/${id}/images`)
+
+/**
+ * Sube una foto nueva para un producto.
+ * @param {number|string} id Id del producto.
+ * @param {File} file Archivo de imagen (PNG, JPG o WEBP, máx. 5 MB).
+ * @returns {Promise} Respuesta de axios con la foto recién guardada.
+ */
+export const uploadProductImage = (id, file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post(`/products/${id}/images`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
+}
+
+/**
+ * Marca una foto como portada del producto.
+ * @param {number|string} id Id del producto.
+ * @param {number|string} imageId Id de la foto.
+ * @returns {Promise} Respuesta de axios confirmando el cambio.
+ */
+export const setPrimaryProductImage = (id, imageId) => api.put(`/products/${id}/images/${imageId}/primary`)
+
+/**
+ * Borra una foto de un producto.
+ * @param {number|string} id Id del producto.
+ * @param {number|string} imageId Id de la foto a borrar.
+ * @returns {Promise} Respuesta de axios confirmando la eliminación.
+ */
+export const deleteProductImage = (id, imageId) => api.delete(`/products/${id}/images/${imageId}`)
 

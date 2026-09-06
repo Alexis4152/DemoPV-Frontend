@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getCashCuts, getOpenCashCut, getMyTodayCashCut, openCashCut, closeCashCut, getCashCutSummary } from '../api/cashCuts'
+import { getCashCuts, getOpenCashCut, getMyTodayCashCut, openCashCut, closeCashCut, getCashCutSummary, getCashCutCashiers } from '../api/cashCuts'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 
@@ -11,7 +11,7 @@ const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'sho
 const closedByLabel = (c) => c.status !== 'CLOSED' ? '—' : (c.closedBy?.name ?? 'Sistema')
 
 const PAGE_SIZES = [10, 20, 50, 100]
-const EMPTY_FILTERS = { from: '', to: '', status: '' }
+const EMPTY_FILTERS = { from: '', to: '', status: '', userId: '' }
 
 /**
  * Página "Cortes de Caja": abre/cierra el corte de caja del cajero autenticado y, si es
@@ -28,18 +28,23 @@ const EMPTY_FILTERS = { from: '', to: '', status: '' }
  * - `pageData` (la tabla paginada): el historial completo, solo se carga y se muestra para
  *   administradores — un cajero normal no ve los cortes de sus compañeros.
  *
- * Patrón de filtros + paginación: igual que en Sales — `filters` es lo que se captura en
- * el formulario, `appliedFilters` es lo que realmente se envía al backend y dispara la
- * recarga; ver el JSDoc de `Sales` para el detalle completo del patrón.
+ * Filtros: aplican solos al cambiar cualquier campo (mismo patrón que Apartados.jsx/
+ * Inventory.jsx/Sales.jsx) — todos son fecha o selects, así que no hace falta debounce, se
+ * dispara de inmediato. El filtro "Cajero" se resuelve por separado (`GET
+ * /cash-cuts/cashiers`, cargado una sola vez al montar) en vez de reusar `getUsers()`: así
+ * no depende de que el ADMIN tenga habilitada la sección Usuarios, que es independiente de
+ * Cortes de Caja.
  */
 export default function CashCuts() {
   const { isAdmin } = useAuth()
   const { notify, confirmDialog } = useNotify()
   const [filters, setFilters] = useState(EMPTY_FILTERS)
-  const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
+  // Cajeros distintos con al menos un corte, para poblar el filtro "Cajero" — se carga una
+  // sola vez al montar, no depende de la página/filtros vigentes de la tabla.
+  const [cashiers, setCashiers] = useState([])
   const [openCut, setOpenCut] = useState(null)
   const [myToday, setMyToday] = useState(null)
   const [showOpen, setShowOpen] = useState(false)
@@ -53,10 +58,10 @@ export default function CashCuts() {
 
   /**
    * Recarga los tres bloques de datos de la pantalla: el historial paginado (solo si
-   * `isAdmin`, usando `page`/`size`/`appliedFilters` — ver el patrón de filtros descrito
-   * en el JSDoc del componente), el corte abierto del usuario actual, y el corte de hoy
-   * del usuario aunque ya esté cerrado. Cada bloque atrapa sus propios errores por
-   * separado y cae a un valor vacío/null, para que un fallo en uno no tumbe a los otros.
+   * `isAdmin`, usando `page`/`size`/`filters` vigentes), el corte abierto del usuario
+   * actual, y el corte de hoy del usuario aunque ya esté cerrado. Cada bloque atrapa sus
+   * propios errores por separado y cae a un valor vacío/null, para que un fallo en uno no
+   * tumbe a los otros.
    */
   function load() {
     // el historial completo (la tabla) solo lo puede ver el administrador
@@ -64,9 +69,10 @@ export default function CashCuts() {
       const params = {
         page,
         size,
-        status: appliedFilters.status || undefined,
-        from: appliedFilters.from ? `${appliedFilters.from}T00:00:00` : undefined,
-        to: appliedFilters.to ? `${appliedFilters.to}T23:59:59` : undefined,
+        status: filters.status || undefined,
+        userId: filters.userId || undefined,
+        from: filters.from ? `${filters.from}T00:00:00` : undefined,
+        to: filters.to ? `${filters.to}T23:59:59` : undefined,
       }
       getCashCuts(params)
         .then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
@@ -77,7 +83,8 @@ export default function CashCuts() {
     getMyTodayCashCut().then((r) => setMyToday(r.data.data)).catch(() => setMyToday(null))
   }
 
-  useEffect(() => { load() }, [page, size, appliedFilters])
+  // Fecha/estado/cajero disparan de inmediato (son selects/date, no hace falta debounce).
+  useEffect(() => { load() }, [page, size, filters])
 
   // Cierra con ESC el modal de "Cerrar corte de caja" (mismo efecto que "Cancelar"), descartando lo capturado.
   useEffect(() => {
@@ -89,19 +96,27 @@ export default function CashCuts() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [showClose])
 
-  /** Aplica los filtros del formulario (historial de admin) y reinicia a la primera página. */
-  function handleApplyFilters(e) {
-    e.preventDefault()
+  // Lista de cajeros para el filtro — solo aplica para admin (es quien ve la tabla), y no
+  // depende de página/filtros vigentes, así que se carga una sola vez al montar.
+  useEffect(() => {
+    if (!isAdmin) return
+    getCashCutCashiers().then((r) => setCashiers(r.data.data ?? [])).catch(() => setCashiers([]))
+  }, [isAdmin])
+
+  /** Actualiza un filtro y reinicia a la primera página, para no quedar "atorado" en una
+   *  página que ya no existe con el nuevo filtro. */
+  function setFilter(patch) {
+    setFilters((prev) => ({ ...prev, ...patch }))
     setPage(0)
-    setAppliedFilters(filters)
   }
 
-  /** Limpia filtros capturados y aplicados, y vuelve a la primera página. */
+  /** Limpia todos los filtros y vuelve a la primera página. */
   function handleClearFilters() {
     setFilters(EMPTY_FILTERS)
-    setAppliedFilters(EMPTY_FILTERS)
     setPage(0)
   }
+
+  const hasFilters = filters.from || filters.to || filters.status || filters.userId
 
   /**
    * Abre un nuevo corte de caja para el usuario actual con el fondo inicial (`openAmount`)
@@ -248,28 +263,36 @@ export default function CashCuts() {
 
         return (
       <>
-      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-        <div>
+      {/* flex-wrap, sin botón "Filtrar": cada campo aplica solo al cambiar (mismo patrón
+          que Apartados.jsx/Sales.jsx) — "Limpiar filtros" solo aparece si hay algo que limpiar. */}
+      <div className="card mb-4 flex flex-wrap gap-3 items-end">
+        <div className="w-36">
           <label className="text-xs font-medium text-gray-600 block mb-1">Desde</label>
-          <input type="date" className="input" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
+          <input type="date" className="input" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} />
         </div>
-        <div>
+        <div className="w-36">
           <label className="text-xs font-medium text-gray-600 block mb-1">Hasta</label>
-          <input type="date" className="input" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
+          <input type="date" className="input" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} />
         </div>
-        <div>
+        <div className="w-40">
           <label className="text-xs font-medium text-gray-600 block mb-1">Estado</label>
-          <select className="input" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
+          <select className="input" value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
             <option value="">Todos</option>
             <option value="OPEN">Abierto</option>
             <option value="CLOSED">Cerrado</option>
           </select>
         </div>
-        <div className="flex gap-2">
-          <button type="submit" className="btn-primary flex-1">Filtrar</button>
-          <button type="button" className="btn-secondary" onClick={handleClearFilters}>Limpiar</button>
+        <div className="w-48">
+          <label className="text-xs font-medium text-gray-600 block mb-1">Cajero</label>
+          <select className="input" value={filters.userId} onChange={(e) => setFilter({ userId: e.target.value })}>
+            <option value="">Todos</option>
+            {cashiers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
         </div>
-      </form>
+        {hasFilters && (
+          <button type="button" className="btn-secondary text-sm" onClick={handleClearFilters}>Limpiar filtros</button>
+        )}
+      </div>
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">

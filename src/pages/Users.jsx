@@ -25,13 +25,17 @@ const PAGE_SIZES = [10, 20, 50, 100]
  * `roles`, en cambio, sigue viniendo del catálogo completo sin paginar (`getRoles`), porque
  * también alimenta el selector de rol del filtro y del formulario de alta/edición — paginarlo
  * ahí ocultaría roles del selector.
+ *
+ * Filtros: aplican solos al cambiar cualquier campo (mismo patrón que Apartados.jsx/
+ * Sales.jsx) — Nombre/Email llevan debounce de 250ms para no pegarle a la API en cada
+ * tecla; fecha/rol/estado disparan de inmediato. Cualquier cambio de filtro reinicia a la
+ * primera página, para no quedar "atorado" en una página que ya no existe con el nuevo filtro.
  */
 export default function Users() {
   const { confirmDialog } = useNotify()
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [roles, setRoles] = useState([])
   const [filters, setFilters] = useState(EMPTY_FILTERS)
-  const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
   const [showModal, setShowModal] = useState(false)
@@ -41,31 +45,33 @@ export default function Users() {
   const [loading, setLoading] = useState(false)
 
   /**
-   * Recarga el listado de usuarios aplicando los filtros ya confirmados (`appliedFilters`,
-   * no los que el usuario esté todavía editando en `filters`) y el catálogo de roles para
-   * el selector del filtro y del formulario. El rango de fecha se expande a inicio/fin de
-   * día (`T00:00:00` / `T23:59:59`) para que el filtro "Desde/Hasta" incluya el día completo
-   * y no solo el instante exacto de medianoche.
+   * Recarga el listado de usuarios usando `page`/`size` y los `filters` vigentes, y el
+   * catálogo de roles para el selector del filtro y del formulario. El rango de fecha se
+   * expande a inicio/fin de día (`T00:00:00` / `T23:59:59`) para que el filtro "Desde/Hasta"
+   * incluya el día completo y no solo el instante exacto de medianoche.
    */
   function load() {
     const params = {
       page,
       size,
-      name: appliedFilters.name || undefined,
-      email: appliedFilters.email || undefined,
-      roleId: appliedFilters.roleId || undefined,
-      isActive: appliedFilters.isActive || undefined,
-      from: appliedFilters.from ? `${appliedFilters.from}T00:00:00` : undefined,
-      to: appliedFilters.to ? `${appliedFilters.to}T23:59:59` : undefined,
+      name: filters.name || undefined,
+      email: filters.email || undefined,
+      roleId: filters.roleId || undefined,
+      isActive: filters.isActive || undefined,
+      from: filters.from ? `${filters.from}T00:00:00` : undefined,
+      to: filters.to ? `${filters.to}T23:59:59` : undefined,
     }
     getUsers(params).then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
     getRoles().then((r) => setRoles(r.data.data ?? []))
   }
 
-  // Recarga cada vez que cambian la página, el tamaño de página, o los filtros aplicados
-  // (al confirmar o limpiar el formulario de filtros, no en cada tecleo — por eso existe la
-  // distinción filters vs appliedFilters).
-  useEffect(() => { load() }, [page, size, appliedFilters])
+  // Debounce de 250ms (mismo patrón que Inventory.jsx/POS.jsx) para no pegarle a la API en
+  // cada tecla de Nombre/Email; fecha/rol/estado/página disparan igual de rápido, no vale
+  // la pena separarlos del resto.
+  useEffect(() => {
+    const t = setTimeout(load, 250)
+    return () => clearTimeout(t)
+  }, [page, size, filters])
 
   // Cierra con ESC el modal de usuario (mismo efecto que "Cancelar"), descartando lo capturado.
   useEffect(() => {
@@ -77,20 +83,20 @@ export default function Users() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [showModal])
 
-  // Confirma los filtros en edición como los filtros activos (disparando la recarga) y
-  // vuelve a la primera página, para no quedar "atorado" en una página que ya no existe.
-  function handleApplyFilters(e) {
-    e.preventDefault()
+  /** Actualiza un filtro y reinicia a la primera página, para no quedar "atorado" en una
+   *  página que ya no existe con el nuevo filtro. */
+  function setFilter(patch) {
+    setFilters((prev) => ({ ...prev, ...patch }))
     setPage(0)
-    setAppliedFilters(filters)
   }
 
-  // Limpia tanto el formulario de filtros como los filtros aplicados (vuelve a listar todo).
+  /** Limpia todos los filtros y vuelve a la primera página. */
   function handleClearFilters() {
     setFilters(EMPTY_FILTERS)
-    setAppliedFilters(EMPTY_FILTERS)
     setPage(0)
   }
+
+  const hasFilters = filters.from || filters.to || filters.name || filters.email || filters.roleId || filters.isActive
 
   // Abre el modal en blanco para crear un usuario nuevo, preseleccionando el primer rol
   // disponible como valor por default del select.
@@ -164,43 +170,45 @@ export default function Users() {
         <button className="btn-primary" onClick={openNew}>+ Nuevo usuario</button>
       </div>
 
-      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-        <div>
+      {/* flex-wrap, sin botón "Filtrar": cada campo aplica solo al cambiar (mismo patrón
+          que Apartados.jsx/Sales.jsx/CashCuts.jsx) — "Limpiar filtros" solo aparece si hay
+          algo que limpiar. */}
+      <div className="card mb-4 flex flex-wrap gap-3 items-end">
+        <div className="w-36">
           <label className="text-xs font-medium text-gray-600 block mb-1">Desde</label>
-          <input type="date" className="input" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
+          <input type="date" className="input" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} />
         </div>
-        <div>
+        <div className="w-36">
           <label className="text-xs font-medium text-gray-600 block mb-1">Hasta</label>
-          <input type="date" className="input" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
+          <input type="date" className="input" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} />
         </div>
-        <div>
+        <div className="w-40">
           <label className="text-xs font-medium text-gray-600 block mb-1">Nombre</label>
-          <input type="text" className="input" placeholder="Nombre" value={filters.name} onChange={(e) => setFilters({ ...filters, name: e.target.value })} />
+          <input type="text" className="input" placeholder="Nombre" value={filters.name} onChange={(e) => setFilter({ name: e.target.value })} />
         </div>
-        <div>
+        <div className="w-48">
           <label className="text-xs font-medium text-gray-600 block mb-1">Email</label>
-          <input type="text" className="input" placeholder="Email" value={filters.email} onChange={(e) => setFilters({ ...filters, email: e.target.value })} />
+          <input type="text" className="input" placeholder="Email" value={filters.email} onChange={(e) => setFilter({ email: e.target.value })} />
         </div>
-        <div>
+        <div className="w-40">
           <label className="text-xs font-medium text-gray-600 block mb-1">Rol</label>
-          <select className="input" value={filters.roleId} onChange={(e) => setFilters({ ...filters, roleId: e.target.value })}>
+          <select className="input" value={filters.roleId} onChange={(e) => setFilter({ roleId: e.target.value })}>
             <option value="">Todos</option>
             {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
         </div>
-        <div>
+        <div className="w-36">
           <label className="text-xs font-medium text-gray-600 block mb-1">Estado</label>
-          <select className="input" value={filters.isActive} onChange={(e) => setFilters({ ...filters, isActive: e.target.value })}>
+          <select className="input" value={filters.isActive} onChange={(e) => setFilter({ isActive: e.target.value })}>
             <option value="">Todos</option>
             <option value="true">Activo</option>
             <option value="false">Inactivo</option>
           </select>
         </div>
-        <div className="flex gap-2">
-          <button type="submit" className="btn-primary flex-1">Filtrar</button>
-          <button type="button" className="btn-secondary" onClick={handleClearFilters}>Limpiar</button>
-        </div>
-      </form>
+        {hasFilters && (
+          <button type="button" className="btn-secondary text-sm" onClick={handleClearFilters}>Limpiar filtros</button>
+        )}
+      </div>
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">

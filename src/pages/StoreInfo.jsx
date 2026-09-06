@@ -65,6 +65,11 @@ export default function StoreInfo() {
         notasAdicionales: info.notasAdicionales || '',
         maxDiscountAmount: info.tienda?.maxDiscountAmount ?? '',
         maxDiscountPercent: info.tienda?.maxDiscountPercent ?? '',
+        apartadosEnabled: !!info.tienda?.apartadosEnabled,
+        publicSlug: info.tienda?.publicSlug || '',
+        maxApartadoDiscountAmount: info.tienda?.maxApartadoDiscountAmount ?? '',
+        maxApartadoDiscountPercent: info.tienda?.maxApartadoDiscountPercent ?? '',
+        defaultApartadoHours: info.tienda?.defaultApartadoHours ?? 24,
       })
     }).finally(() => setLoading(false))
   }, [tiendaId])
@@ -91,8 +96,21 @@ export default function StoreInfo() {
     try {
       const maxDiscountAmount = form.maxDiscountAmount === '' ? null : Number(form.maxDiscountAmount)
       const maxDiscountPercent = form.maxDiscountPercent === '' ? null : Number(form.maxDiscountPercent)
-      await updateTiendaInfo(tiendaId, { ...form, maxDiscountAmount, maxDiscountPercent })
-      patchTienda({ name: form.name, maxDiscountAmount, maxDiscountPercent })
+      const maxApartadoDiscountAmount = form.maxApartadoDiscountAmount === '' ? null : Number(form.maxApartadoDiscountAmount)
+      const maxApartadoDiscountPercent = form.maxApartadoDiscountPercent === '' ? null : Number(form.maxApartadoDiscountPercent)
+      const res = await updateTiendaInfo(tiendaId, {
+        ...form, maxDiscountAmount, maxDiscountPercent, maxApartadoDiscountAmount, maxApartadoDiscountPercent,
+      })
+      // El slug puede haber cambiado si lo dejaste en blanco (se autogenera) o si chocaba
+      // con el de otra tienda (el backend lo hubiera rechazado antes de llegar aquí) — se
+      // toma el que el backend confirmó, no lo que se escribió en el formulario.
+      const savedSlug = res.data.data?.tienda?.publicSlug ?? form.publicSlug
+      setForm((f) => ({ ...f, publicSlug: savedSlug }))
+      patchTienda({
+        name: form.name, maxDiscountAmount, maxDiscountPercent,
+        apartadosEnabled: form.apartadosEnabled, publicSlug: savedSlug,
+        maxApartadoDiscountAmount, maxApartadoDiscountPercent, defaultApartadoHours: Number(form.defaultApartadoHours) || 24,
+      })
       setMessage('Datos guardados')
     } catch (err) {
       setError(err.response?.data?.message || 'No se pudieron guardar los datos')
@@ -223,6 +241,84 @@ export default function StoreInfo() {
               />
             </div>
           </div>
+        </div>
+
+        <div className="border-t border-gray-100 pt-4">
+          <label className="flex items-center gap-2 cursor-pointer mb-1">
+            <input
+              type="checkbox"
+              checked={form.apartadosEnabled}
+              onChange={(e) => setForm({ ...form, apartadosEnabled: e.target.checked })}
+            />
+            <span className="text-sm font-semibold text-gray-800">Habilitar tienda pública de apartados</span>
+          </label>
+          <p className="text-xs text-gray-500 mb-3">
+            Publica un catálogo que cualquier cliente puede ver y usar para apartar productos, sin necesitar
+            cuenta ni contraseña — el apartado queda pendiente hasta que lo confirmes en la sección "Apartados".
+          </p>
+
+          {form.apartadosEnabled && (
+            <div className="space-y-4 bg-gray-50 rounded-lg p-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Enlace de tu tienda</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text" className="input" placeholder="se genera solo si lo dejas en blanco"
+                    value={form.publicSlug}
+                    onChange={(e) => setForm({ ...form, publicSlug: e.target.value })}
+                  />
+                  <button
+                    type="button" className="btn-secondary text-sm whitespace-nowrap"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(`${window.location.origin}/apartar/${form.publicSlug}`)
+                    }}
+                    disabled={!form.publicSlug}
+                  >
+                    Copiar link
+                  </button>
+                </div>
+                {form.publicSlug && (
+                  <p className="text-xs text-gray-400 mt-1 break-all">{window.location.origin}/apartar/{form.publicSlug}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Horas que dura un apartado</label>
+                <input
+                  type="number" min="1" className="input sm:max-w-[160px]"
+                  value={form.defaultApartadoHours}
+                  onChange={(e) => setForm({ ...form, defaultApartadoHours: e.target.value })}
+                />
+                <p className="text-xs text-gray-400 mt-1">A partir de que lo confirmes (no de cuando el cliente lo solicita) — si no lo recoge a tiempo, el producto vuelve solo al inventario.</p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-1">Límite de descuento al confirmar un apartado</p>
+                <p className="text-xs text-gray-500 mb-3">
+                  Independiente del límite de venta física de arriba — el cliente nunca elige su propio descuento,
+                  solo tú al confirmar el apartado.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Monto máximo ($)</label>
+                    <input
+                      type="number" min="0" step="0.01" className="input" placeholder="Sin definir (deshabilitado)"
+                      value={form.maxApartadoDiscountAmount}
+                      onChange={(e) => setForm({ ...form, maxApartadoDiscountAmount: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Porcentaje máximo (%)</label>
+                    <input
+                      type="number" min="0" max="100" step="1" className="input" placeholder="Sin definir (deshabilitado)"
+                      value={form.maxApartadoDiscountPercent}
+                      onChange={(e) => setForm({ ...form, maxApartadoDiscountPercent: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {error && (

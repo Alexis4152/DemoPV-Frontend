@@ -1,23 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductSalesStats } from '../api/products'
+import {
+  getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductReservedStats,
+  getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage,
+} from '../api/products'
 import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
-const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '', stock: '', minStock: 5, unit: 'pieza', categoryId: '' }
+const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '', stock: '', minStock: 5, unit: 'pieza', categoryId: '', isReservable: false, apartadoDiscountPercent: '' }
 const PAGE_SIZES = [10, 20, 50, 100]
 
-const AVAILABILITY_VALUES = ['lowStock', 'neverSold', 'topSellers']
-
-// 'all' | 'lowStock' | 'neverSold' | 'topSellers' -> los params que espera GET /products/page.
-function availabilityParams(availability) {
-  if (availability === 'lowStock') return { lowStock: true }
-  if (availability === 'neverSold') return { sold: 'NEVER_SOLD' }
-  if (availability === 'topSellers') return { sold: 'TOP_SELLERS' }
-  return {}
+// -> los params que espera GET /products/page. Único filtro de disponibilidad que queda
+// (ver `lowStockOnly`) es "stock bajo", como un botón de encendido/apagado — los que
+// filtraban por historial de ventas ("sin ventas"/"más vendidos") se quitaron junto con
+// la columna "Vendidos".
+function availabilityParams(lowStockOnly) {
+  return lowStockOnly ? { lowStock: true } : {}
 }
 
 // Valor centinela para la opción "Otra..." del selector de categoría: no puede colisionar
@@ -32,8 +33,8 @@ const NEW_CATEGORY_VALUE = '__new__'
  * con los productos que están en su stock mínimo o por debajo (`lowStockItems`).
  *
  * Paginación server-side (igual patrón que Sales/CashCuts): `GET /products/page` hace la
- * búsqueda de texto, el filtro de categoría, el de stock bajo y el de historial de ventas
- * ("sin ventas"/"más vendidos") todo en el servidor, para que esta pantalla siga
+ * búsqueda de texto, el filtro de categoría y el de stock bajo (`lowStockOnly`, un botón
+ * de encendido/apagado, no un combo) todo en el servidor, para que esta pantalla siga
  * respondiendo rápido aunque el catálogo crezca a miles de productos — a diferencia de
  * antes, que traía el catálogo completo de un jalón y filtraba en el cliente. El texto de
  * búsqueda lleva un debounce de 250ms (ver el `useEffect` que llama a `loadPage`) para no
@@ -64,23 +65,35 @@ export default function Inventory() {
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
   const [filterCat, setFilterCat] = useState('')
-  // 'all' | 'lowStock' | 'neverSold' | 'topSellers' — se traduce a query params vía
-  // `availabilityParams` y el filtro/orden lo resuelve el backend, no esta pantalla.
-  const [availability, setAvailability] = useState(() => {
-    const fromUrl = searchParams.get('availability')
-    return AVAILABILITY_VALUES.includes(fromUrl) ? fromUrl : 'all'
-  })
+  // Único filtro de disponibilidad: stock bajo, como botón de encendido/apagado (no un
+  // combo — ver `availabilityParams`).
+  const [lowStockOnly, setLowStockOnly] = useState(() => searchParams.get('availability') === 'lowStock')
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
-  // Map productId -> unidades vendidas históricas (todas las ventas completadas, sin
-  // acotar por fecha), solo para mostrar la columna "Vendidos" — el filtrado real por
-  // ventas ya lo hace el backend (ver `availabilityParams`). Cubre TODO el catálogo (no
-  // solo la página actual) porque es un query agregado ligero (2 columnas), no el
-  // catálogo completo con todos sus campos.
-  const [salesStats, setSalesStats] = useState(new Map())
+  // Map productId -> piezas actualmente descontadas del stock por apartados ACTIVE (ya
+  // confirmados), para la columna "Apartados" — a propósito NO incluye PENDING, que
+  // todavía no descuenta stock real (mostrarlo sería confuso: parecería que ya falta
+  // esa pieza cuando en realidad sigue completa en el inventario). Cubre TODO el
+  // catálogo (no solo la página actual) porque es un query agregado ligero.
+  const [reservedStats, setReservedStats] = useState(new Map())
+  // Selección múltiple (checkboxes de la tabla) para marcar/quitar "reservable" en lote —
+  // sin esto, habilitar apartados para un catálogo ya existente significaba entrar
+  // producto por producto. Solo cubre los productos de la página actual (ver `products`).
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [bulkUpdating, setBulkUpdating] = useState(false)
+  const [bulkDiscountModal, setBulkDiscountModal] = useState(false)
+  const [bulkDiscountValue, setBulkDiscountValue] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editProduct, setEditProduct] = useState(null)
   const [form, setForm] = useState(emptyForm)
+  // Galería de fotos del producto en edición (ver `openEdit`) — pensada sobre todo para
+  // exhibirlo en la tienda pública de apartados.
+  const [productImages, setProductImages] = useState([])
+  const [uploadingImage, setUploadingImage] = useState(false)
+  // Fotos elegidas para un producto NUEVO, antes de que exista un id al que subirlas de
+  // verdad (ver `handleSave`) — se suben todas justo después de que la creación responde.
+  // `previewUrl` es un blob local (URL.createObjectURL), solo para la vista previa.
+  const [pendingImages, setPendingImages] = useState([])
   const [adjustModal, setAdjustModal] = useState(null)
   const [adjustDirection, setAdjustDirection] = useState('IN')
   const [adjustQty, setAdjustQty] = useState('')
@@ -107,10 +120,11 @@ export default function Inventory() {
    */
   function loadPage() {
     setTableLoading(true)
+    setSelectedIds(new Set()) // la página/filtro cambió, la selección anterior ya no corresponde a lo que se ve
     getProductsPage({
       q: search.trim() || undefined,
       categoryId: filterCat || undefined,
-      ...availabilityParams(availability),
+      ...availabilityParams(lowStockOnly),
       page,
       size,
     }).then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
@@ -123,21 +137,21 @@ export default function Inventory() {
   useEffect(() => {
     const t = setTimeout(loadPage, 250)
     return () => clearTimeout(t)
-  }, [search, filterCat, availability, page, size])
+  }, [search, filterCat, lowStockOnly, page, size])
 
   /**
    * Recarga las fuentes de datos "auxiliares" que no dependen de la página/filtro actual:
    * las categorías (para el filtro y el formulario), la lista de productos en stock
    * mínimo o por debajo (`lowStock: true`, hasta 200) que alimenta el aviso amarillo
-   * persistente, y el total histórico vendido por producto (columna "Vendidos" — ver
-   * `salesStats`). Se llama al montar y después de cualquier operación que pueda cambiar
-   * existencias o catálogo (guardar producto, ajustar stock, desactivar producto), junto
-   * con `loadPage()` para refrescar también la tabla.
+   * persistente, y las piezas actualmente apartadas por producto (columna "Apartados" —
+   * ver `reservedStats`). Se llama al montar y después de cualquier operación que pueda
+   * cambiar existencias o catálogo (guardar producto, ajustar stock, desactivar producto),
+   * junto con `loadPage()` para refrescar también la tabla.
    */
   function loadAux() {
     getCategories().then((r) => setCategories(r.data.data ?? []))
     searchProducts({ lowStock: true, size: 200 }).then((r) => setLowStockItems(r.data.data ?? []))
-    getProductSalesStats().then((r) => setSalesStats(new Map((r.data.data ?? []).map(([id, qty]) => [id, Number(qty)]))))
+    getProductReservedStats().then((r) => setReservedStats(new Map((r.data.data ?? []).map(([id, qty]) => [id, Number(qty)]))))
   }
 
   useEffect(() => { loadAux() }, [])
@@ -157,27 +171,91 @@ export default function Inventory() {
   /**
    * Abre el modal de producto en modo "alta": limpia el formulario y cualquier error
    * previo. Si viene de un escaneo de un código desconocido (`prefillBarcode`), lo
-   * precarga en el formulario para no tener que volver a teclearlo.
+   * precarga en el formulario para no tener que volver a teclearlo. `pendingImages` se
+   * reinicia igual que el resto — las fotos elegidas en un alta cancelada no deben
+   * arrastrarse a la siguiente.
    */
   function openNew(prefillBarcode) {
     setEditProduct(null)
     setForm({ ...emptyForm, barcode: prefillBarcode ?? '' })
     setNewCategoryName('')
+    setProductImages([])
+    pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
+    setPendingImages([])
     setError('')
     setShowModal(true)
   }
 
-  /** Abre el modal de producto en modo "edición", precargando el formulario con los datos del producto seleccionado. */
+  /**
+   * Abre el modal de producto en modo "edición", precargando el formulario con los datos
+   * del producto seleccionado y su galería de fotos (`getProductImages`) — a diferencia de
+   * `openNew`, aquí las fotos SÍ se suben al instante (ver `handleUploadImage`), porque el
+   * producto ya tiene un id al que asociarlas.
+   */
   function openEdit(p) {
     setEditProduct(p)
     setForm({
       name: p.name, description: p.description ?? '', barcode: p.barcode ?? '',
       price: p.price, cost: p.cost ?? '', stock: p.stock,
-      minStock: p.minStock, unit: p.unit, categoryId: p.category?.id ?? ''
+      minStock: p.minStock, unit: p.unit, categoryId: p.category?.id ?? '',
+      isReservable: !!p.isReservable,
+      apartadoDiscountPercent: p.apartadoDiscountPercent ?? '',
     })
     setNewCategoryName('')
+    setProductImages([])
+    getProductImages(p.id).then((r) => setProductImages(r.data.data ?? [])).catch(() => {})
     setError('')
     setShowModal(true)
+  }
+
+  /** Sube una foto nueva para el producto en edición y refresca la galería del modal. */
+  async function handleUploadImage(e) {
+    const file = e.target.files?.[0]
+    if (!file || !editProduct) return
+    setUploadingImage(true)
+    try {
+      await uploadProductImage(editProduct.id, file)
+      const r = await getProductImages(editProduct.id)
+      setProductImages(r.data.data ?? [])
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudo subir la foto', 'error')
+    } finally {
+      setUploadingImage(false)
+      e.target.value = ''
+    }
+  }
+
+  /**
+   * Contraparte de `handleUploadImage` para un producto NUEVO: como todavía no existe un
+   * id al que subir la foto, solo la guarda en memoria con una vista previa local
+   * (`URL.createObjectURL`) — la subida real ocurre en `handleSave`, justo después de que
+   * la creación del producto responde con su id.
+   */
+  function handleStageImage(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPendingImages((prev) => [...prev, { file, previewUrl: URL.createObjectURL(file) }])
+    e.target.value = ''
+  }
+
+  function handleRemovePendingImage(index) {
+    setPendingImages((prev) => {
+      URL.revokeObjectURL(prev[index].previewUrl)
+      return prev.filter((_, i) => i !== index)
+    })
+  }
+
+  async function handleSetPrimaryImage(imageId) {
+    await setPrimaryProductImage(editProduct.id, imageId)
+    const r = await getProductImages(editProduct.id)
+    setProductImages(r.data.data ?? [])
+  }
+
+  async function handleDeleteImage(imageId) {
+    if (!(await confirmDialog('¿Quitar esta foto?', { confirmText: 'Quitar' }))) return
+    await deleteProductImage(editProduct.id, imageId)
+    const r = await getProductImages(editProduct.id)
+    setProductImages(r.data.data ?? [])
   }
 
   /** Abre el modal de "Ajustar stock" para `p` en modo "Agregar piezas" (el modo por default tras un escaneo). */
@@ -313,9 +391,20 @@ export default function Inventory() {
         categoryId = newCategory.id
       }
       const payload = { ...form, price: Number(form.price), cost: form.cost ? Number(form.cost) : null,
-        stock: Number(form.stock), minStock: Number(form.minStock), categoryId: Number(categoryId) }
-      if (editProduct) await updateProduct(editProduct.id, payload)
-      else await createProduct(payload)
+        stock: Number(form.stock), minStock: Number(form.minStock), categoryId: Number(categoryId),
+        apartadoDiscountPercent: form.apartadoDiscountPercent === '' ? null : Number(form.apartadoDiscountPercent) }
+      if (editProduct) {
+        await updateProduct(editProduct.id, payload)
+      } else {
+        // Las fotos elegidas antes de guardar (`pendingImages`) recién se suben AQUÍ: no
+        // existe un id de producto al que asociarlas hasta que la creación responde.
+        const created = (await createProduct(payload)).data.data
+        for (const { file } of pendingImages) {
+          await uploadProductImage(created.id, file).catch(() => {})
+        }
+      }
+      pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
+      setPendingImages([])
       setShowModal(false)
       reloadAll()
     } catch (err) {
@@ -386,6 +475,80 @@ export default function Inventory() {
     reloadAll()
   }
 
+  /** Marca/desmarca el checkbox de una fila de la tabla. */
+  function toggleSelect(productId) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(productId)) next.delete(productId)
+      else next.add(productId)
+      return next
+    })
+  }
+
+  /** Marca todas las filas de la página actual si no están todas ya marcadas; si ya lo estaban, las desmarca. */
+  function toggleSelectAll() {
+    setSelectedIds((prev) => (prev.size === products.length ? new Set() : new Set(products.map((p) => p.id))))
+  }
+
+  /**
+   * Base común de los payloads de actualización en lote: todos los campos del producto tal
+   * como ya están, para que el PUT de edición (que exige el payload completo, no solo lo
+   * que cambia) no borre por accidente algo que esta acción en particular no pretendía
+   * tocar — ej. sin esto, "Agregar a apartados" en lote borraría el descuento de oferta
+   * que un producto ya tuviera, al no reenviarlo.
+   */
+  function baseBulkPayload(p) {
+    return {
+      name: p.name, description: p.description, barcode: p.barcode,
+      price: p.price, cost: p.cost, minStock: p.minStock, unit: p.unit,
+      categoryId: p.category?.id, isReservable: p.isReservable, apartadoDiscountPercent: p.apartadoDiscountPercent,
+    }
+  }
+
+  /**
+   * Marca o quita "reservable" (aparece en la tienda pública de apartados) para todos los
+   * productos seleccionados de un jalón — sin esto, habilitar un catálogo ya existente
+   * significaba entrar producto por producto.
+   */
+  async function handleBulkReservable(value) {
+    const targets = products.filter((p) => selectedIds.has(p.id))
+    if (targets.length === 0) return
+    const verb = value ? 'agregar a' : 'quitar de'
+    if (!(await confirmDialog(`¿Deseas ${verb} la tienda pública de apartados ${targets.length} producto${targets.length === 1 ? '' : 's'}?`, { confirmText: 'Confirmar', danger: false }))) return
+    setBulkUpdating(true)
+    try {
+      await Promise.all(targets.map((p) => updateProduct(p.id, { ...baseBulkPayload(p), isReservable: value })))
+      notify(`${targets.length} producto${targets.length === 1 ? '' : 's'} actualizado${targets.length === 1 ? '' : 's'}`, 'success')
+      setSelectedIds(new Set())
+      reloadAll()
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudo actualizar en lote', 'error')
+    } finally {
+      setBulkUpdating(false)
+    }
+  }
+
+  /**
+   * Aplica (o quita, con `percent=null`) el mismo descuento de oferta pública a todos los
+   * productos seleccionados — para no tener que escribirlo producto por producto cuando
+   * varios comparten la misma promoción.
+   */
+  async function handleBulkDiscount(percent) {
+    const targets = products.filter((p) => selectedIds.has(p.id))
+    if (targets.length === 0) return
+    setBulkUpdating(true)
+    try {
+      await Promise.all(targets.map((p) => updateProduct(p.id, { ...baseBulkPayload(p), apartadoDiscountPercent: percent })))
+      notify(`Descuento actualizado en ${targets.length} producto${targets.length === 1 ? '' : 's'}`, 'success')
+      setSelectedIds(new Set())
+      reloadAll()
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudo aplicar el descuento en lote', 'error')
+    } finally {
+      setBulkUpdating(false)
+    }
+  }
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
@@ -407,49 +570,115 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* Escaneo de código de barras: alta/ajuste rápido, independiente del filtro de abajo */}
-      <div className="card mb-4 bg-purple-50/50 border-purple-100">
-        <label className="text-xs font-medium text-gray-600 block mb-1">📷 Escanear código de barras (alta / ajuste rápido)</label>
+      {/* Escaneo de código de barras: alta/ajuste rápido, independiente del filtro de abajo.
+          Mismo fondo blanco que el buscador de abajo (antes tenía un tinte del color de
+          marca, pero con colores de marca oscuros/apagados el texto quedaba ilegible —
+          ver feedback del usuario). */}
+      <div className="relative mb-4 max-w-md">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">📷</span>
         <input
           ref={scanInputRef}
-          className="input"
-          placeholder="Escanea o teclea el código y presiona Enter..."
+          className="input pl-9 py-1.5"
+          placeholder="Escanear código de barras (alta / ajuste rápido)"
           value={scanCode}
           onChange={(e) => setScanCode(e.target.value)}
           onKeyDown={handleScanKeyDown}
         />
       </div>
 
-      {/* Filters */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-        <input className="input" placeholder="Buscar por nombre o código..." value={search}
+      {/* Filters — flex-wrap, con "Limpiar filtros" al final (mismo patrón que Sales.jsx/
+          CashCuts.jsx/Users.jsx/Apartados.jsx): solo aparece si hay algo que limpiar. */}
+      <div className="flex flex-wrap gap-3 mb-4 items-center">
+        <input className="input flex-1 min-w-[220px]" placeholder="Buscar por nombre o código..." value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(0) }} />
-        <select className="input" value={filterCat} onChange={(e) => { setFilterCat(e.target.value); setPage(0) }}>
+        <select className="input w-52" value={filterCat} onChange={(e) => { setFilterCat(e.target.value); setPage(0) }}>
           <option value="">Todas las categorías</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <select className="input" value={availability} onChange={(e) => { setAvailability(e.target.value); setPage(0) }}>
-          <option value="all">Todos los productos</option>
-          <option value="lowStock">⚠️ Stock bajo</option>
-          <option value="neverSold">🚫 Sin ventas</option>
-          <option value="topSellers">🔥 Más vendidos</option>
-        </select>
+        <button
+          type="button"
+          className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+            lowStockOnly ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+          onClick={() => { setLowStockOnly((v) => !v); setPage(0) }}
+        >
+          ⚠️ Stock bajo
+        </button>
+        {(search || filterCat || lowStockOnly) && (
+          <button
+            type="button" className="btn-secondary text-sm"
+            onClick={() => { setSearch(''); setFilterCat(''); setLowStockOnly(false); setPage(0) }}
+          >
+            Limpiar filtros
+          </button>
+        )}
       </div>
 
       {/* Table */}
       <div className="card p-0 overflow-hidden">
+        {isAdmin && selectedIds.size > 0 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 bg-purple-50">
+            <span className="text-xs text-gray-600">{selectedIds.size} seleccionado{selectedIds.size === 1 ? '' : 's'}</span>
+            <div className="flex items-center gap-2">
+              <button
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-600 text-white hover:bg-purple-700 transition-colors disabled:opacity-50"
+                disabled={bulkUpdating}
+                onClick={() => handleBulkReservable(true)}
+              >
+                📷 Agregar a apartados
+              </button>
+              <button
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-purple-600 text-purple-600 hover:bg-purple-100 transition-colors disabled:opacity-50"
+                disabled={bulkUpdating}
+                onClick={() => handleBulkReservable(false)}
+              >
+                Quitar de apartados
+              </button>
+              <button
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-purple-600 text-purple-600 hover:bg-purple-100 transition-colors disabled:opacity-50"
+                disabled={bulkUpdating}
+                onClick={() => { setBulkDiscountValue(''); setBulkDiscountModal(true) }}
+              >
+                💸 Aplicar descuento
+              </button>
+            </div>
+          </div>
+        )}
         <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[720px]">
+        <table className="w-full text-sm min-w-[760px]">
           <thead className="bg-gray-50 border-b border-gray-100">
+            {/* Fila de agrupación: marca "En línea"/"Descuento"/"Apartados" como el bloque
+                de datos de la tienda pública de apartados, para diferenciarlas a simple
+                vista del resto (que son datos de mostrador/inventario normal). */}
             <tr>
-              {['Producto', 'Categoría', 'Código', 'Precio', 'Stock', 'Mín.', 'Vendidos', ''].map((h) => (
+              <th colSpan={(isAdmin ? 1 : 0) + 6} className="bg-gray-50"></th>
+              <th colSpan={3} className="text-center px-2 py-1 text-[11px] font-semibold text-purple-700 bg-purple-50 border-l-2 border-purple-200">
+                🛍️ Tienda en línea de apartados
+              </th>
+              <th className="bg-gray-50"></th>
+            </tr>
+            <tr>
+              {isAdmin && (
+                <th className="px-4 py-3 w-8">
+                  <input type="checkbox" checked={products.length > 0 && selectedIds.size === products.length} onChange={toggleSelectAll} aria-label="Seleccionar todos" />
+                </th>
+              )}
+              {['Producto', 'Categoría', 'Código', 'Precio', 'Stock', 'Mín.'].map((h) => (
                 <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
               ))}
+              <th className="text-left px-2 py-3 w-20 font-medium text-purple-700 bg-purple-50/60 border-l-2 border-purple-200">En línea</th>
+              <th className="text-left px-2 py-3 w-20 font-medium text-purple-700 bg-purple-50/60">Descuento</th>
+              <th className="text-left px-4 py-3 font-medium text-purple-700 bg-purple-50/60">Apartados</th>
+              <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {products.map((p) => (
-              <tr key={p.id} className="hover:bg-gray-50">
+              <tr key={p.id} className={`hover:bg-gray-50 ${selectedIds.has(p.id) ? 'bg-purple-50/50' : ''}`}>
+                {isAdmin && (
+                  <td className="px-4 py-3">
+                    <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelect(p.id)} aria-label={`Seleccionar ${p.name}`} />
+                  </td>
+                )}
                 <td className="px-4 py-3 font-medium text-gray-900">{p.name}</td>
                 <td className="px-4 py-3 text-gray-500">{p.category?.name}</td>
                 <td className="px-4 py-3 text-gray-400 font-mono text-xs">{p.barcode}</td>
@@ -460,8 +689,20 @@ export default function Inventory() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-gray-400">{p.minStock}</td>
-                <td className="px-4 py-3 text-gray-500">
-                  {salesStats.has(p.id) ? (salesStats.get(p.id) || <span className="text-gray-300 italic">Sin ventas</span>) : '—'}
+                <td className="px-2 py-3 bg-purple-50/30 border-l-2 border-purple-100">
+                  {p.isReservable
+                    ? <span className="text-xs px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700">📷 Sí</span>
+                    : <span className="text-xs text-gray-300">No</span>}
+                </td>
+                <td className="px-2 py-3 bg-purple-50/30">
+                  {p.apartadoDiscountPercent > 0
+                    ? <span className="text-xs font-semibold text-red-600">-{Number(p.apartadoDiscountPercent)}%</span>
+                    : <span className="text-xs text-gray-300">—</span>}
+                </td>
+                <td className="px-4 py-3 bg-purple-50/30">
+                  {reservedStats.get(p.id) > 0
+                    ? <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-700">{reservedStats.get(p.id)} {p.unit}</span>
+                    : <span className="text-xs text-gray-300">—</span>}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
@@ -477,7 +718,7 @@ export default function Inventory() {
               </tr>
             ))}
             {products.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">{tableLoading ? 'Cargando...' : 'Sin productos'}</td></tr>
+              <tr><td colSpan={isAdmin ? 11 : 10} className="px-4 py-8 text-center text-gray-400">{tableLoading ? 'Cargando...' : 'Sin productos'}</td></tr>
             )}
           </tbody>
         </table>
@@ -551,6 +792,75 @@ export default function Inventory() {
               </div>
               <div><label className="text-xs font-medium text-gray-600">Descripción</label>
                 <textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.isReservable}
+                  onChange={(e) => setForm({ ...form, isReservable: e.target.checked })}
+                />
+                <span className="text-sm text-gray-700">📷 Mostrar en la tienda pública de apartados</span>
+              </label>
+
+              {form.isReservable && (
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Descuento de oferta (%) — se le muestra al cliente</label>
+                  <input
+                    className="input sm:max-w-[160px]" type="number" min="0" max="100" step="1"
+                    placeholder="Sin oferta"
+                    value={form.apartadoDiscountPercent}
+                    onChange={(e) => setForm({ ...form, apartadoDiscountPercent: e.target.value })}
+                  />
+                </div>
+              )}
+
+              <div className="border-t border-gray-100 pt-3">
+                <label className="text-xs font-medium text-gray-600 block mb-2">Fotos</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {editProduct ? (
+                    <>
+                      {productImages.map((img) => (
+                        <div key={img.id} className="relative group">
+                          <img
+                            src={img.path} alt=""
+                            className={`w-16 h-16 object-cover rounded-lg border-2 ${img.isPrimary ? 'border-purple-500' : 'border-gray-200'}`}
+                          />
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1">
+                            {!img.isPrimary && (
+                              <button type="button" title="Hacer portada" className="text-white text-xs" onClick={() => handleSetPrimaryImage(img.id)}>⭐</button>
+                            )}
+                            <button type="button" title="Quitar" className="text-white text-xs" onClick={() => handleDeleteImage(img.id)}>✕</button>
+                          </div>
+                        </div>
+                      ))}
+                      <label className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer text-gray-400 hover:border-purple-400 hover:text-purple-500 text-xs text-center">
+                        {uploadingImage ? '...' : '+ Foto'}
+                        <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleUploadImage} disabled={uploadingImage} />
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      {/* Producto nuevo: todavía no hay id al que subir nada, solo se guardan
+                          en memoria (`pendingImages`) — la subida real pasa en `handleSave`,
+                          justo después de crear el producto. */}
+                      {pendingImages.map((img, idx) => (
+                        <div key={img.previewUrl} className="relative group">
+                          <img src={img.previewUrl} alt="" className={`w-16 h-16 object-cover rounded-lg border-2 ${idx === 0 ? 'border-purple-500' : 'border-gray-200'}`} />
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                            <button type="button" title="Quitar" className="text-white text-xs" onClick={() => handleRemovePendingImage(idx)}>✕</button>
+                          </div>
+                        </div>
+                      ))}
+                      <label className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer text-gray-400 hover:border-purple-400 hover:text-purple-500 text-xs text-center">
+                        + Foto
+                        <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleStageImage} />
+                      </label>
+                    </>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400">La primera foto (borde morado) es la portada del catálogo público.</p>
+              </div>
+
               {error && <p className="text-red-600 text-sm">{error}</p>}
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
@@ -589,7 +899,7 @@ export default function Inventory() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setAdjustModal(null)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-1">Ajustar stock</h3>
-            <p className="text-sm text-gray-500 mb-4">{adjustModal.name} — actual: {adjustModal.stock} {adjustModal.unit}</p>
+            <p className="text-sm text-gray-500 mb-4">{adjustModal.name} — actual: {adjustModal.stock} {adjustModal.unit} · mínimo: {adjustModal.minStock} {adjustModal.unit}</p>
             <form onSubmit={handleAdjust} className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">¿Qué quieres hacer? *</label>
@@ -636,6 +946,39 @@ export default function Inventory() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk discount modal */}
+      {bulkDiscountModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h3 className="text-lg font-bold mb-1">Aplicar descuento de oferta</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              A {selectedIds.size} producto{selectedIds.size === 1 ? '' : 's'} seleccionado{selectedIds.size === 1 ? '' : 's'} — se le muestra al cliente en la tienda pública.
+            </p>
+            <label className="text-xs font-medium text-gray-600">Descuento (%)</label>
+            <input
+              className="input" type="number" min="0" max="100" step="1" autoFocus placeholder="Ej. 15"
+              value={bulkDiscountValue}
+              onChange={(e) => setBulkDiscountValue(e.target.value)}
+            />
+            <div className="flex gap-2 justify-end pt-4">
+              <button type="button" className="btn-secondary" onClick={() => setBulkDiscountModal(false)}>Cancelar</button>
+              <button
+                type="button" className="text-xs font-semibold text-red-600 hover:underline mr-auto"
+                onClick={async () => { await handleBulkDiscount(null); setBulkDiscountModal(false) }}
+              >
+                Quitar descuento
+              </button>
+              <button
+                type="button" className="btn-primary" disabled={bulkDiscountValue === ''}
+                onClick={async () => { await handleBulkDiscount(Number(bulkDiscountValue)); setBulkDiscountModal(false) }}
+              >
+                Aplicar
+              </button>
+            </div>
           </div>
         </div>
       )}
