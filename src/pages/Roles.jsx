@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { getRoles, createRole, updateRole, deleteRole } from '../api/roles'
+import { getRolesPage, createRole, updateRole, deleteRole } from '../api/roles'
 import { SECTIONS } from '../config/sections'
 import { useNotify } from '../context/NotifyContext'
 
 const emptyForm = { name: '', description: '', sections: [] }
+const PAGE_SIZES = [10, 20, 50, 100]
 
 /**
  * Pantalla de "Roles y Permisos": CRUD de los roles disponibles para la tienda del
@@ -16,22 +17,41 @@ const emptyForm = { name: '', description: '', sections: [] }
  * base) tienen restricciones especiales: no se pueden eliminar (el botón "Eliminar" no
  * se muestra), su nombre no es editable, y no se les puede quitar la sección `ROLES`
  * (para evitar dejar la tienda sin ningún usuario que pueda administrar roles).
+ *
+ * Paginación server-side (mismo patrón que Sales/CashCuts/Inventory/Users): `page`/`size`
+ * viajan como query params a `GET /roles/page` y el backend responde `{content, page, size,
+ * totalElements, totalPages}`. Es un endpoint aparte de `GET /roles` (sin paginar), que sigue
+ * existiendo porque alimenta el selector de rol de la pantalla de Usuarios — paginarlo ahí
+ * ocultaría roles del selector.
  */
 export default function Roles() {
   const { notify, confirmDialog } = useNotify()
-  const [roles, setRoles] = useState([])
+  const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
+  const [page, setPage] = useState(0)
+  const [size, setSize] = useState(20)
   const [showModal, setShowModal] = useState(false)
   const [editRole, setEditRole] = useState(null)
   const [form, setForm] = useState(emptyForm)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Recarga el listado completo de roles (tras crear/editar/eliminar, o al montar).
+  // Recarga la página actual de roles (tras crear/editar/eliminar, cambiar de página/tamaño,
+  // o al montar).
   function load() {
-    getRoles().then((r) => setRoles(r.data.data ?? []))
+    getRolesPage({ page, size }).then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [page, size])
+
+  // Cierra con ESC el modal de rol (mismo efecto que "Cancelar"), descartando lo capturado.
+  useEffect(() => {
+    if (!showModal) return
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setShowModal(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [showModal])
 
   // Abre el modal en blanco para crear un rol nuevo.
   function openNew() {
@@ -101,6 +121,14 @@ export default function Roles() {
     }
   }
 
+  const roles = pageData.content ?? []
+  const totalPages = pageData.totalPages ?? 0
+  const totalElements = pageData.totalElements ?? 0
+  // Rango "X–Y de Z" mostrado junto al selector de tamaño de página, calculado localmente
+  // a partir de la página/tamaño actuales y el total que reporta el backend.
+  const from = totalElements === 0 ? 0 : page * size + 1
+  const to = Math.min(totalElements, page * size + roles.length)
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
@@ -147,11 +175,43 @@ export default function Roles() {
           </tbody>
         </table>
         </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-sm">
+          <div className="flex items-center gap-2 text-gray-500">
+            <span>Mostrar</span>
+            <select
+              className="input !w-auto py-1"
+              value={size}
+              onChange={(e) => { setSize(Number(e.target.value)); setPage(0) }}
+            >
+              {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span>por página · {totalElements === 0 ? 'sin resultados' : `${from}–${to} de ${totalElements}`}</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-secondary py-1 px-3 text-xs disabled:opacity-40"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              ‹ Anterior
+            </button>
+            <span className="text-gray-500 text-xs">Página {totalPages === 0 ? 0 : page + 1} de {totalPages}</span>
+            <button
+              className="btn-secondary py-1 px-3 text-xs disabled:opacity-40"
+              disabled={page + 1 >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Siguiente ›
+            </button>
+          </div>
+        </div>
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">{editRole ? 'Editar rol' : 'Nuevo rol'}</h3>
             <form onSubmit={handleSave} className="space-y-3">
               <div><label className="text-xs font-medium text-gray-600">Nombre *</label>

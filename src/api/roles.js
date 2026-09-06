@@ -8,6 +8,14 @@ import api from './axios'
 export const getRoles = () => api.get('/roles')
 
 /**
+ * Página de roles para la tabla de administración de Roles (a diferencia de {@link getRoles},
+ * que trae el catálogo completo para selectores como el filtro/formulario de Usuarios).
+ * @param {Object} [params] Query params de paginación (page, size).
+ * @returns {Promise} Respuesta de axios con {content, totalElements, totalPages, page, size}.
+ */
+export const getRolesPage = (params) => api.get('/roles/page', { params })
+
+/**
  * Obtiene el detalle de un rol por id, incluyendo sus secciones habilitadas.
  * @param {number|string} id Id del rol.
  * @returns {Promise} Respuesta de axios con el rol solicitado.

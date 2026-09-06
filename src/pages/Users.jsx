@@ -7,6 +7,7 @@ const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'sho
 
 const emptyForm = { name: '', email: '', password: '', roleId: '' }
 const EMPTY_FILTERS = { from: '', to: '', name: '', email: '', roleId: '', isActive: '' }
+const PAGE_SIZES = [10, 20, 50, 100]
 
 /**
  * Pantalla "Usuarios": CRUD de los usuarios de la tienda del usuario en sesión (o de todas
@@ -18,13 +19,21 @@ const EMPTY_FILTERS = { from: '', to: '', name: '', email: '', roleId: '', isAct
  * es un borrado suave (el backend marca `isActive=false`, no elimina el registro), por eso
  * la tabla muestra una columna de Estado en vez de que el usuario desaparezca de la lista;
  * los usuarios inactivos siguen apareciendo salvo que el filtro de Estado los excluya.
+ *
+ * Paginación server-side (mismo patrón que Sales/CashCuts/Inventory): `page`/`size` viajan
+ * como query params y el backend responde `{content, page, size, totalElements, totalPages}`.
+ * `roles`, en cambio, sigue viniendo del catálogo completo sin paginar (`getRoles`), porque
+ * también alimenta el selector de rol del filtro y del formulario de alta/edición — paginarlo
+ * ahí ocultaría roles del selector.
  */
 export default function Users() {
   const { confirmDialog } = useNotify()
-  const [users, setUsers] = useState([])
+  const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [roles, setRoles] = useState([])
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
+  const [page, setPage] = useState(0)
+  const [size, setSize] = useState(20)
   const [showModal, setShowModal] = useState(false)
   const [editUser, setEditUser] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -40,6 +49,8 @@ export default function Users() {
    */
   function load() {
     const params = {
+      page,
+      size,
       name: appliedFilters.name || undefined,
       email: appliedFilters.email || undefined,
       roleId: appliedFilters.roleId || undefined,
@@ -47,17 +58,30 @@ export default function Users() {
       from: appliedFilters.from ? `${appliedFilters.from}T00:00:00` : undefined,
       to: appliedFilters.to ? `${appliedFilters.to}T23:59:59` : undefined,
     }
-    getUsers(params).then((r) => setUsers(r.data.data ?? []))
+    getUsers(params).then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
     getRoles().then((r) => setRoles(r.data.data ?? []))
   }
 
-  // Recarga cada vez que cambian los filtros aplicados (al confirmar o limpiar el formulario
-  // de filtros), no en cada tecleo — por eso existe la distinción filters vs appliedFilters.
-  useEffect(() => { load() }, [appliedFilters])
+  // Recarga cada vez que cambian la página, el tamaño de página, o los filtros aplicados
+  // (al confirmar o limpiar el formulario de filtros, no en cada tecleo — por eso existe la
+  // distinción filters vs appliedFilters).
+  useEffect(() => { load() }, [page, size, appliedFilters])
 
-  // Confirma los filtros en edición como los filtros activos, disparando la recarga.
+  // Cierra con ESC el modal de usuario (mismo efecto que "Cancelar"), descartando lo capturado.
+  useEffect(() => {
+    if (!showModal) return
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setShowModal(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [showModal])
+
+  // Confirma los filtros en edición como los filtros activos (disparando la recarga) y
+  // vuelve a la primera página, para no quedar "atorado" en una página que ya no existe.
   function handleApplyFilters(e) {
     e.preventDefault()
+    setPage(0)
     setAppliedFilters(filters)
   }
 
@@ -65,6 +89,7 @@ export default function Users() {
   function handleClearFilters() {
     setFilters(EMPTY_FILTERS)
     setAppliedFilters(EMPTY_FILTERS)
+    setPage(0)
   }
 
   // Abre el modal en blanco para crear un usuario nuevo, preseleccionando el primer rol
@@ -123,6 +148,14 @@ export default function Users() {
   // personalizados creados por el admin) caen en el gris por default.
   const ROLE_COLORS = { ADMIN: 'bg-purple-100 text-purple-700', CASHIER: 'bg-blue-100 text-blue-700', SELLER: 'bg-green-100 text-green-700' }
   const roleColor = (name) => ROLE_COLORS[name] ?? 'bg-gray-100 text-gray-600'
+
+  const users = pageData.content ?? []
+  const totalPages = pageData.totalPages ?? 0
+  const totalElements = pageData.totalElements ?? 0
+  // Rango "X–Y de Z" mostrado junto al selector de tamaño de página, calculado localmente
+  // a partir de la página/tamaño actuales y el total que reporta el backend.
+  const from = totalElements === 0 ? 0 : page * size + 1
+  const to = Math.min(totalElements, page * size + users.length)
 
   return (
     <div>
@@ -209,11 +242,43 @@ export default function Users() {
           </tbody>
         </table>
         </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-sm">
+          <div className="flex items-center gap-2 text-gray-500">
+            <span>Mostrar</span>
+            <select
+              className="input !w-auto py-1"
+              value={size}
+              onChange={(e) => { setSize(Number(e.target.value)); setPage(0) }}
+            >
+              {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span>por página · {totalElements === 0 ? 'sin resultados' : `${from}–${to} de ${totalElements}`}</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-secondary py-1 px-3 text-xs disabled:opacity-40"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              ‹ Anterior
+            </button>
+            <span className="text-gray-500 text-xs">Página {totalPages === 0 ? 0 : page + 1} de {totalPages}</span>
+            <button
+              className="btn-secondary py-1 px-3 text-xs disabled:opacity-40"
+              disabled={page + 1 >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Siguiente ›
+            </button>
+          </div>
+        </div>
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">{editUser ? 'Editar usuario' : 'Nuevo usuario'}</h3>
             <form onSubmit={handleSave} className="space-y-3">
               <div><label className="text-xs font-medium text-gray-600">Nombre *</label>
