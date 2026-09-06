@@ -262,6 +262,20 @@ export default function Inventory() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  // Cierra con ESC el modal que esté abierto (producto, ajuste o elección), descartando
+  // lo capturado — mismo comportamiento que el botón "Cancelar" de cada uno.
+  useEffect(() => {
+    if (!showModal && !adjustModal && !choiceModal) return
+    function onKeyDown(e) {
+      if (e.key !== 'Escape') return
+      if (showModal) setShowModal(false)
+      else if (adjustModal) setAdjustModal(null)
+      else if (choiceModal) setChoiceModal(null)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [showModal, adjustModal, choiceModal])
+
   /**
    * Guarda el formulario de producto, ya sea creando uno nuevo o actualizando
    * `editProduct` según cuál esté seteado. Convierte los campos numéricos (vienen como
@@ -504,8 +518,8 @@ export default function Inventory() {
 
       {/* Product modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">{editProduct ? 'Editar producto' : 'Nuevo producto'}</h3>
             <form onSubmit={handleSave} className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -549,8 +563,8 @@ export default function Inventory() {
 
       {/* Choice modal: tras un escaneo de un código ya existente, pregunta qué hacer (solo ADMIN llega aquí) */}
       {choiceModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setChoiceModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-1">Producto encontrado</h3>
             <p className="text-sm text-gray-500 mb-4">{choiceModal.name} — código {choiceModal.barcode}</p>
             <div className="grid grid-cols-1 gap-2">
@@ -572,8 +586,8 @@ export default function Inventory() {
 
       {/* Adjust modal */}
       {adjustModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setAdjustModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-1">Ajustar stock</h3>
             <p className="text-sm text-gray-500 mb-4">{adjustModal.name} — actual: {adjustModal.stock} {adjustModal.unit}</p>
             <form onSubmit={handleAdjust} className="space-y-3">

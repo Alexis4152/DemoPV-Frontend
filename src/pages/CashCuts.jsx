@@ -79,6 +79,16 @@ export default function CashCuts() {
 
   useEffect(() => { load() }, [page, size, appliedFilters])
 
+  // Cierra con ESC el modal de "Cerrar corte de caja" (mismo efecto que "Cancelar"), descartando lo capturado.
+  useEffect(() => {
+    if (!showClose) return
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setShowClose(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [showClose])
+
   /** Aplica los filtros del formulario (historial de admin) y reinicia a la primera página. */
   function handleApplyFilters(e) {
     e.preventDefault()
@@ -355,8 +365,8 @@ export default function CashCuts() {
 
       {/* Close modal */}
       {showClose && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowClose(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">Cerrar corte de caja</h3>
             <form onSubmit={handleClose} className="space-y-3">
               <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
