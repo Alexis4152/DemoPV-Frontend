@@ -7,6 +7,7 @@ import {
 import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
+import { resolveMediaUrl } from '../utils/media'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
@@ -822,7 +823,7 @@ export default function Inventory() {
                       {productImages.map((img) => (
                         <div key={img.id} className="relative group">
                           <img
-                            src={img.path} alt=""
+                            src={resolveMediaUrl(img.path)} alt=""
                             className={`w-16 h-16 object-cover rounded-lg border-2 ${img.isPrimary ? 'border-purple-500' : 'border-gray-200'}`}
                           />
                           <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1">

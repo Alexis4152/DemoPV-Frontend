@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { getTiendaInfo, updateTiendaInfo, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
 import { useNotify } from '../context/NotifyContext'
+import { resolveMediaUrl } from '../utils/media'
 import defaultLogo from '../assets/logo.png'
 
 const FIELDS = [
@@ -159,7 +160,7 @@ export default function StoreInfo() {
 
   if (loading || !form) return <p className="text-gray-400 text-sm">Cargando...</p>
 
-  const logoSrc = user?.tienda?.logoPath || defaultLogo
+  const logoSrc = resolveMediaUrl(user?.tienda?.logoPath) || defaultLogo
 
   return (
     <div className="max-w-2xl">

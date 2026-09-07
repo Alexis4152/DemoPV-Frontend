@@ -3,6 +3,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { SECTIONS } from '../config/sections'
 import { getApartadosPendingCount } from '../api/apartados'
+import { resolveMediaUrl } from '../utils/media'
 import defaultLogo from '../assets/logo.png'
 
 /**
@@ -106,7 +107,7 @@ export default function Layout({ children }) {
     isAdmin && { to: '/store-info', icon: '🏬', label: 'Datos de la tienda' },
   ].filter(Boolean)
   const configActive = CONFIG_ROUTES.includes(location.pathname)
-  const sidebarLogo = user?.tienda?.logoPath || defaultLogo
+  const sidebarLogo = resolveMediaUrl(user?.tienda?.logoPath) || defaultLogo
 
   /**
    * Contenido interno del sidebar (logo, nav, pie con rol/logout), compartido entre el

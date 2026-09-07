@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { getPublicTienda, getPublicCategories, getPublicProducts, createPublicApartado } from '../api/public'
 import { applyTiendaBrand } from '../utils/theme'
+import { resolveMediaUrl } from '../utils/media'
 import defaultLogo from '../assets/logo.png'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
@@ -154,7 +155,7 @@ export default function PublicApartar() {
         {/* Mismo fallback que el sidebar/Datos de la tienda (Layout.jsx/StoreInfo.jsx): si
             la tienda no subió un logo propio, se usa el de Nexora en vez de dejar el
             encabezado sin nada. */}
-        <img src={tienda?.logoPath || defaultLogo} alt={tienda?.name ?? 'Logo'} className="w-11 h-11 rounded-full object-cover border-2 border-white/40" />
+        <img src={resolveMediaUrl(tienda?.logoPath) || defaultLogo} alt={tienda?.name ?? 'Logo'} className="w-11 h-11 rounded-full object-cover border-2 border-white/40" />
         <div>
           <h1 className="font-bold text-white">{tienda?.name ?? 'Cargando...'}</h1>
           <p className="text-xs text-purple-100">Aparta tus productos favoritos</p>
@@ -195,7 +196,7 @@ export default function PublicApartar() {
                 <div key={p.id} className="card p-3 flex flex-col border-t-2 border-t-purple-300">
                   <div className="w-full aspect-square bg-purple-50 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
                     {p.images?.[0] ? (
-                      <img src={p.images[0]} alt={p.name} className="w-full h-full object-cover" />
+                      <img src={resolveMediaUrl(p.images[0])} alt={p.name} className="w-full h-full object-cover" />
                     ) : (
                       <span className="text-3xl">📦</span>
                     )}

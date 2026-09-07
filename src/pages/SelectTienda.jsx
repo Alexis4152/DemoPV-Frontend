@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTiendas, createTienda, updateTiendaName, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
+import { resolveMediaUrl } from '../utils/media'
 import logo from '../assets/logo.png'
 
 /**
@@ -100,7 +101,7 @@ export default function SelectTienda() {
                 >
                   <button type="button" onClick={() => handleSelect(t)} className="flex items-center gap-3 text-left flex-1 min-w-0">
                     {t.logoPath ? (
-                      <img src={t.logoPath} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" />
+                      <img src={resolveMediaUrl(t.logoPath)} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" />
                     ) : (
                       <span className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-lg shrink-0">🏬</span>
                     )}
@@ -273,7 +274,7 @@ function EditTiendaModal({ tienda, onClose, onSaved }) {
 
         <div className="flex items-center gap-4">
           {logoPath ? (
-            <img src={logoPath} alt="" className="w-14 h-14 rounded-full object-cover border border-gray-200" />
+            <img src={resolveMediaUrl(logoPath)} alt="" className="w-14 h-14 rounded-full object-cover border border-gray-200" />
           ) : (
             <span className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-xl">🏬</span>
           )}

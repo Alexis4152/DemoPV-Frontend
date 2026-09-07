@@ -5,6 +5,7 @@ import { getCategories } from '../api/categories'
 import { createSale } from '../api/sales'
 import { getOpenCashCut } from '../api/cashCuts'
 import { printSaleTicket } from '../utils/printer'
+import { resolveMediaUrl } from '../utils/media'
 import { useNotify } from '../context/NotifyContext'
 import { useAuth } from '../context/AuthContext'
 
@@ -646,7 +647,7 @@ export default function POS() {
                     >
                       <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
                         {p.primaryImage ? (
-                          <img src={p.primaryImage} alt="" className="w-full h-full object-cover" />
+                          <img src={resolveMediaUrl(p.primaryImage)} alt="" className="w-full h-full object-cover" />
                         ) : (
                           <span className="text-3xl text-gray-300">🖼️</span>
                         )}
