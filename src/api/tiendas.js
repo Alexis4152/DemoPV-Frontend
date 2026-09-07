@@ -9,6 +9,25 @@ import api from './axios'
 export const getTiendas = () => api.get('/tiendas')
 
 /**
+ * Da de alta una tienda nueva (solo SUPER_ADMIN). El backend le siembra de inmediato sus
+ * roles base (ADMIN, CASHIER, SELLER) con las secciones correctas — ver
+ * `TiendaService#create`/`RoleService#seedDefaultRolesForTienda` — así que queda lista
+ * para operar sin ningún paso manual adicional.
+ * @param {string} name Nombre de la tienda.
+ * @returns {Promise} Respuesta de axios con la tienda creada.
+ */
+export const createTienda = (name) => api.post('/tiendas', { name })
+
+/**
+ * Actualiza el nombre de una tienda existente (solo SUPER_ADMIN, para cualquier tienda;
+ * el ADMIN de una tienda no tiene este endpoint disponible — ver `TiendaController`).
+ * @param {number|string} id Id de la tienda.
+ * @param {string} name Nuevo nombre.
+ * @returns {Promise} Respuesta de axios con la tienda actualizada.
+ */
+export const updateTiendaName = (id, name) => api.put(`/tiendas/${id}`, { name })
+
+/**
  * Actualiza el color primario de marca de una tienda. Tras un guardado exitoso,
  * el llamador típicamente usa `applyTiendaBrand` (ver `utils/theme.js`) y
  * `patchTienda` de `AuthContext` para reflejar el nuevo color sin recargar la app.
