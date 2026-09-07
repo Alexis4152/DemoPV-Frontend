@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getUsers, createUser, updateUser, deleteUser } from '../api/users'
 import { getRoles } from '../api/roles'
+import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
@@ -20,6 +21,11 @@ const PAGE_SIZES = [10, 20, 50, 100]
  * la tabla muestra una columna de Estado en vez de que el usuario desaparezca de la lista;
  * los usuarios inactivos siguen apareciendo salvo que el filtro de Estado los excluya.
  *
+ * Control de acceso (vía `isAdmin`, solo frontend — el backend es quien realmente lo hace
+ * cumplir): cualquiera con la sección `USERS` habilitada puede VER esta pantalla y su
+ * listado, pero dar de alta, editar y desactivar usuarios están reservados a ADMIN — antes
+ * cualquier rol con acceso a Usuarios (ej. un vendedor) podía hacerlo también.
+ *
  * Paginación server-side (mismo patrón que Sales/CashCuts/Inventory): `page`/`size` viajan
  * como query params y el backend responde `{content, page, size, totalElements, totalPages}`.
  * `roles`, en cambio, sigue viniendo del catálogo completo sin paginar (`getRoles`), porque
@@ -32,6 +38,7 @@ const PAGE_SIZES = [10, 20, 50, 100]
  * primera página, para no quedar "atorado" en una página que ya no existe con el nuevo filtro.
  */
 export default function Users() {
+  const { isAdmin } = useAuth()
   const { confirmDialog } = useNotify()
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [roles, setRoles] = useState([])
@@ -123,7 +130,7 @@ export default function Users() {
     e.preventDefault()
     const confirmMsg = editUser
       ? `¿Deseas guardar los cambios de "${form.name}"?`
-      : `¿Deseas crear el usuario "${form.name}"?`
+      : `¿Deseas crear el usuario "${form.name}"? Se le enviará una contraseña temporal a ${form.email}.`
     if (!(await confirmDialog(confirmMsg, { confirmText: editUser ? 'Guardar cambios' : 'Crear', danger: false }))) return
     setLoading(true)
     setError('')
@@ -167,7 +174,7 @@ export default function Users() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Usuarios</h2>
-        <button className="btn-primary" onClick={openNew}>+ Nuevo usuario</button>
+        {isAdmin && <button className="btn-primary" onClick={openNew}>+ Nuevo usuario</button>}
       </div>
 
       {/* flex-wrap, sin botón "Filtrar": cada campo aplica solo al cambiar (mismo patrón
@@ -235,12 +242,16 @@ export default function Users() {
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  <div className="flex gap-2">
-                    <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(u)}>Editar</button>
-                    {u.isActive && (
-                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(u)}>Desact.</button>
-                    )}
-                  </div>
+                  {isAdmin ? (
+                    <div className="flex gap-2">
+                      <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(u)}>Editar</button>
+                      {u.isActive && (
+                        <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(u)}>Desact.</button>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -293,8 +304,16 @@ export default function Users() {
                 <input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
               <div><label className="text-xs font-medium text-gray-600">Email *</label>
                 <input className="input" type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-              <div><label className="text-xs font-medium text-gray-600">Contraseña {editUser ? '(dejar vacío para no cambiar)' : '*'}</label>
-                <input className="input" type="password" required={!editUser} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></div>
+              {editUser ? (
+                <div><label className="text-xs font-medium text-gray-600">Contraseña (dejar vacío para no cambiar)</label>
+                  <input className="input" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                  <p className="text-xs text-gray-400 mt-1">Si la cambias aquí, se le pedirá elegir una nueva la próxima vez que inicie sesión.</p>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+                  📧 Se le va a enviar una contraseña temporal por correo, y se le pedirá cambiarla al iniciar sesión por primera vez.
+                </p>
+              )}
               <div><label className="text-xs font-medium text-gray-600">Rol *</label>
                 <select className="input" required value={form.roleId} onChange={(e) => setForm({ ...form, roleId: e.target.value })}>
                   <option value="" disabled>Selecciona un rol</option>

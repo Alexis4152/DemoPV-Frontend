@@ -31,3 +31,14 @@ export const forgotPassword = (email) => api.post('/auth/forgot-password', { ema
  * @returns {Promise} Respuesta de axios confirmando el cambio.
  */
 export const resetPassword = (token, newPassword) => api.post('/auth/reset-password', { token, newPassword })
+
+/**
+ * Cambia la contraseña del usuario ya autenticado (exige la actual como comprobante de
+ * identidad) — a diferencia de `resetPassword`, que es anónimo vía token de correo. Es lo
+ * que usa la pantalla obligatoria de "cambia tu contraseña" cuando un admin dio de alta al
+ * usuario con una temporal (`user.mustChangePassword`).
+ * @param {string} currentPassword Contraseña actual.
+ * @param {string} newPassword Nueva contraseña elegida.
+ * @returns {Promise} Respuesta de axios confirmando el cambio.
+ */
+export const changePassword = (currentPassword, newPassword) => api.post('/auth/change-password', { currentPassword, newPassword })

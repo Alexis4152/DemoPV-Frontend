@@ -6,6 +6,7 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
+import ChangePasswordRequired from './pages/ChangePasswordRequired'
 import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
 import POS from './pages/POS'
@@ -25,12 +26,16 @@ import PublicApartar from './pages/PublicApartar'
  * `/login`, `/forgot-password` y `/reset-password` son públicas, igual que
  * `/apartar/:slug` (la tienda pública de apartados, `PublicApartar.jsx`) — esta última a
  * propósito FUERA del `Layout`/`PrivateRoute`: es la única pantalla que un cliente final
- * visita sin cuenta ni login, y no debe llevar sidebar ni exigir sesión. Todo lo demás vive
- * bajo un `PrivateRoute` genérico (solo exige sesión iniciada) que envuelve el `Layout`
- * (sidebar + contenido), y dentro de este cada ruta hija está envuelta en su propio
- * `PrivateRoute` con `section` (código de `AppSection` para el chequeo fino de permisos
- * RBAC) o `adminOnly` (para las pantallas de configuración de tienda: Apariencia y Datos
- * de la tienda). Cualquier ruta no reconocida redirige a `/`.
+ * visita sin cuenta ni login, y no debe llevar sidebar ni exigir sesión. `/change-password`
+ * SÍ exige sesión (usa `PrivateRoute` sin `section`) pero vive fuera del `Layout`, sin
+ * sidebar — es la pantalla obligatoria que ve un usuario con `mustChangePassword` (dado de
+ * alta con contraseña temporal); `PrivateRoute` la usa como destino de rebote sin importar
+ * qué otra ruta se haya pedido (ver su propio JSDoc). Todo lo demás vive bajo un
+ * `PrivateRoute` genérico (solo exige sesión iniciada) que envuelve el `Layout` (sidebar +
+ * contenido), y dentro de este cada ruta hija está envuelta en su propio `PrivateRoute` con
+ * `section` (código de `AppSection` para el chequeo fino de permisos RBAC) o `adminOnly`
+ * (para las pantallas de configuración de tienda: Apariencia y Datos de la tienda).
+ * Cualquier ruta no reconocida redirige a `/`.
  */
 function AppRoutes() {
   return (
@@ -39,6 +44,7 @@ function AppRoutes() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/apartar/:slug" element={<PublicApartar />} />
+      <Route path="/change-password" element={<PrivateRoute><ChangePasswordRequired /></PrivateRoute>} />
       <Route
         path="/*"
         element={

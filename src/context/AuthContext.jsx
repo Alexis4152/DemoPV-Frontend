@@ -132,12 +132,23 @@ export function AuthProvider({ children }) {
     if ('primaryColor' in partial) applyBrandFor(merged)
   }
 
+  // Apaga `mustChangePassword` en memoria + localStorage al instante, justo después de que
+  // ChangePasswordRequired.jsx confirma el cambio en el backend — sin esto, PrivateRoute
+  // seguiría rebotando al usuario a /change-password hasta el siguiente login.
+  /** Marca en el usuario en sesión que ya no debe forzarse el cambio de contraseña. */
+  function clearMustChangePassword() {
+    if (!user) return
+    const merged = { ...user, mustChangePassword: false }
+    localStorage.setItem('pos_user', JSON.stringify(merged))
+    setUser(merged)
+  }
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAdmin, hasSection, loading, patchTienda }}>
+    <AuthContext.Provider value={{ user, login, logout, isAdmin, hasSection, loading, patchTienda, clearMustChangePassword }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
-/** Hook de acceso al contexto de autenticación (`user`, `login`, `logout`, `isAdmin`, `hasSection`, `patchTienda`, `loading`). */
+/** Hook de acceso al contexto de autenticación (`user`, `login`, `logout`, `isAdmin`, `hasSection`, `patchTienda`, `clearMustChangePassword`, `loading`). */
 export const useAuth = () => useContext(AuthContext)
