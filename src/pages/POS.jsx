@@ -55,6 +55,13 @@ export default function POS() {
   // `useEffect` de búsqueda: sin esto, clicar de nuevo la misma categoría no cambia
   // `categoryId` y por lo tanto no dispara ninguna recarga por sí solo.
   const [browseRefresh, setBrowseRefresh] = useState(0)
+  // 'list': fila de texto (nombre, código, precio, disponibles) — la de siempre. 'images':
+  // misma búsqueda/catálogo, mismos resultados, solo que como cuadrícula de tarjetas con
+  // la foto de portada del producto (ver Product#primaryImage). No cambia nada del cobro
+  // en sí (ticket físico/digital, correo, descuentos...), solo cómo se eligen los
+  // productos. Se recuerda entre sesiones porque es una preferencia del cajero, no de la
+  // venta en curso.
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem('pos_view_mode') || 'list')
   const [cart, setCart] = useState([])
   // Ids de las líneas del carrito marcadas con su checkbox, para quitar varias a la vez
   // sin tener que darle ✕ una por una (ver `toggleSelectAll`/`removeSelected`).
@@ -177,6 +184,12 @@ export default function POS() {
     setCategoryId(id)
     setBrowseRefresh((n) => n + 1)
     searchInputRef.current?.focus()
+  }
+
+  /** Cambia entre la vista de lista y la de imágenes, recordando la elección para la próxima venta. */
+  function changeViewMode(mode) {
+    setViewMode(mode)
+    localStorage.setItem('pos_view_mode', mode)
   }
 
   /**
@@ -572,19 +585,35 @@ export default function POS() {
           </div>
         )}
 
-        {/* Categories */}
-        <div className="flex gap-2 mb-3 flex-wrap">
-          <button
-            className={`px-3 py-1.5 rounded-full text-xs font-medium border ${!categoryId ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-            onClick={() => selectCategory('')}
-          >Todas</button>
-          {categories.map((c) => (
+        {/* Categories + vista */}
+        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+          <div className="flex gap-2 flex-wrap">
             <button
-              key={c.id}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium border ${String(categoryId) === String(c.id) ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-              onClick={() => selectCategory(c.id)}
-            >{c.name}</button>
-          ))}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border ${!categoryId ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+              onClick={() => selectCategory('')}
+            >Todas</button>
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border ${String(categoryId) === String(c.id) ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                onClick={() => selectCategory(c.id)}
+              >{c.name}</button>
+            ))}
+          </div>
+          <div className="flex gap-1 bg-gray-100 rounded-full p-1 shrink-0">
+            <button
+              type="button"
+              title="Vista de lista"
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${viewMode === 'list' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              onClick={() => changeViewMode('list')}
+            >📋 Lista</button>
+            <button
+              type="button"
+              title="Vista con imágenes"
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${viewMode === 'images' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              onClick={() => changeViewMode('images')}
+            >🖼️ Imágenes</button>
+          </div>
         </div>
 
         <div className="relative mb-4" ref={searchBoxRef}>
@@ -601,28 +630,64 @@ export default function POS() {
             // resultados abierta se llegaba a tapar productos que el cajero ya había
             // agregado. Al quedar en el flujo normal, empuja el carrito hacia abajo en
             // vez de taparlo — nunca esconde nada que ya esté en la venta.
-            <div className="bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-80 overflow-y-auto">
-              {results.map((p, idx) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={`w-full flex items-center justify-between px-4 py-3 text-left border-b last:border-0 ${idx === highlighted ? 'bg-purple-50' : 'hover:bg-gray-50'}`}
-                  onMouseEnter={() => setHighlighted(idx)}
-                  onClick={() => addToCart(p)}
-                >
-                  <div>
-                    <p className="font-medium text-gray-900 text-sm">{p.name}</p>
-                    <p className="text-xs text-gray-400">{p.barcode} · Categoría: {p.category?.name ?? '—'}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="font-bold text-purple-700 text-sm block">{fmt(p.price)}</span>
-                    <span className={`text-xs ${p.stock <= p.minStock ? 'text-red-500' : 'text-gray-400'}`}>
-                      Disponibles: {p.stock}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
+            //
+            // El contenido es el mismo catálogo/búsqueda de siempre en ambos modos — la
+            // venta en sí (ticket, correo, descuentos, cobro) no cambia en nada; solo
+            // cambia cómo se elige el producto (ver `viewMode`).
+            viewMode === 'images' ? (
+              <div className="bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-[32rem] overflow-y-auto p-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {results.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="flex flex-col text-left rounded-xl border border-gray-200 hover:border-purple-300 hover:shadow-md transition-all overflow-hidden bg-white"
+                      onClick={() => addToCart(p)}
+                    >
+                      <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
+                        {p.primaryImage ? (
+                          <img src={p.primaryImage} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-3xl text-gray-300">🖼️</span>
+                        )}
+                      </div>
+                      <div className="p-2.5">
+                        <p className="font-medium text-gray-900 text-sm leading-snug line-clamp-2">{p.name}</p>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="font-bold text-purple-700 text-sm">{fmt(p.price)}</span>
+                          <span className={`text-xs ${p.stock <= p.minStock ? 'text-red-500' : 'text-gray-400'}`}>
+                            Disp: {p.stock}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-80 overflow-y-auto">
+                {results.map((p, idx) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`w-full flex items-center justify-between px-4 py-3 text-left border-b last:border-0 ${idx === highlighted ? 'bg-purple-50' : 'hover:bg-gray-50'}`}
+                    onMouseEnter={() => setHighlighted(idx)}
+                    onClick={() => addToCart(p)}
+                  >
+                    <div>
+                      <p className="font-medium text-gray-900 text-sm">{p.name}</p>
+                      <p className="text-xs text-gray-400">{p.barcode} · Categoría: {p.category?.name ?? '—'}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="font-bold text-purple-700 text-sm block">{fmt(p.price)}</span>
+                      <span className={`text-xs ${p.stock <= p.minStock ? 'text-red-500' : 'text-gray-400'}`}>
+                        Disponibles: {p.stock}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )
           )}
         </div>
 
