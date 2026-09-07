@@ -1,6 +1,14 @@
 import api from './axios'
 
 /**
+ * Lista todas las tiendas del sistema (activas e inactivas), ordenadas alfabéticamente.
+ * Solo la puede llamar un SUPER_ADMIN — la usa `SelectTienda.jsx` para armar el selector
+ * de "con cuál tienda actuar".
+ * @returns {Promise} Respuesta de axios con la lista de tiendas.
+ */
+export const getTiendas = () => api.get('/tiendas')
+
+/**
  * Actualiza el color primario de marca de una tienda. Tras un guardado exitoso,
  * el llamador típicamente usa `applyTiendaBrand` (ver `utils/theme.js`) y
  * `patchTienda` de `AuthContext` para reflejar el nuevo color sin recargar la app.

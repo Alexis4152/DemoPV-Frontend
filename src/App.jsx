@@ -7,6 +7,7 @@ import Login from './pages/Login'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import ChangePasswordRequired from './pages/ChangePasswordRequired'
+import SelectTienda from './pages/SelectTienda'
 import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
 import POS from './pages/POS'
@@ -30,11 +31,15 @@ import PublicApartar from './pages/PublicApartar'
  * SÍ exige sesión (usa `PrivateRoute` sin `section`) pero vive fuera del `Layout`, sin
  * sidebar — es la pantalla obligatoria que ve un usuario con `mustChangePassword` (dado de
  * alta con contraseña temporal); `PrivateRoute` la usa como destino de rebote sin importar
- * qué otra ruta se haya pedido (ver su propio JSDoc). Todo lo demás vive bajo un
- * `PrivateRoute` genérico (solo exige sesión iniciada) que envuelve el `Layout` (sidebar +
- * contenido), y dentro de este cada ruta hija está envuelta en su propio `PrivateRoute` con
- * `section` (código de `AppSection` para el chequeo fino de permisos RBAC) o `adminOnly`
- * (para las pantallas de configuración de tienda: Apariencia y Datos de la tienda).
+ * qué otra ruta se haya pedido (ver su propio JSDoc). `/select-tienda` es el mismo caso
+ * pero para SUPER_ADMIN sin ninguna tienda elegida (`user.tienda` sigue `null` — ver
+ * `AuthContext#selectTienda`): también exige sesión, también vive fuera del `Layout`, y
+ * `PrivateRoute` también rebota aquí desde cualquier otra ruta mientras no haya elegido
+ * una. Todo lo demás vive bajo un `PrivateRoute` genérico (solo exige sesión iniciada) que
+ * envuelve el `Layout` (sidebar + contenido), y dentro de este cada ruta hija está envuelta
+ * en su propio `PrivateRoute` con `section` (código de `AppSection` para el chequeo fino de
+ * permisos RBAC) o `adminOnly` (para las pantallas de configuración de tienda: Apariencia y
+ * Datos de la tienda — un SUPER_ADMIN actuando cuenta igual que el ADMIN de esa tienda).
  * Cualquier ruta no reconocida redirige a `/`.
  */
 function AppRoutes() {
@@ -45,6 +50,7 @@ function AppRoutes() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/apartar/:slug" element={<PublicApartar />} />
       <Route path="/change-password" element={<PrivateRoute><ChangePasswordRequired /></PrivateRoute>} />
+      <Route path="/select-tienda" element={<PrivateRoute><SelectTienda /></PrivateRoute>} />
       <Route
         path="/*"
         element={

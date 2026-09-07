@@ -4,21 +4,26 @@ import { applyDefaultBrand, applyTiendaBrand } from '../utils/theme'
 
 const AuthContext = createContext(null)
 
-// SUPER_ADMIN no pertenece a ninguna tienda → siempre azul Nexora fijo.
-// El resto sigue el color que su tienda haya elegido (o Nexora si no eligió ninguno).
+// Un SUPER_ADMIN no tiene tienda propia en el backend (siempre null ahí) — pero en el
+// frontend, en cuanto elige con cuál tienda actuar (ver `selectTienda`), su `user.tienda`
+// SÍ se llena con esa tienda, exactamente como si fuera su ADMIN. Por diseño: así todo el
+// resto de la app (Layout, POS, Apartados, Appearance, StoreInfo, Reports...) que ya lee
+// `user.tienda` para pintar nombre/logo/color o resolver límites de descuento funciona
+// igual para un SUPER_ADMIN actuando, sin tener que tocar cada una de esas pantallas por
+// separado. Mientras no ha elegido ninguna, `user.tienda` sigue siendo null — es la señal
+// que usa `PrivateRoute` para mandarlo al selector (`SelectTienda.jsx`).
 /**
  * Decide y aplica el color de marca (branding/theming) que corresponde al usuario dado.
  *
- * Los usuarios `SUPER_ADMIN` (que no pertenecen a ninguna tienda) y cualquier usuario
- * sin `tienda.primaryColor` definido siempre ven el azul fijo "Nexora" por defecto.
- * El resto de usuarios ve el color elegido por el administrador de su tienda
- * (pantalla de Apariencia). Es una función interna, no se expone en el contexto.
+ * Sin `tienda` (todavía no hay sesión, o es un SUPER_ADMIN que no ha elegido ninguna) o
+ * sin `primaryColor` definido en ella, se ve el azul fijo "Nexora" por defecto. Con una
+ * tienda con color propio, se ve ese. Es una función interna, no se expone en el contexto.
  *
  * @param {object|null} userData - Usuario en sesión (o `null` si no hay ninguno).
  * @returns {void}
  */
 function applyBrandFor(userData) {
-  if (!userData || userData.role === 'SUPER_ADMIN' || !userData.tienda?.primaryColor) {
+  if (!userData?.tienda?.primaryColor) {
     applyDefaultBrand()
   } else {
     applyTiendaBrand(userData.tienda.primaryColor)
@@ -30,14 +35,20 @@ function applyBrandFor(userData) {
  *
  * Es la fuente central de verdad sobre "quién es el usuario actual": mantiene el
  * `user` en memoria (sincronizado con `localStorage`, claves `pos_user`/`pos_token`)
- * y expone `login`/`logout`, los flags derivados `isAdmin`/`hasSection` (RBAC), y
- * `patchTienda` para reflejar en caliente cambios en los datos de la tienda.
+ * y expone `login`/`logout`, los flags derivados `isAdmin`/`isSuperAdmin`/`hasSection`
+ * (RBAC), `patchTienda` para reflejar en caliente cambios en los datos de la tienda, y
+ * `selectTienda`/`clearSelectedTienda` para que un SUPER_ADMIN elija (o cambie) sobre
+ * cuál tienda está actuando.
  *
  * Al montar, si hay una sesión guardada en `localStorage` la restaura de inmediato
  * (para evitar parpadeos de UI) y en paralelo llama a `apiMe()` para refrescar
  * rol/secciones/tienda por si cambiaron desde el último login (p. ej. el admin
  * quitó un permiso o cambió el color de marca), fusionando el resultado sobre el
- * usuario ya cargado.
+ * usuario ya cargado. Para un SUPER_ADMIN, `apiMe()` siempre trae `tienda: null` (así es
+ * en el backend) — el merge usa `??`, que solo reemplaza en `undefined`/`null` cuando el
+ * lado izquierdo también lo es... en este caso si conserva `parsed.tienda` porque el
+ * operador se evalúa sobre el valor de `fresh.tienda`, no sobre si cambió: `null ?? x`
+ * siempre da `x`, así que la tienda elegida sobrevive al refresco sin ningún caso especial.
  *
  * @param {{ children: import('react').ReactNode }} props
  */
@@ -105,8 +116,19 @@ export function AuthProvider({ children }) {
     applyDefaultBrand()
   }
 
-  /** `true` si el usuario en sesión tiene el rol `ADMIN` (administrador de su tienda). */
-  const isAdmin = user?.role === 'ADMIN'
+  /** `true` si el usuario en sesión es `SUPER_ADMIN` (usuario de plataforma, sin tienda
+   *  propia — ve/administra todas, de una en una, vía `selectTienda`). */
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  // Incluye a SUPER_ADMIN a propósito: mientras está actuando sobre una tienda (ver
+  // selectTienda), debe poder hacer TODO lo que su ADMIN podría — dar de alta/editar/dar
+  // de baja productos y usuarios, ver el historial de cortes, cancelar ventas, entrar a
+  // Apariencia/Datos de la tienda, etc. Es "un ADMIN con la posibilidad de pararse en
+  // cualquier tienda", no un rol aparte con permisos propios — así que en todo el
+  // frontend basta con revisar `isAdmin`, sin tener que acordarse de sumar `isSuperAdmin`
+  // en cada pantalla una por una (el backend hace el cumplimiento real de todas formas).
+  /** `true` si el usuario en sesión tiene el rol `ADMIN`, o es `SUPER_ADMIN` actuando como
+   *  tal sobre la tienda elegida — para efectos de qué puede hacer en la UI, cuentan igual. */
+  const isAdmin = user?.role === 'ADMIN' || isSuperAdmin
   /** Indica si el usuario en sesión tiene habilitada la `AppSection` con el código dado (RBAC). */
   const hasSection = (code) => !!user?.sections?.includes(code)
 
@@ -119,7 +141,8 @@ export function AuthProvider({ children }) {
    * `primaryColor`, también reaplica el color de marca para reflejar el cambio
    * de inmediato (p. ej. en el logo/sidebar).
    *
-   * No hace nada si el usuario actual no tiene `tienda` asociada (caso `SUPER_ADMIN`).
+   * No hace nada si el usuario actual no tiene `tienda` asociada (SUPER_ADMIN sin
+   * ninguna elegida todavía).
    *
    * @param {object} partial - Campos parciales de `tienda` a fusionar (p. ej. `{ primaryColor }` o `{ name, logoPath }`).
    * @returns {void}
@@ -143,12 +166,53 @@ export function AuthProvider({ children }) {
     setUser(merged)
   }
 
+  // Reemplaza `user.tienda` por completo (no fusiona campos como `patchTienda`, que es
+  // para editar la tienda ACTUAL) — usado únicamente por SelectTienda.jsx cuando un
+  // SUPER_ADMIN elige con cuál tienda actuar. A partir de aquí el resto de la app ve esa
+  // tienda como si fuera la suya (nombre/logo/color en el sidebar, límites de descuento en
+  // POS/Apartados, etc.) — y `api/axios.js` manda su id en cada petición al backend
+  // (header `X-Acting-Tienda-Id`) para que el aislamiento por tienda del lado del servidor
+  // también sepa cuál es.
+  /**
+   * Establece la tienda sobre la que un SUPER_ADMIN va a actuar, en memoria y en
+   * `localStorage`, y reaplica el color de marca de inmediato.
+   *
+   * @param {object} tienda - Tienda completa (id, name, logoPath, primaryColor, ...) elegida.
+   * @returns {void}
+   */
+  function selectTienda(tienda) {
+    if (!user) return
+    const merged = { ...user, tienda }
+    localStorage.setItem('pos_user', JSON.stringify(merged))
+    setUser(merged)
+    applyBrandFor(merged)
+  }
+
+  /**
+   * Quita la tienda elegida (vuelve a `null`) — usado por el botón "Cambiar tienda" del
+   * sidebar antes de mandar al SUPER_ADMIN de vuelta al selector. Sin efecto para
+   * cualquier otro rol (siempre tienen su propia tienda, no "eligen" ninguna).
+   * @returns {void}
+   */
+  function clearSelectedTienda() {
+    if (!user || !isSuperAdmin) return
+    const merged = { ...user, tienda: null }
+    localStorage.setItem('pos_user', JSON.stringify(merged))
+    setUser(merged)
+    applyBrandFor(merged)
+  }
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAdmin, hasSection, loading, patchTienda, clearMustChangePassword }}>
+    <AuthContext.Provider value={{
+      user, login, logout, isAdmin, isSuperAdmin, hasSection, loading,
+      patchTienda, clearMustChangePassword, selectTienda, clearSelectedTienda,
+    }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
-/** Hook de acceso al contexto de autenticación (`user`, `login`, `logout`, `isAdmin`, `hasSection`, `patchTienda`, `clearMustChangePassword`, `loading`). */
+/** Hook de acceso al contexto de autenticación (`user`, `login`, `logout`, `isAdmin`,
+ *  `isSuperAdmin`, `hasSection`, `patchTienda`, `clearMustChangePassword`, `selectTienda`,
+ *  `clearSelectedTienda`, `loading`). */
 export const useAuth = () => useContext(AuthContext)
