@@ -16,7 +16,10 @@ import { useAuth } from '../context/AuthContext'
  *    (`user.tienda` sigue `null` — ver `AuthContext#selectTienda`), redirige a
  *    `/select-tienda`, con la misma excepción de no crear un loop en esa propia ruta. Va
  *    DESPUÉS del chequeo anterior: primero resolver identidad (cambiar contraseña), luego
- *    contexto (elegir tienda).
+ *    contexto (elegir tienda) — por eso también exceptúa `mustChangePassword`: sin esto,
+ *    un SUPERVISOR nuevo (`mustChangePassword=true` y `tienda=null` a la vez, ver
+ *    `UserService#create`) quedaba en un loop infinito entre `/change-password` y
+ *    `/select-tienda`, cada chequeo mandando al otro de vuelta.
  * 5. Si se pasa `section` (código de `AppSection`) y el usuario no la tiene habilitada
  *    (`hasSection`), redirige a `/`.
  * 6. Si se pasa `adminOnly` y el usuario no es `ADMIN`, redirige a `/`. Se usa para
@@ -35,7 +38,7 @@ export default function PrivateRoute({ children, section, adminOnly }) {
   if (user.mustChangePassword && location.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />
   }
-  if (isPlatformActor && !user.tienda && location.pathname !== '/select-tienda') {
+  if (isPlatformActor && !user.tienda && !user.mustChangePassword && location.pathname !== '/select-tienda') {
     return <Navigate to="/select-tienda" replace />
   }
   if (section && !hasSection(section)) return <Navigate to="/" replace />
