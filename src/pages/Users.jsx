@@ -1,14 +1,23 @@
 import { useEffect, useState } from 'react'
 import { getUsers, createUser, updateUser, deleteUser } from '../api/users'
 import { getRoles } from '../api/roles'
+import { getTiendas, getTiendasBySupervisor } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
-const emptyForm = { name: '', email: '', password: '', roleId: '' }
+const emptyForm = { name: '', email: '', password: '', roleId: '', supervisedTiendaIds: [], tiendaId: '' }
 const EMPTY_FILTERS = { from: '', to: '', name: '', email: '', roleId: '', isActive: '' }
 const PAGE_SIZES = [10, 20, 50, 100]
+
+// Mismo mapa de jerarquía que UserService#ROLE_RANK en el backend — se usa SOLO para
+// ocultar del selector de alta/edición los roles que el backend igual rechazaría (menor
+// rango numérico = más poder; cualquier rol sin entrada aquí, como CASHIER/SELLER o uno
+// personalizado, cae por debajo de ADMIN). Es una ayuda de UX, no el control de acceso
+// real: aunque este filtro se saltara, el backend igual lo rechaza (ver assertCanAssignRole).
+const ROLE_RANK = { SUPER_ADMIN: 0, SUPERVISOR: 1, ADMIN: 2 }
+const rankOf = (roleName) => ROLE_RANK[roleName] ?? 3
 
 /**
  * Pantalla "Usuarios": CRUD de los usuarios de la tienda del usuario en sesión (o de todas
@@ -38,10 +47,16 @@ const PAGE_SIZES = [10, 20, 50, 100]
  * primera página, para no quedar "atorado" en una página que ya no existe con el nuevo filtro.
  */
 export default function Users() {
-  const { isAdmin } = useAuth()
+  const { user, isAdmin, isSuperAdmin, isPlatformActor } = useAuth()
   const { confirmDialog } = useNotify()
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [roles, setRoles] = useState([])
+  // Tiendas visibles para el actor (todas si es SUPER_ADMIN, solo las suyas si es
+  // SUPERVISOR — el backend ya las filtra así, ver `getTiendas`), cargado solo para
+  // actores de plataforma. Alimenta dos selectores distintos del formulario: "¿qué
+  // tiendas administra?" cuando el rol elegido es SUPERVISOR (ver showSupervisorPicker),
+  // y "mover a qué tienda" para un usuario normal ya existente (ver showMoveTiendaPicker).
+  const [allTiendas, setAllTiendas] = useState([])
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
@@ -70,6 +85,7 @@ export default function Users() {
     }
     getUsers(params).then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
     getRoles().then((r) => setRoles(r.data.data ?? []))
+    if (isPlatformActor) getTiendas().then((r) => setAllTiendas(r.data.data ?? []))
   }
 
   // Debounce de 250ms (mismo patrón que Inventory.jsx/POS.jsx) para no pegarle a la API en
@@ -116,11 +132,20 @@ export default function Users() {
 
   // Abre el modal precargado con los datos del usuario a editar. La contraseña se deja
   // vacía a propósito: en edición, un campo vacío significa "no cambiar la contraseña".
+  // Si es un SUPERVISOR, precarga además qué tiendas administra hoy (esa info no viaja en
+  // el propio usuario — ver getTiendasBySupervisor) para que el selector arranque marcado
+  // con lo que ya tiene, no vacío. `tiendaId` precarga la tienda ACTUAL del usuario (o ''
+  // para uno de plataforma, que no tiene) — ver showMoveTiendaPicker más abajo.
   function openEdit(u) {
     setEditUser(u)
-    setForm({ name: u.name, email: u.email, password: '', roleId: u.role?.id ?? '' })
+    setForm({ name: u.name, email: u.email, password: '', roleId: u.role?.id ?? '', supervisedTiendaIds: [], tiendaId: u.tienda?.id ?? '' })
     setError('')
     setShowModal(true)
+    if (isSuperAdmin && u.role?.name === 'SUPERVISOR') {
+      getTiendasBySupervisor(u.id).then((r) => {
+        setForm((f) => ({ ...f, supervisedTiendaIds: (r.data.data ?? []).map((t) => t.id) }))
+      })
+    }
   }
 
   // Crea o actualiza el usuario según haya o no un `editUser` en edición (previa
@@ -135,8 +160,12 @@ export default function Users() {
     setLoading(true)
     setError('')
     try {
-      if (editUser) await updateUser(editUser.id, form)
-      else await createUser(form)
+      // tiendaId viaja como número solo cuando de verdad hay un selector visible para
+      // elegirla (showMoveTiendaPicker) — de lo contrario se manda `undefined` (axios lo
+      // omite del JSON) en vez de '' cruda, que el backend rechazaría al no ser un Long válido.
+      const payload = { ...form, tiendaId: showMoveTiendaPicker && form.tiendaId ? Number(form.tiendaId) : undefined }
+      if (editUser) await updateUser(editUser.id, payload)
+      else await createUser(payload)
       setShowModal(false)
       load()
     } catch (err) {
@@ -169,6 +198,40 @@ export default function Users() {
   // a partir de la página/tamaño actuales y el total que reporta el backend.
   const from = totalElements === 0 ? 0 : page * size + 1
   const to = Math.min(totalElements, page * size + users.length)
+
+  // Roles que el actor puede asignar al alta/editar (ver ROLE_RANK arriba): estrictamente
+  // por debajo del suyo. El filtro de búsqueda de la tabla (más abajo) sigue usando `roles`
+  // completo — ahí sí tiene sentido poder filtrar por "ADMIN" aunque no puedas crear uno.
+  const assignableRoles = roles.filter((r) => rankOf(r.name) > rankOf(user?.role))
+
+  // Cuando el rol elegido en el formulario es SUPERVISOR (solo un SUPER_ADMIN llega a
+  // verlo como opción — ver RoleService#findAll en el backend), se muestra un selector de
+  // qué tiendas va a administrar. `supervisedTiendaIds` viaja tal cual en el payload de
+  // alta/edición; el backend lo ignora por completo si el rol elegido no es SUPERVISOR.
+  //
+  // OJO: "SUPERVISOR" no es un nombre único — una tienda puede tener su propio rol
+  // personalizado con ese mismo nombre (distinto del rol de plataforma real). El de
+  // plataforma es el único sin `tienda` en la respuesta (esa tienda viene omitida del JSON
+  // por ser null), así que se distingue por eso, no solo por el nombre.
+  const supervisorRoleId = roles.find((r) => r.name === 'SUPERVISOR' && !r.tienda)?.id
+  const showSupervisorTiendaPicker = isSuperAdmin && supervisorRoleId != null && String(form.roleId) === String(supervisorRoleId)
+
+  /** Marca/desmarca una tienda en el selector de "tiendas que administra" del formulario. */
+  function toggleSupervisedTienda(tiendaId) {
+    setForm((f) => {
+      const has = f.supervisedTiendaIds.includes(tiendaId)
+      return { ...f, supervisedTiendaIds: has ? f.supervisedTiendaIds.filter((id) => id !== tiendaId) : [...f.supervisedTiendaIds, tiendaId] }
+    })
+  }
+
+  // Selector de "mover a qué tienda": solo para editar un usuario que YA existe (para uno
+  // nuevo, la tienda se resuelve sola según dónde esté actuando quien lo crea) y solo
+  // cuando el rol elegido en el formulario NO es de plataforma (SUPERVISOR/SUPER_ADMIN no
+  // tienen una tienda propia que mover — ver showSupervisorTiendaPicker arriba, que es su
+  // selector correspondiente). Visible para SUPER_ADMIN (cualquier tienda) o SUPERVISOR
+  // (el backend ya le filtra `allTiendas` a solo las suyas).
+  const formRole = roles.find((r) => String(r.id) === String(form.roleId))
+  const showMoveTiendaPicker = isPlatformActor && !!editUser && !!formRole && !!formRole.tienda
 
   return (
     <div>
@@ -317,8 +380,45 @@ export default function Users() {
               <div><label className="text-xs font-medium text-gray-600">Rol *</label>
                 <select className="input" required value={form.roleId} onChange={(e) => setForm({ ...form, roleId: e.target.value })}>
                   <option value="" disabled>Selecciona un rol</option>
-                  {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  {/* Sin tienda = rol de plataforma (SUPERVISOR); se distingue en el label
+                      por si ya existe un rol personalizado con el mismo nombre en esta
+                      tienda (el nombre de un rol no es único entre plataforma y tiendas). */}
+                  {assignableRoles.map((r) => <option key={r.id} value={r.id}>{r.name}{!r.tienda ? ' (plataforma)' : ''}</option>)}
                 </select></div>
+              {showSupervisorTiendaPicker && (
+                <div>
+                  <label className="text-xs font-medium text-gray-600">¿Qué tiendas va a administrar? *</label>
+                  <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-40 overflow-y-auto mt-1">
+                    {allTiendas.length === 0 ? (
+                      <p className="text-xs text-gray-400 px-3 py-2">Todavía no hay tiendas registradas.</p>
+                    ) : allTiendas.map((t) => (
+                      <label key={t.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-gray-50">
+                        <input
+                          type="checkbox"
+                          checked={form.supervisedTiendaIds.includes(t.id)}
+                          onChange={() => toggleSupervisedTienda(t.id)}
+                        />
+                        {t.name}
+                      </label>
+                    ))}
+                  </div>
+                  {form.supervisedTiendaIds.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">Sin ninguna marcada, este Supervisor no podrá ver ni administrar ninguna tienda todavía.</p>
+                  )}
+                </div>
+              )}
+              {showMoveTiendaPicker && (
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Tienda *</label>
+                  <select className="input" required value={form.tiendaId} onChange={(e) => setForm({ ...form, tiendaId: e.target.value })}>
+                    <option value="" disabled>Selecciona una tienda</option>
+                    {allTiendas.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Si tiene un corte de caja abierto, primero debe cerrarlo antes de poder moverlo a otra tienda.
+                  </p>
+                </div>
+              )}
               {error && <p className="text-red-600 text-sm">{error}</p>}
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>

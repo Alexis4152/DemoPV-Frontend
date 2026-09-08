@@ -41,7 +41,7 @@ const CONFIG_ROUTES = ['/roles', '/appearance', '/store-info']
  * @param {{ children: import('react').ReactNode }} props
  */
 export default function Layout({ children }) {
-  const { user, logout, hasSection, isAdmin, isSuperAdmin } = useAuth()
+  const { user, logout, hasSection, isAdmin, isPlatformActor } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('pos_sidebar_collapsed') === '1')
@@ -128,10 +128,10 @@ export default function Layout({ children }) {
                 <h1 className="text-base font-bold text-white leading-tight">{user?.tienda?.name || 'Punto de Venta Demo'}</h1>
               </div>
               <p className="text-xs text-purple-300/70 mt-2 whitespace-nowrap">{user?.name}</p>
-              {/* Solo SUPER_ADMIN: recuerda que "su" tienda de arriba es la que eligió
-                  actuar (ver AuthContext#selectTienda), no una propia, y da acceso directo
-                  a cambiarla sin tener que cerrar sesión. */}
-              {isSuperAdmin && (
+              {/* Solo SUPER_ADMIN/SUPERVISOR: recuerda que "su" tienda de arriba es la que
+                  eligió actuar (ver AuthContext#selectTienda), no una propia, y da acceso
+                  directo a cambiarla sin tener que cerrar sesión. */}
+              {isPlatformActor && (
                 <button
                   type="button"
                   onClick={() => { navigate('/select-tienda'); onNavigate?.() }}

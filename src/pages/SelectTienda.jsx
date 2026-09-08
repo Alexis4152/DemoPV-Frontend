@@ -6,22 +6,24 @@ import { resolveMediaUrl } from '../utils/media'
 import logo from '../assets/logo.png'
 
 /**
- * Selector de tienda para SUPER_ADMIN — un usuario de plataforma sin tienda propia que,
- * para poder usar el resto de la app (Inventario, POS, Ventas, Usuarios, Configuración...),
- * necesita elegir sobre cuál tienda va a actuar en ese momento (ver
- * `AuthContext#selectTienda`, que llena `user.tienda` con la elegida, y `PrivateRoute.jsx`,
- * que manda aquí a cualquier SUPER_ADMIN sin ninguna todavía elegida).
+ * Selector de tienda para SUPER_ADMIN y SUPERVISOR — los dos roles "de plataforma" sin
+ * tienda propia que, para poder usar el resto de la app (Inventario, POS, Ventas,
+ * Usuarios, Configuración...), necesitan elegir sobre cuál tienda van a actuar en ese
+ * momento (ver `AuthContext#selectTienda`, que llena `user.tienda` con la elegida, y
+ * `PrivateRoute.jsx`, que manda aquí a cualquiera de los dos sin ninguna todavía elegida).
+ * La lista que trae `getTiendas()` ya viene acotada por el backend: todas para SUPER_ADMIN,
+ * solo las asignadas para SUPERVISOR — esta pantalla no distingue entre ellos para nada.
  *
  * También sirve como pantalla de "Cambiar tienda" (link del sidebar, `Layout.jsx`) — en
  * ese caso `user.tienda` ya viene con algo, se resalta como actual, y aparece un botón
  * "Seguir aquí" para volver sin cambiar nada.
  *
- * Además, esta es la única pantalla donde un SUPER_ADMIN puede dar de alta una tienda
- * nueva ("+ Nueva tienda") o editar lo básico (nombre y logo) de cualquiera existente sin
- * tener que "entrar" a ella primero — usa `canManageTienda` del backend, que ya le permite
- * administrar cualquier tienda por id sin importar cuál tenga elegida como "actuante".
- * Los datos fiscales/de contacto completos siguen viviendo en `StoreInfo.jsx`, reservada
- * a la tienda sobre la que se está actuando.
+ * Además, esta es la única pantalla donde se puede dar de alta una tienda nueva ("+ Nueva
+ * tienda") o editar lo básico (nombre y logo) de cualquiera existente sin tener que
+ * "entrar" a ella primero — usa `canManageTienda` del backend, que le permite a SUPER_ADMIN
+ * administrar cualquier tienda por id, y a SUPERVISOR las suyas, sin importar cuál tenga
+ * elegida como "actuante". Los datos fiscales/de contacto completos siguen viviendo en
+ * `StoreInfo.jsx`, reservada a la tienda sobre la que se está actuando.
  */
 export default function SelectTienda() {
   const { user, selectTienda, patchTienda, logout } = useAuth()

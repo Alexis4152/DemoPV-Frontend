@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductReservedStats,
-  getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage,
+  getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage, getSiblingStock,
 } from '../api/products'
 import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
@@ -110,6 +110,10 @@ export default function Inventory() {
   const [scanCode, setScanCode] = useState('')
   const [choiceModal, setChoiceModal] = useState(null)
   const [newCategoryName, setNewCategoryName] = useState('')
+  // Modal "Buscar en tiendas asociadas" (ver SiblingStockModal más abajo) — visible para
+  // cualquier rol, no solo ADMIN: es una consulta de solo lectura entre sucursales del
+  // mismo Supervisor, útil para cualquiera que atienda al cliente en el mostrador.
+  const [showSiblingStock, setShowSiblingStock] = useState(false)
   const scanInputRef = useRef(null)
   const modalOpenRef = useRef(false)
 
@@ -604,6 +608,14 @@ export default function Inventory() {
         >
           ⚠️ Stock bajo
         </button>
+        <button
+          type="button"
+          className="px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
+          onClick={() => setShowSiblingStock(true)}
+          title="Ver si una sucursal de tu mismo grupo tiene existencias de un producto"
+        >
+          🏬 Buscar en tiendas asociadas
+        </button>
         {(search || filterCat || lowStockOnly) && (
           <button
             type="button" className="btn-secondary text-sm"
@@ -983,6 +995,88 @@ export default function Inventory() {
           </div>
         </div>
       )}
+
+      {showSiblingStock && <SiblingStockModal onClose={() => setShowSiblingStock(false)} />}
+    </div>
+  )
+}
+
+/**
+ * Modal "Buscar en tiendas asociadas": consulta de solo lectura de stock disponible en las
+ * sucursales que comparten el mismo Supervisor de tiendas que la del usuario en sesión (ver
+ * `getSiblingStock`/`TiendaRepository#findSiblingTiendas` en el backend) — nunca la propia
+ * tienda, esa ya se ve en la tabla principal de Inventario.
+ *
+ * Visible para cualquier rol con acceso a esta pantalla, no solo ADMIN: un cajero o
+ * vendedor también necesita poder decirle a un cliente "no lo tenemos aquí, pero sí en la
+ * sucursal X" sin que eso le dé acceso a nada más de esa otra tienda. Si la tienda del
+ * usuario no tiene un Supervisor asignado (o no tiene sucursales hermanas), el backend
+ * regresa una página vacía en vez de un error — se muestra igual que "sin resultados".
+ */
+function SiblingStockModal({ onClose }) {
+  const [q, setQ] = useState('')
+  const [results, setResults] = useState([])
+  const [searched, setSearched] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  // Debounce de 350ms (un poco más largo que el resto de buscadores de la app porque este
+  // le pega a varias tiendas a la vez) — no busca nada con menos de 2 caracteres, para no
+  // pegarle a la API con cada letra de una búsqueda que apenas empieza.
+  useEffect(() => {
+    if (q.trim().length < 2) {
+      setResults([])
+      setSearched(false)
+      return
+    }
+    setLoading(true)
+    const t = setTimeout(() => {
+      getSiblingStock({ q: q.trim(), size: 50 })
+        .then((r) => setResults(r.data.data?.content ?? []))
+        .finally(() => { setLoading(false); setSearched(true) })
+    }, 350)
+    return () => clearTimeout(t)
+  }, [q])
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-bold mb-1">🏬 Buscar en tiendas asociadas</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Busca un producto por nombre o código para ver si hay existencias en otras sucursales de tu mismo grupo.
+        </p>
+        <input
+          className="input" autoFocus placeholder="Nombre o código del producto..."
+          value={q} onChange={(e) => setQ(e.target.value)}
+        />
+
+        <div className="mt-4">
+          {loading ? (
+            <p className="text-sm text-gray-400 text-center py-6">Buscando...</p>
+          ) : !searched ? (
+            <p className="text-sm text-gray-400 text-center py-6">Escribe al menos 2 letras para buscar.</p>
+          ) : results.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-6">
+              Sin resultados en tiendas asociadas — puede que ninguna tenga existencias de eso, o que tu tienda no tenga sucursales asociadas todavía.
+            </p>
+          ) : (
+            <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+              {results.map((p) => (
+                <div key={`${p.tienda?.id}-${p.id}`} className="flex items-center justify-between px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-900 truncate">{p.name}</p>
+                    <p className="text-xs text-gray-400">🏬 {p.tienda?.name ?? '—'}</p>
+                  </div>
+                  <span className="text-green-600 font-semibold text-sm shrink-0 ml-3">{p.stock} {p.unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end pt-4">
+          <button type="button" className="btn-secondary" onClick={onClose}>Cerrar</button>
+        </div>
+      </div>
     </div>
   )
 }

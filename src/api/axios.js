@@ -13,12 +13,13 @@ const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
 /**
  * Interceptor de request: adjunta el JWT de la sesión activa a cada petición saliente, y
- * — solo para un SUPER_ADMIN que ya eligió con cuál tienda actuar (ver
+ * — solo para un SUPER_ADMIN o SUPERVISOR que ya eligió con cuál tienda actuar (ver
  * `AuthContext#selectTienda`) — el header {@code X-Acting-Tienda-Id} con el id de esa
  * tienda, para que el backend sepa sobre cuál operar (ver {@code TenantScope} del
  * backend). Para cualquier otro rol nunca se manda: su tienda siempre es la propia, sin
  * necesidad de este header (y aunque se mandara, el backend lo ignora por completo salvo
- * que el actor sea SUPER_ADMIN).
+ * que el actor sea SUPER_ADMIN o SUPERVISOR — y a un SUPERVISOR encima le verifica que esa
+ * tienda de verdad le pertenezca antes de confiar en el header).
  *
  * El JWT se lee de `localStorage.pos_token` (colocado ahí por `AuthContext` tras el
  * login) y, si existe, se agrega como header `Authorization: Bearer <token>`. Así ningún
@@ -32,7 +33,7 @@ api.interceptors.request.use((config) => {
   try {
     const stored = localStorage.getItem('pos_user')
     const user = stored ? JSON.parse(stored) : null
-    if (user?.role === 'SUPER_ADMIN' && user?.tienda?.id) {
+    if ((user?.role === 'SUPER_ADMIN' || user?.role === 'SUPERVISOR') && user?.tienda?.id) {
       config.headers['X-Acting-Tienda-Id'] = String(user.tienda.id)
     }
   } catch {

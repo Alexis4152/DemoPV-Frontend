@@ -2,11 +2,21 @@ import api from './axios'
 
 /**
  * Lista todas las tiendas del sistema (activas e inactivas), ordenadas alfabéticamente.
- * Solo la puede llamar un SUPER_ADMIN — la usa `SelectTienda.jsx` para armar el selector
- * de "con cuál tienda actuar".
+ * Solo la puede llamar un SUPER_ADMIN (todas) o un SUPERVISOR (solo las suyas) — la usa
+ * `SelectTienda.jsx` para armar el selector de "con cuál tienda actuar".
  * @returns {Promise} Respuesta de axios con la lista de tiendas.
  */
 export const getTiendas = () => api.get('/tiendas')
+
+/**
+ * Lista las tiendas asignadas a un SUPERVISOR en particular (en vez de todas) — solo tiene
+ * efecto llamada por un SUPER_ADMIN. La usa `Users.jsx` para precargar, al editar un
+ * Supervisor existente, cuáles tiendas ya administra (esa info no viaja en el propio
+ * usuario: es la relación inversa, vive en `Tienda.supervisor`).
+ * @param {number|string} supervisorId Id del usuario Supervisor.
+ * @returns {Promise} Respuesta de axios con las tiendas de ese Supervisor.
+ */
+export const getTiendasBySupervisor = (supervisorId) => api.get('/tiendas', { params: { supervisorId } })
 
 /**
  * Da de alta una tienda nueva (solo SUPER_ADMIN). El backend le siembra de inmediato sus

@@ -119,16 +119,28 @@ export function AuthProvider({ children }) {
   /** `true` si el usuario en sesión es `SUPER_ADMIN` (usuario de plataforma, sin tienda
    *  propia — ve/administra todas, de una en una, vía `selectTienda`). */
   const isSuperAdmin = user?.role === 'SUPER_ADMIN'
-  // Incluye a SUPER_ADMIN a propósito: mientras está actuando sobre una tienda (ver
-  // selectTienda), debe poder hacer TODO lo que su ADMIN podría — dar de alta/editar/dar
-  // de baja productos y usuarios, ver el historial de cortes, cancelar ventas, entrar a
-  // Apariencia/Datos de la tienda, etc. Es "un ADMIN con la posibilidad de pararse en
-  // cualquier tienda", no un rol aparte con permisos propios — así que en todo el
-  // frontend basta con revisar `isAdmin`, sin tener que acordarse de sumar `isSuperAdmin`
-  // en cada pantalla una por una (el backend hace el cumplimiento real de todas formas).
-  /** `true` si el usuario en sesión tiene el rol `ADMIN`, o es `SUPER_ADMIN` actuando como
-   *  tal sobre la tienda elegida — para efectos de qué puede hacer en la UI, cuentan igual. */
-  const isAdmin = user?.role === 'ADMIN' || isSuperAdmin
+  /** `true` si el usuario en sesión es `SUPERVISOR` ("Supervisor de tiendas": usuario de
+   *  plataforma sin tienda propia, con visibilidad total sobre el SUBCONJUNTO de tiendas
+   *  que tenga asignadas — mismo mecanismo de `selectTienda` que SUPER_ADMIN, pero el
+   *  backend solo le deja elegir entre las suyas). */
+  const isSupervisor = user?.role === 'SUPERVISOR'
+  /** `true` si el usuario en sesión es SUPER_ADMIN o SUPERVISOR — los dos roles "de
+   *  plataforma" sin tienda propia que necesitan pasar por `SelectTienda.jsx` antes de
+   *  usar el resto de la app (ver `PrivateRoute`) y que pueden "cambiar de tienda" desde
+   *  el sidebar (ver `Layout`). */
+  const isPlatformActor = isSuperAdmin || isSupervisor
+  // Incluye a SUPER_ADMIN/SUPERVISOR a propósito: mientras están actuando sobre una tienda
+  // (ver selectTienda), deben poder hacer TODO lo que su ADMIN podría — dar de alta/editar/
+  // dar de baja productos y usuarios, ver el historial de cortes, cancelar ventas, entrar a
+  // Apariencia/Datos de la tienda, etc. Son "un ADMIN con la posibilidad de pararse en
+  // una o varias tiendas", no roles aparte con permisos propios — así que en todo el
+  // frontend basta con revisar `isAdmin`, sin tener que acordarse de sumar estos flags en
+  // cada pantalla una por una (el backend hace el cumplimiento real de todas formas, incluyendo
+  // la jerarquía de quién puede crear/editar a quién).
+  /** `true` si el usuario en sesión tiene el rol `ADMIN`, o es SUPER_ADMIN/SUPERVISOR
+   *  actuando como tal sobre la tienda elegida — para efectos de qué puede hacer en la UI,
+   *  cuentan igual. */
+  const isAdmin = user?.role === 'ADMIN' || isPlatformActor
   /** Indica si el usuario en sesión tiene habilitada la `AppSection` con el código dado (RBAC). */
   const hasSection = (code) => !!user?.sections?.includes(code)
 
@@ -190,12 +202,12 @@ export function AuthProvider({ children }) {
 
   /**
    * Quita la tienda elegida (vuelve a `null`) — usado por el botón "Cambiar tienda" del
-   * sidebar antes de mandar al SUPER_ADMIN de vuelta al selector. Sin efecto para
-   * cualquier otro rol (siempre tienen su propia tienda, no "eligen" ninguna).
+   * sidebar antes de mandar al SUPER_ADMIN/SUPERVISOR de vuelta al selector. Sin efecto
+   * para cualquier otro rol (siempre tienen su propia tienda, no "eligen" ninguna).
    * @returns {void}
    */
   function clearSelectedTienda() {
-    if (!user || !isSuperAdmin) return
+    if (!user || !isPlatformActor) return
     const merged = { ...user, tienda: null }
     localStorage.setItem('pos_user', JSON.stringify(merged))
     setUser(merged)
@@ -204,7 +216,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      user, login, logout, isAdmin, isSuperAdmin, hasSection, loading,
+      user, login, logout, isAdmin, isSuperAdmin, isSupervisor, isPlatformActor, hasSection, loading,
       patchTienda, clearMustChangePassword, selectTienda, clearSelectedTienda,
     }}>
       {children}
@@ -213,6 +225,6 @@ export function AuthProvider({ children }) {
 }
 
 /** Hook de acceso al contexto de autenticación (`user`, `login`, `logout`, `isAdmin`,
- *  `isSuperAdmin`, `hasSection`, `patchTienda`, `clearMustChangePassword`, `selectTienda`,
- *  `clearSelectedTienda`, `loading`). */
+ *  `isSuperAdmin`, `isSupervisor`, `isPlatformActor`, `hasSection`, `patchTienda`,
+ *  `clearMustChangePassword`, `selectTienda`, `clearSelectedTienda`, `loading`). */
 export const useAuth = () => useContext(AuthContext)

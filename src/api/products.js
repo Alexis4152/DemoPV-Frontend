@@ -26,6 +26,18 @@ export const searchProducts = (params) => api.get('/products/search', { params }
 export const getProductsPage = (params) => api.get('/products/page', { params })
 
 /**
+ * Busca stock disponible de un producto en las tiendas "hermanas" de la del usuario (las
+ * que comparten el mismo Supervisor de tiendas), sin exponer nada más de ellas — ej. para
+ * saber si una sucursal del mismo grupo tiene existencias antes de mandar a un cliente
+ * para allá. Disponible para cualquier rol con acceso a Inventario, no solo SUPER_ADMIN/
+ * SUPERVISOR. Si la tienda del usuario no tiene un Supervisor asignado (o no tiene
+ * "hermanas"), el backend regresa una página vacía, no un error.
+ * @param {Object} params Query params: `q` (obligatorio), `page`, `size`.
+ * @returns {Promise} Respuesta de axios con `{content, page, size, totalElements, totalPages}`.
+ */
+export const getSiblingStock = (params) => api.get('/products/sibling-stock', { params })
+
+/**
  * Obtiene el detalle de un producto por id.
  * @param {number|string} id Id del producto.
  * @returns {Promise} Respuesta de axios con el producto solicitado.
