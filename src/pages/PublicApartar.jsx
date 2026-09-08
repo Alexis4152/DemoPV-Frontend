@@ -3,9 +3,22 @@ import { useParams } from 'react-router-dom'
 import { getPublicTienda, getPublicCategories, getPublicProducts, createPublicApartado } from '../api/public'
 import { applyTiendaBrand } from '../utils/theme'
 import { resolveMediaUrl } from '../utils/media'
+import { useNotify } from '../context/NotifyContext'
 import defaultLogo from '../assets/logo.png'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
+
+// Plazo que dura un apartado ya confirmado (Tienda.defaultApartadoHours), en el texto de
+// la pantalla de confirmación — en días si son horas exactas de un día completo (ej. 48h
+// -> "2 días"), si no en horas.
+function fmtPlazo(hours) {
+  if (!hours) return 'un plazo que la tienda te confirmará'
+  if (hours % 24 === 0) {
+    const days = hours / 24
+    return `${days} día${days === 1 ? '' : 's'}`
+  }
+  return `${hours} hora${hours === 1 ? '' : 's'}`
+}
 
 /**
  * Tienda pública de apartados (`/apartar/:slug`) — la única pantalla de la aplicación que
@@ -25,6 +38,7 @@ const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency:
  */
 export default function PublicApartar() {
   const { slug } = useParams()
+  const { notify } = useNotify()
   const [tienda, setTienda] = useState(null)
   const [notFound, setNotFound] = useState(false)
   const [categories, setCategories] = useState([])
@@ -63,11 +77,17 @@ export default function PublicApartar() {
     return () => clearTimeout(t)
   }, [slug, categoryId, search, page, notFound])
 
+  /**
+   * Igual que `addToCart` de POS.jsx: muestra un toast rápido ("<producto> agregado")
+   * cada vez que sí se agrega, y no dice nada si el intento no cambió nada (ya está en el
+   * tope de piezas disponibles).
+   */
   function addToCart(product) {
+    const existingBefore = cart.find((i) => i.productId === product.id)
+    if (existingBefore && existingBefore.quantity >= product.stock) return
     setCart((prev) => {
       const existing = prev.find((i) => i.productId === product.id)
       if (existing) {
-        if (existing.quantity >= product.stock) return prev
         return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i)
       }
       // `price` es lo que de verdad se cobra (ya con la oferta aplicada, si tiene);
@@ -78,6 +98,7 @@ export default function PublicApartar() {
         stock: product.stock, quantity: 1,
       }]
     })
+    notify(`"${product.name}" agregado a tu apartado`, 'success')
   }
 
   function updateQty(productId, qty) {
@@ -128,7 +149,14 @@ export default function PublicApartar() {
         <div className="card max-w-md w-full text-center border-t-2 border-t-purple-400">
           <div className="text-5xl mb-4">✅</div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">¡Apartado registrado!</h2>
-          <p className="text-gray-500 text-sm mb-4">Folio #{success.id} — en breve la tienda te confirmará.</p>
+          <p className="text-gray-500 text-sm mb-4">Folio #{success.id}</p>
+          <div className="text-left bg-gray-50 border border-gray-100 rounded-lg p-4 mb-4 text-xs text-gray-600 space-y-2">
+            <p className="font-semibold text-gray-800 text-sm">¿Qué sigue?</p>
+            <p>Tu solicitud queda <span className="font-medium">pendiente de revisión</span>.</p>
+            <p>✅ Si hay disponibilidad, la tienda la <span className="font-medium">confirma</span>: desde ahí tienes {fmtPlazo(tienda?.defaultApartadoHours)} para recogerlo y pagarlo en la tienda.</p>
+            <p>❌ Si algún producto ya no está disponible, la tienda te avisará por teléfono o correo (si dejaste uno).</p>
+            <p>⏰ Si se confirma y no lo recoges dentro del plazo, el apartado se libera solo y el producto vuelve a estar disponible.</p>
+          </div>
           <div className="text-left bg-purple-50/60 rounded-lg p-4 mb-4 text-sm">
             {success.items.map((i, idx) => (
               <div key={idx} className="flex justify-between py-1">
@@ -202,6 +230,9 @@ export default function PublicApartar() {
                     )}
                   </div>
                   <p className="font-medium text-sm text-gray-900 line-clamp-2">{p.name}</p>
+                  <p className={`text-xs mt-0.5 ${p.stock > 0 ? 'text-gray-400' : 'text-red-500 font-medium'}`}>
+                    {p.stock} pieza{p.stock === 1 ? '' : 's'}
+                  </p>
                   {p.discountPercent > 0 ? (
                     <div className="mt-1">
                       <span className="text-xs text-gray-400 line-through mr-1">{fmt(p.price)}</span>

@@ -5,6 +5,7 @@ import { SECTIONS } from '../config/sections'
 import { getApartadosPendingCount } from '../api/apartados'
 import { resolveMediaUrl } from '../utils/media'
 import defaultLogo from '../assets/logo.png'
+import useEscapeClose from '../hooks/useEscapeClose'
 
 /**
  * Fábrica de la función `className` que consume `NavLink` de react-router para
@@ -51,6 +52,8 @@ export default function Layout({ children }) {
   // Drawer del sidebar en mobile/tablet (< lg) — independiente de `collapsed`, que solo
   // aplica al modo solo-íconos del sidebar fijo de escritorio.
   const [mobileOpen, setMobileOpen] = useState(false)
+  // Cierra el drawer móvil con ESC (mismo efecto que el clic en el fondo).
+  useEscapeClose(mobileOpen, () => setMobileOpen(false))
 
   // Badge de apartados PENDING (por revisar) junto al link "Apartados" del sidebar — se
   // revisa cada 60s mientras haya sesión con esa sección habilitada; no hay websockets en

@@ -63,6 +63,17 @@ export const getTiendaInfo = (id) => api.get(`/tiendas/${id}/info`)
 export const updateTiendaInfo = (id, data) => api.put(`/tiendas/${id}/info`, data)
 
 /**
+ * Descarga el PDF promocional de apartados: nombre de la tienda y un QR (con la URL
+ * también en texto) que apunta a su vitrina pública. `url` es la URL pública completa ya
+ * armada por el caller (`origin` + `/apartar/` + slug) — el backend no conoce su propio
+ * dominio público.
+ * @param {number|string} id Id de la tienda.
+ * @param {string} url URL pública completa de la vitrina de apartados de la tienda.
+ * @returns {Promise} Respuesta de axios con el PDF como blob.
+ */
+export const getApartadosPromoPdf = (id, url) => api.get(`/tiendas/${id}/apartados-promo.pdf`, { params: { url }, responseType: 'blob' })
+
+/**
  * Sube/reemplaza el logo de una tienda. Arma un `FormData` con el archivo y lo
  * envía como `multipart/form-data`.
  * @param {number|string} id Id de la tienda.

@@ -86,15 +86,19 @@ export default function CashCuts() {
   // Fecha/estado/cajero disparan de inmediato (son selects/date, no hace falta debounce).
   useEffect(() => { load() }, [page, size, filters])
 
-  // Cierra con ESC el modal de "Cerrar corte de caja" (mismo efecto que "Cancelar"), descartando lo capturado.
+  // Cierra con ESC el modal que esté abierto (abrir corte, cerrar corte o detalle),
+  // descartando lo capturado — mismo efecto que "Cancelar"/la ✕ de cada uno.
   useEffect(() => {
-    if (!showClose) return
+    if (!showOpen && !showClose && !detail) return
     function onKeyDown(e) {
-      if (e.key === 'Escape') setShowClose(false)
+      if (e.key !== 'Escape') return
+      if (showOpen) setShowOpen(false)
+      else if (showClose) setShowClose(false)
+      else if (detail) setDetail(null)
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [showClose])
+  }, [showOpen, showClose, detail])
 
   // Lista de cajeros para el filtro — solo aplica para admin (es quien ve la tabla), y no
   // depende de página/filtros vigentes, así que se carga una sola vez al montar.
@@ -369,8 +373,8 @@ export default function CashCuts() {
 
       {/* Open modal */}
       {showOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowOpen(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">Abrir corte de caja</h3>
             <form onSubmit={handleOpen} className="space-y-3">
               <div><label className="text-xs font-medium text-gray-600">Fondo inicial ($)</label>
@@ -428,8 +432,8 @@ export default function CashCuts() {
 
       {/* Detail modal */}
       {detail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDetail(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-4">
               <h3 className="text-lg font-bold">Corte #{detail.id}</h3>
               <button className="text-gray-400 text-xl" onClick={() => setDetail(null)}>✕</button>

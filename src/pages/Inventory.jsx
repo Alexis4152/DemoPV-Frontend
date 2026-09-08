@@ -345,19 +345,20 @@ export default function Inventory() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // Cierra con ESC el modal que esté abierto (producto, ajuste o elección), descartando
-  // lo capturado — mismo comportamiento que el botón "Cancelar" de cada uno.
+  // Cierra con ESC el modal que esté abierto (producto, ajuste, elección o descuento
+  // masivo), descartando lo capturado — mismo comportamiento que el botón "Cancelar" de cada uno.
   useEffect(() => {
-    if (!showModal && !adjustModal && !choiceModal) return
+    if (!showModal && !adjustModal && !choiceModal && !bulkDiscountModal) return
     function onKeyDown(e) {
       if (e.key !== 'Escape') return
       if (showModal) setShowModal(false)
       else if (adjustModal) setAdjustModal(null)
       else if (choiceModal) setChoiceModal(null)
+      else if (bulkDiscountModal) setBulkDiscountModal(false)
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [showModal, adjustModal, choiceModal])
+  }, [showModal, adjustModal, choiceModal, bulkDiscountModal])
 
   /**
    * Guarda el formulario de producto, ya sea creando uno nuevo o actualizando
@@ -965,8 +966,8 @@ export default function Inventory() {
 
       {/* Bulk discount modal */}
       {bulkDiscountModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setBulkDiscountModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-1">Aplicar descuento de oferta</h3>
             <p className="text-sm text-gray-500 mb-4">
               A {selectedIds.size} producto{selectedIds.size === 1 ? '' : 's'} seleccionado{selectedIds.size === 1 ? '' : 's'} — se le muestra al cliente en la tienda pública.

@@ -6,6 +6,7 @@ import {
 } from '../api/reports'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
+import { toLocalDateStr } from '../utils/date'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
@@ -13,7 +14,7 @@ const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'o
 const METODO_PAGO_ES = { CASH: 'Efectivo', CARD: 'Tarjeta', TRANSFER: 'Transferencia' }
 
 // Convierte un objeto Date a 'YYYY-MM-DD' para los inputs de tipo date y los query params.
-function toYYYYMMDD(d) { return d.toISOString().slice(0, 10) }
+const toYYYYMMDD = toLocalDateStr
 
 /**
  * Pantalla de "Reportes": muestra estadísticas de ventas e inventario de la tienda del

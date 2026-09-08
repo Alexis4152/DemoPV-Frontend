@@ -4,6 +4,7 @@ import { getSales, cancelSale } from '../api/sales'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { printSaleTicket } from '../utils/printer'
+import useEscapeClose from '../hooks/useEscapeClose'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
@@ -55,6 +56,9 @@ export default function Sales() {
   // Id de la venta que se está reimprimiendo en este momento (o null) — deshabilita solo
   // el botón de esa fila mientras QZ Tray manda el ticket, sin bloquear el resto de la tabla.
   const [printingId, setPrintingId] = useState(null)
+
+  // Cierra con ESC el modal de detalle de venta (mismo efecto que la ✕).
+  useEscapeClose(!!detail, () => setDetail(null))
 
   /**
    * Trae la página actual de ventas usando `page`/`size` y los `filters` vigentes. Las
@@ -265,8 +269,8 @@ export default function Sales() {
 
       {/* Detail modal */}
       {detail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDetail(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h3 className="text-lg font-bold">Venta #{detail.id}</h3>

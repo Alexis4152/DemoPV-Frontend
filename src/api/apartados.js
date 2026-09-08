@@ -31,6 +31,16 @@ export const getApartado = (id) => api.get(`/apartados/${id}`)
 export const confirmApartado = (id, data) => api.post(`/apartados/${id}/confirm`, data)
 
 /**
+ * Quita una línea (producto) de un apartado `PENDING` — ej. se agotó el producto antes
+ * de revisar la solicitud. No se puede quitar la única línea que le quede; para eso está
+ * cancelar el apartado completo.
+ * @param {number|string} apartadoId
+ * @param {number|string} itemId
+ * @returns {Promise} Respuesta de axios con el apartado ya sin esa línea.
+ */
+export const removeApartadoItem = (apartadoId, itemId) => api.delete(`/apartados/${apartadoId}/items/${itemId}`)
+
+/**
  * Completa un apartado `ACTIVE` (el cliente recogió y pagó): genera la venta real.
  * @param {number|string} id
  * @param {Object} data `{ paymentMethod, amountReceived, customerEmail }` — `customerEmail`

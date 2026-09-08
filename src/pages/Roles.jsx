@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getRolesPage, createRole, updateRole, deleteRole } from '../api/roles'
 import { SECTIONS } from '../config/sections'
 import { useNotify } from '../context/NotifyContext'
+import useEscapeClose from '../hooks/useEscapeClose'
 
 const emptyForm = { name: '', description: '', sections: [] }
 const PAGE_SIZES = [10, 20, 50, 100]
@@ -44,14 +45,7 @@ export default function Roles() {
   useEffect(() => { load() }, [page, size])
 
   // Cierra con ESC el modal de rol (mismo efecto que "Cancelar"), descartando lo capturado.
-  useEffect(() => {
-    if (!showModal) return
-    function onKeyDown(e) {
-      if (e.key === 'Escape') setShowModal(false)
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [showModal])
+  useEscapeClose(showModal, () => setShowModal(false))
 
   // Abre el modal en blanco para crear un rol nuevo.
   function openNew() {

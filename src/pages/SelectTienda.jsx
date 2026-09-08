@@ -4,6 +4,7 @@ import { getTiendas, createTienda, updateTiendaName, uploadTiendaLogo, removeTie
 import { useAuth } from '../context/AuthContext'
 import { resolveMediaUrl } from '../utils/media'
 import logo from '../assets/logo.png'
+import useEscapeClose from '../hooks/useEscapeClose'
 
 /**
  * Selector de tienda para SUPER_ADMIN y SUPERVISOR — los dos roles "de plataforma" sin
@@ -157,6 +158,7 @@ function CreateTiendaModal({ onClose, onCreated }) {
   const [logoFile, setLogoFile] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  useEscapeClose(true, onClose)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -220,6 +222,7 @@ function EditTiendaModal({ tienda, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [error, setError] = useState('')
+  useEscapeClose(true, onClose)
 
   async function handleSave(e) {
     e.preventDefault()

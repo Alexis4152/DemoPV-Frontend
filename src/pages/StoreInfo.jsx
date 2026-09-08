@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { getTiendaInfo, updateTiendaInfo, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
+import { getTiendaInfo, updateTiendaInfo, uploadTiendaLogo, removeTiendaLogo, getApartadosPromoPdf } from '../api/tiendas'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
 import defaultLogo from '../assets/logo.png'
@@ -20,6 +20,17 @@ const FIELDS = [
   { key: 'notasAdicionales', label: 'Otros datos', textarea: true },
 ]
 
+// Pestañas en las que se agrupa el formulario — puramente visual: las cuatro viven
+// dentro del mismo <form>/`handleSave`, así que cambiar de pestaña nunca pierde lo
+// escrito en otra, y "Guardar cambios" (fuera del contenido de la pestaña, siempre
+// visible) manda todo el `form` junto sin importar cuál esté abierta.
+const TABS = [
+  { key: 'general', label: 'General', icon: '🏬' },
+  { key: 'ventas', label: 'Ventas', icon: '💰' },
+  { key: 'apartados', label: 'Apartados', icon: '🛍️' },
+  { key: 'sistema', label: 'Sistema', icon: '⚙️' },
+]
+
 /**
  * Pantalla "Datos de la tienda": edita los datos fiscales y de contacto de la tienda del
  * usuario en sesión (razón social, RFC, teléfono, dirección, redes sociales, etc.) y el
@@ -36,7 +47,7 @@ const FIELDS = [
  */
 export default function StoreInfo() {
   const { user, patchTienda } = useAuth()
-  const { confirmDialog } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const tiendaId = user?.tienda?.id
 
   const [form, setForm] = useState(null)
@@ -45,6 +56,8 @@ export default function StoreInfo() {
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [downloadingPromo, setDownloadingPromo] = useState(false)
+  const [activeTab, setActiveTab] = useState('general')
 
   // Carga los datos fiscales/de contacto actuales de la tienda para precargar el formulario.
   useEffect(() => {
@@ -71,6 +84,8 @@ export default function StoreInfo() {
         maxApartadoDiscountAmount: info.tienda?.maxApartadoDiscountAmount ?? '',
         maxApartadoDiscountPercent: info.tienda?.maxApartadoDiscountPercent ?? '',
         defaultApartadoHours: info.tienda?.defaultApartadoHours ?? 24,
+        dailySalesGoal: info.tienda?.dailySalesGoal ?? '',
+        pollingIntervalSeconds: info.tienda?.pollingIntervalSeconds ?? 20,
       })
     }).finally(() => setLoading(false))
   }, [tiendaId])
@@ -99,8 +114,10 @@ export default function StoreInfo() {
       const maxDiscountPercent = form.maxDiscountPercent === '' ? null : Number(form.maxDiscountPercent)
       const maxApartadoDiscountAmount = form.maxApartadoDiscountAmount === '' ? null : Number(form.maxApartadoDiscountAmount)
       const maxApartadoDiscountPercent = form.maxApartadoDiscountPercent === '' ? null : Number(form.maxApartadoDiscountPercent)
+      const dailySalesGoal = form.dailySalesGoal === '' ? null : Number(form.dailySalesGoal)
+      const pollingIntervalSeconds = Number(form.pollingIntervalSeconds) || 20
       const res = await updateTiendaInfo(tiendaId, {
-        ...form, maxDiscountAmount, maxDiscountPercent, maxApartadoDiscountAmount, maxApartadoDiscountPercent,
+        ...form, maxDiscountAmount, maxDiscountPercent, maxApartadoDiscountAmount, maxApartadoDiscountPercent, dailySalesGoal, pollingIntervalSeconds,
       })
       // El slug puede haber cambiado si lo dejaste en blanco (se autogenera) o si chocaba
       // con el de otra tienda (el backend lo hubiera rechazado antes de llegar aquí) — se
@@ -111,6 +128,7 @@ export default function StoreInfo() {
         name: form.name, maxDiscountAmount, maxDiscountPercent,
         apartadosEnabled: form.apartadosEnabled, publicSlug: savedSlug,
         maxApartadoDiscountAmount, maxApartadoDiscountPercent, defaultApartadoHours: Number(form.defaultApartadoHours) || 24,
+        dailySalesGoal, pollingIntervalSeconds,
       })
       setMessage('Datos guardados')
     } catch (err) {
@@ -158,6 +176,31 @@ export default function StoreInfo() {
     }
   }
 
+  /**
+   * Descarga el PDF promocional de apartados (nombre de la tienda + QR a su vitrina
+   * pública) — mismo patrón de descarga de blob que `Reports.jsx#handleDownloadPdf`.
+   * Usa `form.publicSlug` tal como está en el campo de arriba, igual que "Copiar link":
+   * si el admin lo cambió y no ha guardado, el QR va a apuntar a ese link sin guardar
+   * todavía — hay que guardar primero para que el PDF quede con el link real.
+   */
+  async function handleDownloadPromoPdf() {
+    setDownloadingPromo(true)
+    try {
+      const publicUrl = `${window.location.origin}/apartar/${form.publicSlug}`
+      const res = await getApartadosPromoPdf(tiendaId, publicUrl)
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `apartados-${form.publicSlug}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      notify('No se pudo generar el PDF promocional', 'error')
+    } finally {
+      setDownloadingPromo(false)
+    }
+  }
+
   if (loading || !form) return <p className="text-gray-400 text-sm">Cargando...</p>
 
   const logoSrc = resolveMediaUrl(user?.tienda?.logoPath) || defaultLogo
@@ -189,7 +232,23 @@ export default function StoreInfo() {
         <p className="text-xs text-gray-400 mt-3">PNG, JPG o WEBP, máximo 3 MB. Si no subes uno, se usa el logo de Nexora.</p>
       </div>
 
+      <div className="border-b border-gray-200 mb-6 flex gap-6 overflow-x-auto">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setActiveTab(t.key)}
+            className={`pb-3 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
+              activeTab === t.key ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+
       <form onSubmit={handleSave} className="card space-y-4">
+        {activeTab === 'general' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {FIELDS.map((f) => (
             <div key={f.key} className={f.textarea ? 'sm:col-span-2' : ''}>
@@ -212,6 +271,26 @@ export default function StoreInfo() {
               )}
             </div>
           ))}
+        </div>
+        )}
+
+        {activeTab === 'ventas' && (
+        <>
+        <div>
+          <p className="text-sm font-semibold text-gray-800">Meta de venta diaria</p>
+          <p className="text-xs text-gray-500 mb-3">
+            El Dashboard muestra la venta del día contra esta meta, con el % de avance. Déjala en blanco
+            para que el Dashboard solo muestre la venta del día, sin porcentaje.
+          </p>
+          <div className="max-w-xs">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Meta diaria ($)</label>
+            <input
+              type="number" min="0" step="0.01"
+              className="input" placeholder="Sin definir"
+              value={form.dailySalesGoal}
+              onChange={(e) => setForm({ ...form, dailySalesGoal: e.target.value })}
+            />
+          </div>
         </div>
 
         <div className="border-t border-gray-100 pt-4">
@@ -243,8 +322,11 @@ export default function StoreInfo() {
             </div>
           </div>
         </div>
+        </>
+        )}
 
-        <div className="border-t border-gray-100 pt-4">
+        {activeTab === 'apartados' && (
+        <div>
           <label className="flex items-center gap-2 cursor-pointer mb-1">
             <input
               type="checkbox"
@@ -281,6 +363,16 @@ export default function StoreInfo() {
                 {form.publicSlug && (
                   <p className="text-xs text-gray-400 mt-1 break-all">{window.location.origin}/apartar/{form.publicSlug}</p>
                 )}
+                <button
+                  type="button" className="btn-secondary text-sm mt-2"
+                  onClick={handleDownloadPromoPdf}
+                  disabled={!form.publicSlug || downloadingPromo}
+                >
+                  {downloadingPromo ? 'Generando...' : '📄 Descargar PDF promocional'}
+                </button>
+                <p className="text-xs text-gray-400 mt-1">
+                  Una hoja con el nombre de tu tienda y un QR a este link, lista para imprimir o compartir.
+                </p>
               </div>
 
               <div>
@@ -321,6 +413,26 @@ export default function StoreInfo() {
             </div>
           )}
         </div>
+        )}
+
+        {activeTab === 'sistema' && (
+        <div>
+          <p className="text-sm font-semibold text-gray-800">Actualización automática</p>
+          <p className="text-xs text-gray-500 mb-3">
+            Cada cuántos segundos se refrescan solos Apartados y el Dashboard, sin que nadie tenga que
+            recargar la página. Un valor bajo se siente más "en vivo" pero le pide más seguido al servidor.
+          </p>
+          <div className="max-w-xs">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Intervalo (segundos)</label>
+            <input
+              type="number" min="5" max="300" step="1"
+              className="input"
+              value={form.pollingIntervalSeconds}
+              onChange={(e) => setForm({ ...form, pollingIntervalSeconds: e.target.value })}
+            />
+          </div>
+        </div>
+        )}
 
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
@@ -329,9 +441,12 @@ export default function StoreInfo() {
           <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">{message}</div>
         )}
 
-        <button className="btn-primary" disabled={saving}>
-          {saving ? 'Guardando...' : 'Guardar datos'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button className="btn-primary" disabled={saving}>
+            {saving ? 'Guardando...' : 'Guardar cambios'}
+          </button>
+          <p className="text-xs text-gray-400">Guarda lo de las 4 pestañas juntas, sin importar cuál esté abierta.</p>
+        </div>
       </form>
     </div>
   )

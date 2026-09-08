@@ -4,6 +4,7 @@ import { getRoles } from '../api/roles'
 import { getTiendas, getTiendasBySupervisor } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
+import useEscapeClose from '../hooks/useEscapeClose'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
@@ -97,14 +98,7 @@ export default function Users() {
   }, [page, size, filters])
 
   // Cierra con ESC el modal de usuario (mismo efecto que "Cancelar"), descartando lo capturado.
-  useEffect(() => {
-    if (!showModal) return
-    function onKeyDown(e) {
-      if (e.key === 'Escape') setShowModal(false)
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [showModal])
+  useEscapeClose(showModal, () => setShowModal(false))
 
   /** Actualiza un filtro y reinicia a la primera página, para no quedar "atorado" en una
    *  página que ya no existe con el nuevo filtro. */

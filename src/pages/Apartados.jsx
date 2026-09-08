@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { getApartados, confirmApartado, completeApartado, cancelApartado } from '../api/apartados'
+import { getApartados, getApartado, confirmApartado, completeApartado, cancelApartado, removeApartadoItem } from '../api/apartados'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { printSaleTicket } from '../utils/printer'
+import useEscapeClose from '../hooks/useEscapeClose'
+import usePolling from '../hooks/usePolling'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
@@ -84,6 +86,12 @@ export default function Apartados() {
   const [cancelModal, setCancelModal] = useState(null) // apartado a cancelar
   const [cancelReason, setCancelReason] = useState('')
 
+  // Cierra con ESC el modal que esté abierto (confirmar, completar o cancelar apartado),
+  // descartando lo capturado — mismo efecto que "Cancelar"/"Cerrar" de cada uno.
+  useEscapeClose(!!confirmModal, () => setConfirmModal(null))
+  useEscapeClose(!!completeModal, () => setCompleteModal(null))
+  useEscapeClose(!!cancelModal, () => setCancelModal(null))
+
   function load() {
     setLoading(true)
     getApartados({ status: status || undefined, from: from || undefined, to: to || undefined, q: search.trim() || undefined, page, size })
@@ -97,6 +105,11 @@ export default function Apartados() {
     const t = setTimeout(load, 250)
     return () => clearTimeout(t)
   }, [status, from, to, search, page, size])
+
+  // Refresca solo, cada Tienda.pollingIntervalSeconds (ajustable en "Datos de la
+  // tienda"), y también al recuperar el foco de la pestaña — así un apartado nuevo o
+  // uno que otro cajero ya atendió aparece sin que nadie tenga que recargar la página.
+  usePolling(load, tienda?.pollingIntervalSeconds)
 
   const apartados = pageData.content ?? []
   const totalPages = pageData.totalPages ?? 0
@@ -113,6 +126,11 @@ export default function Apartados() {
     setConfirmModal(apartado)
     setConfirmHours(tienda?.defaultApartadoHours ?? 24)
     setConfirmDiscounts(Object.fromEntries(apartado.items.map((i) => [i.id, Number(i.discount) > 0 ? String(i.discount) : ''])))
+    // El renglón de la lista no trae `availableStock` (piezas que de verdad quedan
+    // libres, descontando lo que ya reclaman OTROS apartados PENDING del mismo
+    // producto) — se pide el detalle fresco al backend y se reemplaza en cuanto llega,
+    // sin bloquear la apertura del modal.
+    getApartado(apartado.id).then((r) => setConfirmModal(r.data.data)).catch(() => {})
   }
 
   /** Tope de descuento (en pesos) para una línea, igual patrón que POS.jsx pero con el límite de apartados. */
@@ -125,6 +143,28 @@ export default function Apartados() {
     if (maxAmount != null) cap = Math.min(cap, maxAmount)
     if (maxPercent != null) cap = Math.min(cap, gross * maxPercent / 100)
     return cap
+  }
+
+  /**
+   * Quita una línea del apartado en confirmación (ej. el producto se agotó mientras
+   * seguía pendiente) — pide confirmación aparte porque no se puede deshacer desde aquí.
+   * No se puede quitar la única línea que le quede (el backend lo rechaza); para eso está
+   * cancelar el apartado completo.
+   */
+  async function handleRemoveItem(item) {
+    if (!(await confirmDialog(`¿Quitar "${item.productName}" de este apartado?`, { confirmText: 'Quitar producto', danger: true }))) return
+    try {
+      const res = await removeApartadoItem(confirmModal.id, item.id)
+      setConfirmModal(res.data.data)
+      setConfirmDiscounts((prev) => {
+        const next = { ...prev }
+        delete next[item.id]
+        return next
+      })
+      load() // el renglón de la lista muestra los productos/total del apartado, ya cambiaron
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudo quitar el producto', 'error')
+    }
   }
 
   async function handleConfirm(e) {
@@ -336,10 +376,16 @@ export default function Apartados() {
 
       {/* Confirm modal */}
       {confirmModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setConfirmModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-1">Confirmar apartado</h3>
             <p className="text-sm text-gray-500 mb-4">{confirmModal.customerName} — {confirmModal.customerPhone}</p>
+            {confirmModal.items.some((i) => i.availableStock === 0) && (
+              <p className="text-xs text-red-700 bg-red-50 rounded px-3 py-2 mb-4">
+                En caso de agotarse un producto favor de contactar al cliente al número {confirmModal.customerPhone}
+                {confirmModal.customerEmail ? ` y correo ${confirmModal.customerEmail}` : ''}.
+              </p>
+            )}
             <form onSubmit={handleConfirm} className="space-y-4">
               <div>
                 <label className="text-xs font-medium text-gray-600">Horas de vigencia</label>
@@ -348,23 +394,37 @@ export default function Apartados() {
               <div className="space-y-2">
                 <label className="text-xs font-medium text-gray-600 block">Productos</label>
                 {confirmModal.items.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between gap-2 border border-gray-100 rounded-lg p-2">
-                    <div className="text-sm">
-                      <p className="font-medium text-gray-800">{item.productName}</p>
-                      <p className="text-xs text-gray-400">{Number(item.quantity)} x {fmt(item.unitPrice)}</p>
-                      {Number(item.discount) > 0 && (
-                        <p className="text-xs text-purple-600">Ya trae oferta pública: -{fmt(item.discount)}</p>
-                      )}
+                  <div key={item.id} className="border border-gray-100 rounded-lg p-2 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm">
+                        <p className="font-medium text-gray-800">{item.productName}</p>
+                        <p className="text-xs text-gray-400">{Number(item.quantity)} x {fmt(item.unitPrice)}</p>
+                        {item.availableStock != null && (
+                          <p className={item.availableStock < Number(item.quantity) ? 'text-xs text-red-500 font-medium' : 'text-xs text-gray-400'}>
+                            {item.availableStock} pieza{item.availableStock === 1 ? '' : 's'} disponible{item.availableStock === 1 ? '' : 's'}
+                          </p>
+                        )}
+                        {Number(item.discount) > 0 && (
+                          <p className="text-xs text-purple-600">Ya trae oferta pública: -{fmt(item.discount)}</p>
+                        )}
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        {discountsDisabled ? (
+                          <span className="text-xs text-gray-400 italic" title="El administrador debe configurar un límite de descuento de apartados en Datos de la tienda">Sin descuento</span>
+                        ) : (
+                          <input
+                            className="input !w-24 !py-1 text-xs" type="number" min="0" step="0.01" placeholder="Descuento $"
+                            value={confirmDiscounts[item.id] ?? ''}
+                            onChange={(e) => setConfirmDiscounts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                          />
+                        )}
+                        {confirmModal.items.length > 1 && (
+                          <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => handleRemoveItem(item)}>
+                            Quitar
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    {discountsDisabled ? (
-                      <span className="text-xs text-gray-400 italic" title="El administrador debe configurar un límite de descuento de apartados en Datos de la tienda">No disponible</span>
-                    ) : (
-                      <input
-                        className="input !w-24 !py-1 text-xs" type="number" min="0" step="0.01" placeholder="Descuento $"
-                        value={confirmDiscounts[item.id] ?? ''}
-                        onChange={(e) => setConfirmDiscounts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                      />
-                    )}
                   </div>
                 ))}
               </div>
@@ -379,8 +439,8 @@ export default function Apartados() {
 
       {/* Complete modal */}
       {completeModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setCompleteModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-1">Completar apartado</h3>
             <p className="text-sm text-gray-500 mb-4">{completeModal.customerName} — Total: {fmt(completeModal.total)}</p>
             <form onSubmit={handleComplete} className="space-y-3">
@@ -424,11 +484,19 @@ export default function Apartados() {
               {paymentMethod === 'CASH' && (
                 <div>
                   <label className="text-xs font-medium text-gray-600">¿Con cuánto paga el cliente?</label>
-                  <input className="input" type="number" min="0" step="0.01" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
+                  <input className="input mt-1" type="number" min="0" step="0.01" placeholder="0.00" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
                   {amountReceivedNum != null && (
-                    <p className={`text-sm mt-1 ${change >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                      {change >= 0 ? `Cambio: ${fmt(change)}` : `Falta ${fmt(completeTotal - amountReceivedNum)}`}
-                    </p>
+                    change != null && change >= 0 ? (
+                      <div className="mt-2 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 text-center">
+                        <p className="text-xs font-semibold text-green-700 uppercase tracking-wide">Cambio a entregar</p>
+                        <p className="text-3xl font-bold text-green-700 mt-0.5">{fmt(change)}</p>
+                      </div>
+                    ) : (
+                      <div className="mt-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-center">
+                        <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Falta por cobrar</p>
+                        <p className="text-3xl font-bold text-red-600 mt-0.5">{fmt(completeTotal - amountReceivedNum)}</p>
+                      </div>
+                    )
                   )}
                 </div>
               )}
@@ -443,8 +511,8 @@ export default function Apartados() {
 
       {/* Cancel modal */}
       {cancelModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setCancelModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-1">Cancelar apartado</h3>
             <p className="text-sm text-gray-500 mb-4">
               {cancelModal.customerName}{cancelModal.status === 'ACTIVE' ? ' — se restituirá el stock.' : ''}
