@@ -8,8 +8,13 @@ import axios from 'axios'
  * se despliega como sitio estático separado del backend (dominios/contenedores distintos),
  * así que `/api` ya no resolvería a ningún lado — ahí se usa `VITE_API_URL` (variable de
  * entorno inyectada en build time) apuntando a la URL pública real del backend.
+ *
+ * `withCredentials: true` es necesario para el refresh token: el backend lo entrega como
+ * cookie httpOnly (`pos_refresh_token`, ver `AuthController`), invisible a este JS a
+ * propósito (mitiga robo vía XSS) — sin este flag el navegador ni la manda ni la guarda,
+ * tanto en dev (proxy) como sobre todo en producción (dominios cruzados).
  */
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
+const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api', withCredentials: true })
 
 /**
  * Interceptor de request: adjunta el JWT de la sesión activa a cada petición saliente, y
@@ -42,27 +47,81 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+/** Promesa compartida del refresh en curso (o `null` si no hay uno en vuelo) — el
+ *  mecanismo "single-flight" de abajo. */
+let refreshPromise = null
+/** Evita disparar el redirect a `/login` más de una vez si varias peticiones en
+ *  paralelo terminan fallando a la vez tras un refresh fallido. */
+let loggedOut = false
+
+/** Limpia la sesión guardada y redirige a `/login`, una sola vez por ciclo de vida de
+ *  la página aunque lo llamen varias peticiones fallidas casi al mismo tiempo. */
+function clearSessionAndRedirect() {
+  if (loggedOut) return
+  loggedOut = true
+  localStorage.removeItem('pos_token')
+  localStorage.removeItem('pos_user')
+  window.location.href = '/login'
+}
+
 /**
- * Interceptor de response: maneja de forma centralizada la expiración/invalidez de sesión.
+ * Interceptor de response: maneja de forma centralizada la expiración del access token.
  *
- * Si el backend responde 401 (token vencido o inválido), se limpia la sesión guardada
- * (`pos_token`, `pos_user`) y se redirige a `/login`, evitando que cada componente tenga
- * que detectar y manejar el 401 por su cuenta.
+ * Si el backend responde 401 por un access token vencido, intenta renovarlo de forma
+ * transparente contra `POST /auth/refresh` (que usa el refresh token de la cookie httpOnly,
+ * ver `AuthController`) y reintenta la petición original con el token nuevo — el usuario no
+ * nota nada, ninguna pantalla queda vacía.
  *
- * Se excluye explícitamente la petición de login (`/auth/login`): un 401 ahí significa
- * "credenciales inválidas", no "sesión expirada", y no debe disparar un logout/redirect
- * que taparía el mensaje de error de la pantalla de login.
+ * Ese refresh es "single-flight": si varias peticiones fallan con 401 casi al mismo tiempo
+ * (p. ej. el Dashboard disparando varias llamadas en paralelo al montar), todas esperan la
+ * MISMA promesa de refresh en vez de disparar cada una la suya — esto es lo que corta de
+ * raíz la cascada de 401 que antes tumbaba toda la sesión por el fallo de una sola petición
+ * secundaria.
+ *
+ * Se excluye `/auth/login` (un 401 ahí es "credenciales inválidas", no "sesión expirada") y
+ * `/auth/refresh` (su propio 401 ya significa que ni refrescando hay sesión válida — lo
+ * maneja el `.catch` de más abajo, sin volver a intentar un refresh del refresh).
  */
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    const isLoginRequest = err.config?.url?.includes('/auth/login')
-    if (err.response?.status === 401 && !isLoginRequest) {
-      localStorage.removeItem('pos_token')
-      localStorage.removeItem('pos_user')
-      window.location.href = '/login'
+    const url = err.config?.url || ''
+    const isLoginRequest = url.includes('/auth/login')
+    const isRefreshRequest = url.includes('/auth/refresh')
+    const status = err.response?.status
+
+    if (status !== 401 || isLoginRequest || isRefreshRequest) {
+      return Promise.reject(err)
     }
-    return Promise.reject(err)
+
+    // La petición ya se reintentó una vez con un token "renovado" y sigue en 401: no hay
+    // nada más que hacer más que cerrar la sesión, evita un loop infinito de reintentos.
+    if (err.config._retriedAfterRefresh) {
+      clearSessionAndRedirect()
+      return Promise.reject(err)
+    }
+
+    if (!refreshPromise) {
+      refreshPromise = api.post('/auth/refresh')
+        .then((res) => {
+          const newToken = res.data.data.token
+          localStorage.setItem('pos_token', newToken)
+          return newToken
+        })
+        .catch((refreshErr) => {
+          clearSessionAndRedirect()
+          throw refreshErr
+        })
+        .finally(() => {
+          refreshPromise = null
+        })
+    }
+
+    return refreshPromise.then((newToken) => {
+      err.config._retriedAfterRefresh = true
+      err.config.headers.Authorization = `Bearer ${newToken}`
+      return api(err.config)
+    })
   }
 )
 

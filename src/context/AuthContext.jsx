@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { login as apiLogin, me as apiMe } from '../api/auth'
+import { login as apiLogin, logout as apiLogout, me as apiMe } from '../api/auth'
 import { applyDefaultBrand, applyTiendaBrand } from '../utils/theme'
 
 const AuthContext = createContext(null)
@@ -40,15 +40,21 @@ function applyBrandFor(userData) {
  * `selectTienda`/`clearSelectedTienda` para que un SUPER_ADMIN elija (o cambie) sobre
  * cuál tienda está actuando.
  *
- * Al montar, si hay una sesión guardada en `localStorage` la restaura de inmediato
- * (para evitar parpadeos de UI) y en paralelo llama a `apiMe()` para refrescar
- * rol/secciones/tienda por si cambiaron desde el último login (p. ej. el admin
- * quitó un permiso o cambió el color de marca), fusionando el resultado sobre el
- * usuario ya cargado. Para un SUPER_ADMIN, `apiMe()` siempre trae `tienda: null` (así es
- * en el backend) — el merge usa `??`, que solo reemplaza en `undefined`/`null` cuando el
- * lado izquierdo también lo es... en este caso si conserva `parsed.tienda` porque el
- * operador se evalúa sobre el valor de `fresh.tienda`, no sobre si cambió: `null ?? x`
- * siempre da `x`, así que la tienda elegida sobrevive al refresco sin ningún caso especial.
+ * Al montar, si hay una sesión guardada en `localStorage`, se confirma contra el backend
+ * (`apiMe()`) ANTES de exponer el `user` — a propósito, no de forma optimista: `loading`
+ * solo baja a `false` cuando esa llamada ya resolvió (o no había sesión que confirmar).
+ * `PrivateRoute` gatea el render de rutas protegidas en `loading`, así que con esto nunca
+ * llega a montar el Dashboard/Layout con una sesión todavía sin confirmar — si el access
+ * token ya venció, el interceptor de `api/axios.js` intenta un refresh transparente antes
+ * de que `apiMe()` termine de fallar; solo si ese refresh también falla se limpia la sesión
+ * de verdad. Este orden (confirmar antes de renderizar) es lo que evita la cascada de 401
+ * que antes se veía al abrir la app con un token restaurado ya vencido.
+ *
+ * Para un SUPER_ADMIN, `apiMe()` siempre trae `tienda: null` (así es en el backend) — el
+ * merge usa `??`, que solo reemplaza en `undefined`/`null` cuando el lado izquierdo también
+ * lo es... en este caso sí conserva `parsed.tienda` porque el operador se evalúa sobre el
+ * valor de `fresh.tienda`, no sobre si cambió: `null ?? x` siempre da `x`, así que la tienda
+ * elegida sobrevive al refresco sin ningún caso especial.
  *
  * @param {{ children: import('react').ReactNode }} props
  */
@@ -59,31 +65,40 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const stored = localStorage.getItem('pos_user')
     const token = localStorage.getItem('pos_token')
-    if (stored && token) {
-      try {
-        const parsed = JSON.parse(stored)
-        setUser(parsed)
-        applyBrandFor(parsed)
-        // refresca secciones/rol/tienda por si el admin cambió permisos o color desde el último login
-        apiMe()
-          .then((r) => {
-            const fresh = r.data.data
-            const merged = {
-              ...parsed,
-              role: fresh.role?.name ?? parsed.role,
-              sections: fresh.role?.sections ?? parsed.sections,
-              tienda: fresh.tienda ?? parsed.tienda,
-            }
-            localStorage.setItem('pos_user', JSON.stringify(merged))
-            setUser(merged)
-            applyBrandFor(merged)
-          })
-          .catch(() => {})
-      } catch { logout() }
-    } else {
+    if (!stored || !token) {
       applyDefaultBrand()
+      setLoading(false)
+      return
     }
-    setLoading(false)
+    let parsed
+    try {
+      parsed = JSON.parse(stored)
+    } catch {
+      logout()
+      setLoading(false)
+      return
+    }
+    // Confirma la sesión contra el backend antes de exponer `user` — ver doc de arriba.
+    apiMe()
+      .then((r) => {
+        const fresh = r.data.data
+        const merged = {
+          ...parsed,
+          role: fresh.role?.name ?? parsed.role,
+          sections: fresh.role?.sections ?? parsed.sections,
+          tienda: fresh.tienda ?? parsed.tienda,
+        }
+        localStorage.setItem('pos_user', JSON.stringify(merged))
+        setUser(merged)
+        applyBrandFor(merged)
+      })
+      .catch(() => {
+        // El interceptor de axios ya intentó un refresh transparente y, si también
+        // falló, ya limpió localStorage y está redirigiendo a /login — esto es solo
+        // la red de seguridad para que `user` no quede desincronizado mientras tanto.
+        setUser(null)
+      })
+      .finally(() => setLoading(false))
   }, [])
 
   /**
@@ -106,14 +121,23 @@ export function AuthProvider({ children }) {
   }
 
   /**
-   * Cierra la sesión actual: limpia `localStorage` (token y usuario), resetea el
-   * estado `user` y vuelve a aplicar el color de marca por defecto ("Nexora").
+   * Cierra la sesión actual: revoca el refresh token del lado servidor (para que la
+   * cookie httpOnly no sirva ni siquiera si alguien la conservara), limpia `localStorage`
+   * (token y usuario), resetea el estado `user` y vuelve a aplicar el color de marca por
+   * defecto ("Nexora"). La limpieza local ocurre siempre, aunque la llamada al backend
+   * falle (p. ej. sin red) — cerrar sesión localmente no debe depender de esa respuesta.
    */
-  function logout() {
-    localStorage.removeItem('pos_token')
-    localStorage.removeItem('pos_user')
-    setUser(null)
-    applyDefaultBrand()
+  async function logout() {
+    try {
+      await apiLogout()
+    } catch {
+      // sin red o backend caído: igual se cierra la sesión local, ver comentario de arriba
+    } finally {
+      localStorage.removeItem('pos_token')
+      localStorage.removeItem('pos_user')
+      setUser(null)
+      applyDefaultBrand()
+    }
   }
 
   /** `true` si el usuario en sesión es `SUPER_ADMIN` (usuario de plataforma, sin tienda

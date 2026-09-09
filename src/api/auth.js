@@ -16,6 +16,22 @@ export const login = (data) => api.post('/auth/login', data)
 export const me = () => api.get('/auth/me')
 
 /**
+ * Canjea el refresh token de la cookie httpOnly por un access token nuevo. Normalmente no
+ * hace falta llamarla a mano — el interceptor de `api/axios.js` ya la dispara sola cuando
+ * cualquier petición falla con 401 por access token vencido.
+ * @returns {Promise} Respuesta de axios; `data.data.token` trae el JWT nuevo.
+ */
+export const refresh = () => api.post('/auth/refresh')
+
+/**
+ * Cierra la sesión: revoca el refresh token actual del lado servidor (además de que
+ * `AuthContext#logout` limpia el estado local). Idempotente — no falla aunque ya no
+ * hubiera sesión activa.
+ * @returns {Promise} Respuesta de axios confirmando el cierre de sesión.
+ */
+export const logout = () => api.post('/auth/logout')
+
+/**
  * Pide el link de recuperación de contraseña para el correo dado. El backend responde
  * siempre el mismo mensaje genérico exista o no el correo (protección contra enumeración),
  * así que esta llamada nunca debe usarse para inferir si un correo está registrado.
