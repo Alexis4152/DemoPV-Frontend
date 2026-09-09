@@ -25,7 +25,7 @@ const navLinkClass = (collapsed) => ({ isActive }) =>
   }`
 
 // Rutas agrupadas bajo el submenú colapsable "Configuración" del sidebar.
-const CONFIG_ROUTES = ['/roles', '/appearance', '/store-info']
+const CONFIG_ROUTES = ['/roles', '/categories', '/appearance', '/store-info']
 
 /**
  * Shell visual de toda la app autenticada: arma el sidebar de navegación (logo de
@@ -36,7 +36,7 @@ const CONFIG_ROUTES = ['/roles', '/appearance', '/store-info']
  * El menú principal se arma filtrando `SECTIONS` por las secciones que el usuario
  * tiene habilitadas (excluyendo `ROLES`, que se agrupa aparte). El submenú
  * "Configuración" agrupa Roles y Permisos (si tiene la sección `ROLES`) y, solo si
- * `isAdmin`, Apariencia y Datos de la tienda. El estado de colapsado del sidebar y
+ * `isAdmin`, Categorías, Apariencia y Datos de la tienda. El estado de colapsado del sidebar y
  * de expandido de "Configuración" persiste en `localStorage` entre sesiones.
  *
  * @param {{ children: import('react').ReactNode }} props
@@ -106,6 +106,7 @@ export default function Layout({ children }) {
   const canSeeRoles = hasSection('ROLES')
   const configItems = [
     canSeeRoles && { to: '/roles', icon: '🔑', label: 'Roles y Permisos' },
+    isAdmin && { to: '/categories', icon: '🏷️', label: 'Categorías' },
     isAdmin && { to: '/appearance', icon: '🎨', label: 'Apariencia' },
     isAdmin && { to: '/store-info', icon: '🏬', label: 'Datos de la tienda' },
   ].filter(Boolean)

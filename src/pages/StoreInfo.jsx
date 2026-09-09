@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { getTiendaInfo, updateTiendaInfo, uploadTiendaLogo, removeTiendaLogo, getApartadosPromoPdf } from '../api/tiendas'
+import { getTiendaInfo, updateTiendaInfo, uploadTiendaLogo, removeTiendaLogo, getApartadosPromoPdf, getApartadosQrPng } from '../api/tiendas'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
+import { openOrDownloadBlob } from '../utils/downloadBlob'
 import defaultLogo from '../assets/logo.png'
+
+// Mismo límite que TiendaLogoService en el backend (ver ese archivo) — validarlo aquí
+// también evita el viaje redondo al servidor solo para enterarse de que pesa de más.
+const MAX_LOGO_MB = 3
 
 const FIELDS = [
   { key: 'name', label: 'Nombre de la tienda', required: true },
@@ -57,6 +62,7 @@ export default function StoreInfo() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [downloadingPromo, setDownloadingPromo] = useState(false)
+  const [downloadingQr, setDownloadingQr] = useState(false)
   const [activeTab, setActiveTab] = useState('general')
 
   // Carga los datos fiscales/de contacto actuales de la tienda para precargar el formulario.
@@ -144,6 +150,11 @@ export default function StoreInfo() {
   async function handleLogoChange(e) {
     const file = e.target.files?.[0]
     if (!file) return
+    if (file.size > MAX_LOGO_MB * 1024 * 1024) {
+      setError(`El logo pesa demasiado — el máximo permitido es ${MAX_LOGO_MB} MB`)
+      e.target.value = ''
+      return
+    }
     setUploadingLogo(true)
     setError('')
     setMessage('')
@@ -178,7 +189,11 @@ export default function StoreInfo() {
 
   /**
    * Descarga el PDF promocional de apartados (nombre de la tienda + QR a su vitrina
-   * pública) — mismo patrón de descarga de blob que `Reports.jsx#handleDownloadPdf`.
+   * pública). Usa `openOrDownloadBlob` (ver ese archivo) en vez del patrón directo de
+   * "blob + `<a download>`" porque ese no funciona en Safari de iOS — desde celular
+   * abre el PDF en una pestaña nueva, desde donde se guarda con el botón nativo de
+   * Compartir; en computadora dispara la descarga tal cual.
+   *
    * Usa `form.publicSlug` tal como está en el campo de arriba, igual que "Copiar link":
    * si el admin lo cambió y no ha guardado, el QR va a apuntar a ese link sin guardar
    * todavía — hay que guardar primero para que el PDF quede con el link real.
@@ -187,17 +202,37 @@ export default function StoreInfo() {
     setDownloadingPromo(true)
     try {
       const publicUrl = `${window.location.origin}/apartar/${form.publicSlug}`
-      const res = await getApartadosPromoPdf(tiendaId, publicUrl)
-      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `apartados-${form.publicSlug}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
+      await openOrDownloadBlob(
+        () => getApartadosPromoPdf(tiendaId, publicUrl),
+        `apartados-${form.publicSlug}.pdf`,
+        'application/pdf'
+      )
     } catch (err) {
       notify('No se pudo generar el PDF promocional', 'error')
     } finally {
       setDownloadingPromo(false)
+    }
+  }
+
+  /**
+   * Descarga SOLO el código QR (sin el resto de la hoja) como imagen PNG independiente —
+   * para quien quiera pegarlo en su propio diseño en vez de la hoja lista de arriba. Mismo
+   * mecanismo de `openOrDownloadBlob` que `handleDownloadPromoPdf`, para que funcione
+   * igual de bien desde cualquier dispositivo.
+   */
+  async function handleDownloadQr() {
+    setDownloadingQr(true)
+    try {
+      const publicUrl = `${window.location.origin}/apartar/${form.publicSlug}`
+      await openOrDownloadBlob(
+        () => getApartadosQrPng(tiendaId, publicUrl),
+        `qr-${form.publicSlug}.png`,
+        'image/png'
+      )
+    } catch (err) {
+      notify('No se pudo generar el QR', 'error')
+    } finally {
+      setDownloadingQr(false)
     }
   }
 
@@ -229,7 +264,7 @@ export default function StoreInfo() {
             )}
           </div>
         </div>
-        <p className="text-xs text-gray-400 mt-3">PNG, JPG o WEBP, máximo 3 MB. Si no subes uno, se usa el logo de Nexora.</p>
+        <p className="text-xs text-gray-400 mt-3">PNG, JPG o WEBP, máximo {MAX_LOGO_MB} MB. Si no subes uno, se usa el logo de Nexora.</p>
       </div>
 
       <div className="border-b border-gray-200 mb-6 flex gap-6 overflow-x-auto">
@@ -363,15 +398,24 @@ export default function StoreInfo() {
                 {form.publicSlug && (
                   <p className="text-xs text-gray-400 mt-1 break-all">{window.location.origin}/apartar/{form.publicSlug}</p>
                 )}
-                <button
-                  type="button" className="btn-secondary text-sm mt-2"
-                  onClick={handleDownloadPromoPdf}
-                  disabled={!form.publicSlug || downloadingPromo}
-                >
-                  {downloadingPromo ? 'Generando...' : '📄 Descargar PDF promocional'}
-                </button>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <button
+                    type="button" className="btn-secondary text-sm"
+                    onClick={handleDownloadPromoPdf}
+                    disabled={!form.publicSlug || downloadingPromo}
+                  >
+                    {downloadingPromo ? 'Generando...' : '📄 Descargar PDF promocional'}
+                  </button>
+                  <button
+                    type="button" className="btn-secondary text-sm"
+                    onClick={handleDownloadQr}
+                    disabled={!form.publicSlug || downloadingQr}
+                  >
+                    {downloadingQr ? 'Generando...' : '🔳 Descargar QR'}
+                  </button>
+                </div>
                 <p className="text-xs text-gray-400 mt-1">
-                  Una hoja con el nombre de tu tienda y un QR a este link, lista para imprimir o compartir.
+                  El PDF trae una hoja con el nombre de tu tienda y el QR, lista para imprimir o compartir; el QR solo es la imagen sola, por si la quieres pegar en tu propio diseño. Ambos funcionan igual desde celular o computadora.
                 </p>
               </div>
 

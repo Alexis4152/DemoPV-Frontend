@@ -14,6 +14,11 @@ const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency:
 const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '', stock: '', minStock: 5, unit: 'pieza', categoryId: '', isReservable: false, apartadoDiscountPercent: '' }
 const PAGE_SIZES = [10, 20, 50, 100]
 
+// Mismo límite que ProductImageService en el backend (ver ese archivo) — validarlo aquí
+// también evita el viaje redondo al servidor solo para enterarse de que pesa de más, y dice
+// el motivo exacto en vez de un error genérico de red al fallar la subida.
+const MAX_IMAGE_MB = 5
+
 // -> los params que espera GET /products/page. Único filtro de disponibilidad que queda
 // (ver `lowStockOnly`) es "stock bajo", como un botón de encendido/apagado — los que
 // filtraban por historial de ventas ("sin ventas"/"más vendidos") se quitaron junto con
@@ -217,6 +222,11 @@ export default function Inventory() {
   async function handleUploadImage(e) {
     const file = e.target.files?.[0]
     if (!file || !editProduct) return
+    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+      notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
+      e.target.value = ''
+      return
+    }
     setUploadingImage(true)
     try {
       await uploadProductImage(editProduct.id, file)
@@ -239,6 +249,11 @@ export default function Inventory() {
   function handleStageImage(e) {
     const file = e.target.files?.[0]
     if (!file) return
+    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+      notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
+      e.target.value = ''
+      return
+    }
     setPendingImages((prev) => [...prev, { file, previewUrl: URL.createObjectURL(file) }])
     e.target.value = ''
   }
@@ -406,7 +421,11 @@ export default function Inventory() {
         // existe un id de producto al que asociarlas hasta que la creación responde.
         const created = (await createProduct(payload)).data.data
         for (const { file } of pendingImages) {
-          await uploadProductImage(created.id, file).catch(() => {})
+          // El producto ya se creó — si una foto falla al subir (red, servidor, etc.) no
+          // debe tumbar todo el flujo ni fingir que no pasó nada: se avisa aparte y se
+          // sigue con las demás, en vez del `.catch(() => {})` de antes que lo escondía.
+          await uploadProductImage(created.id, file)
+            .catch((err) => notify(err.response?.data?.message ?? `No se pudo subir "${file.name}"`, 'error'))
         }
       }
       pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
@@ -873,6 +892,7 @@ export default function Inventory() {
                   )}
                 </div>
                 <p className="text-xs text-gray-400">La primera foto (borde morado) es la portada del catálogo público.</p>
+                <p className="text-xs text-gray-400">PNG, JPG o WEBP, máximo {MAX_IMAGE_MB} MB por foto.</p>
               </div>
 
               {error && <p className="text-red-600 text-sm">{error}</p>}

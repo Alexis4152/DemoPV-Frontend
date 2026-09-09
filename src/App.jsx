@@ -16,6 +16,7 @@ import Reports from './pages/Reports'
 import CashCuts from './pages/CashCuts'
 import Users from './pages/Users'
 import Roles from './pages/Roles'
+import Categories from './pages/Categories'
 import Appearance from './pages/Appearance'
 import StoreInfo from './pages/StoreInfo'
 import Apartados from './pages/Apartados'
@@ -38,8 +39,9 @@ import PublicApartar from './pages/PublicApartar'
  * una. Todo lo demás vive bajo un `PrivateRoute` genérico (solo exige sesión iniciada) que
  * envuelve el `Layout` (sidebar + contenido), y dentro de este cada ruta hija está envuelta
  * en su propio `PrivateRoute` con `section` (código de `AppSection` para el chequeo fino de
- * permisos RBAC) o `adminOnly` (para las pantallas de configuración de tienda: Apariencia y
- * Datos de la tienda — un SUPER_ADMIN actuando cuenta igual que el ADMIN de esa tienda).
+ * permisos RBAC) o `adminOnly` (para pantallas reservadas al administrador de la tienda,
+ * fuera del catálogo de `AppSection`: Categorías, Apariencia y Datos de la tienda — un
+ * SUPER_ADMIN/SUPERVISOR actuando cuenta igual que el ADMIN de esa tienda).
  * Cualquier ruta no reconocida redirige a `/`.
  */
 function AppRoutes() {
@@ -66,6 +68,7 @@ function AppRoutes() {
                 <Route path="/reports" element={<PrivateRoute section="REPORTS"><Reports /></PrivateRoute>} />
                 <Route path="/users" element={<PrivateRoute section="USERS"><Users /></PrivateRoute>} />
                 <Route path="/roles" element={<PrivateRoute section="ROLES"><Roles /></PrivateRoute>} />
+                <Route path="/categories" element={<PrivateRoute adminOnly><Categories /></PrivateRoute>} />
                 <Route path="/appearance" element={<PrivateRoute adminOnly><Appearance /></PrivateRoute>} />
                 <Route path="/store-info" element={<PrivateRoute adminOnly><StoreInfo /></PrivateRoute>} />
                 <Route path="*" element={<Navigate to="/" replace />} />

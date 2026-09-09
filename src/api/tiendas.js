@@ -74,6 +74,16 @@ export const updateTiendaInfo = (id, data) => api.put(`/tiendas/${id}/info`, dat
 export const getApartadosPromoPdf = (id, url) => api.get(`/tiendas/${id}/apartados-promo.pdf`, { params: { url }, responseType: 'blob' })
 
 /**
+ * Descarga SOLO el código QR (sin el resto de la hoja) que apunta a la vitrina pública de
+ * apartados, como imagen PNG independiente — para quien quiera el código solo, en vez de
+ * la hoja completa de `getApartadosPromoPdf`.
+ * @param {number|string} id Id de la tienda.
+ * @param {string} url URL pública completa de la vitrina de apartados de la tienda.
+ * @returns {Promise} Respuesta de axios con el PNG como blob.
+ */
+export const getApartadosQrPng = (id, url) => api.get(`/tiendas/${id}/apartados-qr.png`, { params: { url }, responseType: 'blob' })
+
+/**
  * Sube/reemplaza el logo de una tienda. Arma un `FormData` con el archivo y lo
  * envía como `multipart/form-data`.
  * @param {number|string} id Id de la tienda.
