@@ -19,6 +19,7 @@ import Roles from './pages/Roles'
 import Categories from './pages/Categories'
 import Appearance from './pages/Appearance'
 import StoreInfo from './pages/StoreInfo'
+import MailSettings from './pages/MailSettings'
 import Apartados from './pages/Apartados'
 import PublicApartar from './pages/PublicApartar'
 
@@ -71,6 +72,7 @@ function AppRoutes() {
                 <Route path="/categories" element={<PrivateRoute adminOnly><Categories /></PrivateRoute>} />
                 <Route path="/appearance" element={<PrivateRoute adminOnly><Appearance /></PrivateRoute>} />
                 <Route path="/store-info" element={<PrivateRoute adminOnly><StoreInfo /></PrivateRoute>} />
+                <Route path="/mail-config" element={<PrivateRoute superAdminOnly><MailSettings /></PrivateRoute>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>

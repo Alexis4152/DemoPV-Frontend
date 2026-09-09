@@ -25,7 +25,7 @@ const navLinkClass = (collapsed) => ({ isActive }) =>
   }`
 
 // Rutas agrupadas bajo el submenú colapsable "Configuración" del sidebar.
-const CONFIG_ROUTES = ['/roles', '/categories', '/appearance', '/store-info']
+const CONFIG_ROUTES = ['/roles', '/categories', '/appearance', '/store-info', '/mail-config']
 
 /**
  * Shell visual de toda la app autenticada: arma el sidebar de navegación (logo de
@@ -42,7 +42,7 @@ const CONFIG_ROUTES = ['/roles', '/categories', '/appearance', '/store-info']
  * @param {{ children: import('react').ReactNode }} props
  */
 export default function Layout({ children }) {
-  const { user, logout, hasSection, isAdmin, isPlatformActor } = useAuth()
+  const { user, logout, hasSection, isAdmin, isSuperAdmin, isPlatformActor } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('pos_sidebar_collapsed') === '1')
@@ -109,6 +109,7 @@ export default function Layout({ children }) {
     isAdmin && { to: '/categories', icon: '🏷️', label: 'Categorías' },
     isAdmin && { to: '/appearance', icon: '🎨', label: 'Apariencia' },
     isAdmin && { to: '/store-info', icon: '🏬', label: 'Datos de la tienda' },
+    isSuperAdmin && { to: '/mail-config', icon: '✉️', label: 'Correo del sistema' },
   ].filter(Boolean)
   const configActive = CONFIG_ROUTES.includes(location.pathname)
   const sidebarLogo = resolveMediaUrl(user?.tienda?.logoPath) || defaultLogo

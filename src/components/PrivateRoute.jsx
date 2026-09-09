@@ -27,11 +27,15 @@ import { useAuth } from '../context/AuthContext'
  *    `AppSection` del catálogo RBAC sino un nivel de acceso aparte reservado al
  *    administrador de esa tienda. `isAdmin` (ver `AuthContext`) ya incluye a SUPER_ADMIN/
  *    SUPERVISOR actuando sobre una tienda — cuentan igual que su ADMIN, sin caso especial aquí.
+ * 7. Si se pasa `superAdminOnly` y el usuario no es `SUPER_ADMIN`, redirige a `/`. A
+ *    diferencia de `adminOnly`, aquí SUPERVISOR NO cuenta: se usa para infraestructura de
+ *    la plataforma entera (ej. la cuenta SMTP con la que sale todo correo del sistema),
+ *    no algo por-tienda que un Supervisor administre.
  *
- * @param {{ children: import('react').ReactNode, section?: string, adminOnly?: boolean }} props
+ * @param {{ children: import('react').ReactNode, section?: string, adminOnly?: boolean, superAdminOnly?: boolean }} props
  */
-export default function PrivateRoute({ children, section, adminOnly }) {
-  const { user, loading, hasSection, isAdmin, isPlatformActor } = useAuth()
+export default function PrivateRoute({ children, section, adminOnly, superAdminOnly }) {
+  const { user, loading, hasSection, isAdmin, isSuperAdmin, isPlatformActor } = useAuth()
   const location = useLocation()
   if (loading) return <div className="flex items-center justify-center h-screen">Cargando...</div>
   if (!user) return <Navigate to="/login" replace />
@@ -43,5 +47,6 @@ export default function PrivateRoute({ children, section, adminOnly }) {
   }
   if (section && !hasSection(section)) return <Navigate to="/" replace />
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />
+  if (superAdminOnly && !isSuperAdmin) return <Navigate to="/" replace />
   return children
 }

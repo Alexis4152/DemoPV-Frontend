@@ -72,6 +72,7 @@ export default function StoreInfo() {
       const info = r.data.data
       setForm({
         name: info.tienda?.name || '',
+        contactEmail: info.tienda?.contactEmail || '',
         razonSocial: info.razonSocial || '',
         rfc: info.rfc || '',
         telefono: info.telefono || '',
@@ -306,6 +307,24 @@ export default function StoreInfo() {
               )}
             </div>
           ))}
+        </div>
+        )}
+
+        {activeTab === 'general' && (
+        <div className="border-t border-gray-100 pt-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Correo de contacto</label>
+          <input
+            type="email"
+            className="input sm:max-w-md"
+            placeholder="ej. contacto@tunegocio.com"
+            value={form.contactEmail}
+            onChange={(e) => setForm({ ...form, contactEmail: e.target.value })}
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            Los tickets y avisos por correo de tu tienda siguen saliendo desde la cuenta del sistema, pero si un
+            cliente le da "Responder", le llega a este correo en vez de a la cuenta general — déjalo en blanco si no
+            quieres que tus clientes puedan contestarte por correo.
+          </p>
         </div>
         )}
 
