@@ -7,6 +7,16 @@ import { useNotify } from '../context/NotifyContext'
 import defaultLogo from '../assets/logo.png'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
+// Mismo patrón que Users.jsx/POS.jsx para validar formato de correo del lado del cliente.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+// El teléfono admite texto libre a propósito (notas como "solo por las tardes" van en el
+// campo de Notas, no aquí) pero debe verse como un teléfono real: solo dígitos y los
+// separadores típicos (espacio, +, -, paréntesis), con al menos 7 dígitos reales — así se
+// rechaza tanto "asdfasdf" como "no tengo" o "123", sin ser tan rígido como exigir un
+// formato exacto de 10 dígitos (deja pasar números internacionales, con lada, etc.).
+const PHONE_CHARS_RE = /^[0-9+\-\s()]+$/
+const PHONE_MIN_DIGITS = 7
 
 // Plazo que dura un apartado ya confirmado (Tienda.defaultApartadoHours), en el texto de
 // la pantalla de confirmación — en días si son horas exactas de un día completo (ej. 48h
@@ -53,8 +63,20 @@ export default function PublicApartar() {
   const [customerPhone, setCustomerPhone] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
   const [notes, setNotes] = useState('')
+  // Qué campos ya "tocó" el visitante (perdió el foco al menos una vez) — el mensaje de
+  // "obligatorio" de Nombre/Teléfono solo se muestra para un campo ya tocado, para no
+  // recibir a alguien que apenas abre la página con dos errores en rojo sin haber escrito
+  // nada. Los demás mensajes (formato de correo, límite de caracteres) siguen en vivo sin
+  // esta restricción: esos solo aparecen cuando SÍ hay algo escrito, nunca al cargar.
+  const [touched, setTouched] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  // Errores de campo que solo puede saber el BACKEND (ej. si algún día valida algo que el
+  // cliente no puede replicar) — { nombreDelCampo: mensaje }, mismo formato que
+  // GlobalExceptionHandler ya manda para @Valid. Se combinan con `fieldErrors` (en vivo,
+  // ver abajo) para el render; los del backend se limpian solos en cuanto el visitante
+  // vuelve a intentar enviar.
+  const [backendFieldErrors, setBackendFieldErrors] = useState({})
   const [success, setSuccess] = useState(null)
 
   useEffect(() => {
@@ -108,9 +130,47 @@ export default function PublicApartar() {
 
   const total = cart.reduce((s, i) => s + i.price * i.quantity, 0)
 
+  /**
+   * Errores de validación EN VIVO: se recalculan en cada render, así que el mensaje debajo
+   * de cada campo (y el asterisco en rojo) aparece o desaparece mientras el visitante
+   * teclea, sin tener que dar clic en "Enviar solicitud" primero (mismo patrón que POS.jsx
+   * usa para el monto recibido). Replican los límites que ya exige `ApartadoRequest` en el
+   * backend (mismos textos de mensaje) — importa más aquí que en cualquier otro formulario
+   * del sistema: esta es la ÚNICA pantalla sin autenticación, cualquiera en internet la
+   * manda directo, sin un cajero revisando antes.
+   *
+   * Se combinan con `backendFieldErrors` (solo por si el backend algún día rechaza algo que
+   * el cliente no pudo prever) — lo en vivo manda: en cuanto el campo vuelve a ser válido
+   * aquí, deja de mostrarse aunque el backend lo hubiera marcado en el intento anterior.
+   */
+  const liveFieldErrors = {}
+  if (!customerName.trim()) liveFieldErrors.customerName = 'El nombre es obligatorio'
+  else if (customerName.length > 150) liveFieldErrors.customerName = 'El nombre no puede tener más de 150 caracteres'
+  if (!customerPhone.trim()) liveFieldErrors.customerPhone = 'El teléfono es obligatorio'
+  else if (customerPhone.length > 30) liveFieldErrors.customerPhone = 'El teléfono no puede tener más de 30 caracteres'
+  else if (!PHONE_CHARS_RE.test(customerPhone.trim())) liveFieldErrors.customerPhone = 'El teléfono solo puede tener números, espacios, +, - y paréntesis'
+  else if ((customerPhone.match(/\d/g) || []).length < PHONE_MIN_DIGITS) liveFieldErrors.customerPhone = `El teléfono debe tener al menos ${PHONE_MIN_DIGITS} dígitos`
+  if (customerEmail.trim() !== '') {
+    if (!EMAIL_RE.test(customerEmail.trim())) liveFieldErrors.customerEmail = 'El correo no tiene un formato válido'
+    else if (customerEmail.length > 150) liveFieldErrors.customerEmail = 'El correo no puede tener más de 150 caracteres'
+  }
+  if (notes.length > 100) liveFieldErrors.notes = 'Las notas no pueden tener más de 100 caracteres'
+  const fieldErrors = { ...backendFieldErrors, ...liveFieldErrors }
+
   async function handleSubmit(e) {
     e.preventDefault()
     if (cart.length === 0) { setError('Agrega al menos un producto'); return }
+    // La validación ya se refleja en vivo en `fieldErrors` (ver arriba) — aquí solo se
+    // decide si BLOQUEA el envío, sin volver a calcularla. Marca Nombre/Teléfono como
+    // "tocados" por si acaso (ver `touched`): así, si de algún modo se intenta enviar sin
+    // haber pasado por esos campos, sus mensajes de "obligatorio" si se muestran.
+    if (Object.keys(liveFieldErrors).length > 0) {
+      setTouched((t) => ({ ...t, customerName: true, customerPhone: true }))
+      setError('')
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
+    setBackendFieldErrors({})
     setSubmitting(true)
     setError('')
     try {
@@ -124,8 +184,21 @@ export default function PublicApartar() {
       setSuccess(res.data.data)
       setCart([])
       setCustomerName(''); setCustomerPhone(''); setCustomerEmail(''); setNotes('')
+      setBackendFieldErrors({})
+      setTouched({})
     } catch (err) {
-      setError(err.response?.data?.message ?? 'No se pudo registrar tu apartado')
+      // Errores de validación (@Valid, ver GlobalExceptionHandler en el backend) traen
+      // { campo: mensaje } en `data` — se reparten a `backendFieldErrors` para mostrarse
+      // justo debajo de cada input (se combinan con los en vivo, ver arriba). Cualquier
+      // otro tipo de error va al mensaje general.
+      const data = err.response?.data?.data
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        setBackendFieldErrors(data)
+        setError('')
+      } else {
+        setBackendFieldErrors({})
+        setError(err.response?.data?.message ?? 'No se pudo registrar tu apartado')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -286,25 +359,45 @@ export default function PublicApartar() {
             </div>
           )}
 
+          {/* Sin `required`/`type="email"` nativos a propósito (ver validateApartarForm):
+              esta es la única pantalla sin sesión — el globo del navegador aquí es aún más
+              importante evitarlo, es lo único con lo que un visitante se topa. */}
           <form onSubmit={handleSubmit} className="space-y-3">
             <div>
-              <label className="text-xs font-medium text-gray-600">Tu nombre *</label>
-              <input className="input" required value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+              <label className="text-xs font-medium text-gray-600">Tu nombre <span className={fieldErrors.customerName && (touched.customerName || customerName !== '') ? 'text-red-600' : ''}>*</span></label>
+              <input
+                className="input" value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                onBlur={() => setTouched((t) => ({ ...t, customerName: true }))}
+              />
+              {fieldErrors.customerName && (touched.customerName || customerName !== '') && (
+                <p className="text-red-600 text-xs mt-1">{fieldErrors.customerName}</p>
+              )}
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-600">Teléfono *</label>
-              <input className="input" required value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="Para avisarte cuando esté listo" />
+              <label className="text-xs font-medium text-gray-600">Teléfono <span className={fieldErrors.customerPhone && (touched.customerPhone || customerPhone !== '') ? 'text-red-600' : ''}>*</span></label>
+              <input
+                className="input" value={customerPhone} placeholder="Para avisarte cuando esté listo"
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                onBlur={() => setTouched((t) => ({ ...t, customerPhone: true }))}
+              />
+              {fieldErrors.customerPhone && (touched.customerPhone || customerPhone !== '') && (
+                <p className="text-red-600 text-xs mt-1">{fieldErrors.customerPhone}</p>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Correo (opcional)</label>
-              <input className="input" type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} />
+              <input className="input" type="text" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} />
+              <p className="text-xs text-gray-400 mt-1">Ej. tucorreo@gmail.com, tucorreo@outlook.com</p>
+              {fieldErrors.customerEmail && <p className="text-red-600 text-xs mt-1">{fieldErrors.customerEmail}</p>}
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Notas (opcional)</label>
               <textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+              {fieldErrors.notes && <p className="text-red-600 text-xs mt-1">{fieldErrors.notes}</p>}
             </div>
             {error && <p className="text-red-600 text-sm">{error}</p>}
-            <button type="submit" className="btn-primary w-full" disabled={submitting || cart.length === 0}>
+            <button type="submit" className="btn-primary w-full" disabled={submitting || cart.length === 0 || Object.keys(liveFieldErrors).length > 0}>
               {submitting ? 'Enviando...' : 'Enviar solicitud de apartado'}
             </button>
             <p className="text-xs text-gray-400 text-center">No se cobra nada en línea — pagas al recogerlo en la tienda.</p>

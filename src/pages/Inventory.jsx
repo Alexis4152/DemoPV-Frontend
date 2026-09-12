@@ -104,12 +104,21 @@ export default function Inventory() {
   const [adjustDirection, setAdjustDirection] = useState('IN')
   const [adjustQty, setAdjustQty] = useState('')
   const [adjustReason, setAdjustReason] = useState('')
+  // Errores de validación por campo del modal "Ajustar stock" ({ quantity/reason: mensaje })
+  // — aparte de `fieldErrors` del modal de producto, son formularios distintos.
+  const [adjustFieldErrors, setAdjustFieldErrors] = useState({})
   const [loading, setLoading] = useState(false)
   // Carga de la tabla paginada (loadPage), separado de `loading` (que es del formulario de
   // guardar/ajustar) para que un refresco en segundo plano de la tabla no deshabilite ni
   // cambie el texto del botón "Guardar"/"Confirmar" de un modal abierto al mismo tiempo.
   const [tableLoading, setTableLoading] = useState(true)
+  // Error general del modal de producto (uno solo, para reglas de negocio sin campo
+  // asociado — ej. "elige una tienda" — o cualquier fallo que no venga de @Valid).
   const [error, setError] = useState('')
+  // Errores de validación por campo del modal de producto: { nombreDelCampo: mensaje },
+  // tal como los manda GlobalExceptionHandler#handleValidation — se muestran justo debajo
+  // de su input y ponen en rojo el asterisco de "obligatorio" de ese campo (ver handleSave).
+  const [fieldErrors, setFieldErrors] = useState({})
   const [lowStockItems, setLowStockItems] = useState([])
   const [adjustNotice, setAdjustNotice] = useState('')
   const [scanCode, setScanCode] = useState('')
@@ -193,6 +202,7 @@ export default function Inventory() {
     pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPendingImages([])
     setError('')
+    setFieldErrors({})
     setShowModal(true)
   }
 
@@ -215,6 +225,7 @@ export default function Inventory() {
     setProductImages([])
     getProductImages(p.id).then((r) => setProductImages(r.data.data ?? [])).catch(() => {})
     setError('')
+    setFieldErrors({})
     setShowModal(true)
   }
 
@@ -284,6 +295,7 @@ export default function Inventory() {
     setAdjustDirection('IN')
     setAdjustQty('')
     setAdjustReason('')
+    setAdjustFieldErrors({})
   }
 
   /**
@@ -376,6 +388,46 @@ export default function Inventory() {
   }, [showModal, adjustModal, choiceModal, bulkDiscountModal])
 
   /**
+   * Valida el formulario de producto del lado del cliente, replicando exactamente los
+   * límites que ya exige `ProductRequest` en el backend (mismos textos de mensaje) — para
+   * detectar el error ANTES de pedir confirmación de guardado (ver `handleSave`), en vez
+   * de hacerlo hasta después del viaje redondo al servidor. El backend sigue siendo quien
+   * de verdad decide (esto no lo reemplaza, solo adelanta el aviso más común).
+   *
+   * @returns {{[field: string]: string}} vacío si el formulario es válido
+   */
+  function validateProductForm() {
+    const errors = {}
+    // Nombre/Precio/Categoría ya no llevan el atributo HTML `required` (ver el JSX del
+    // modal) — ese globo nativo del navegador se disparaba ANTES de que este formulario
+    // alcanzara a correr, tapando por completo nuestro propio manejo de errores. Estos
+    // tres checks son quienes ahora cubren "obligatorio", con el mismo texto debajo del
+    // campo que usa cualquier otro error.
+    if (!form.name.trim()) errors.name = 'El nombre es obligatorio'
+    else if (form.name.length > 200) errors.name = 'El nombre no puede tener más de 200 caracteres'
+    if (form.barcode.length > 100) errors.barcode = 'El código de barras no puede tener más de 100 caracteres'
+    if (form.unit.length > 20) errors.unit = 'La unidad no puede tener más de 20 caracteres'
+    if (form.description.length > 500) errors.description = 'La descripción no puede tener más de 500 caracteres'
+    // Máximos alineados al límite real de columna en Postgres (ver ProductRequest en el
+    // backend): NUMERIC(12,2) para price/cost, INTEGER para stock/minStock — sin esto, un
+    // valor absurdamente grande pasaba hasta el backend y tronaba con un error crudo de
+    // "numeric field overflow" en vez de un mensaje claro.
+    if (form.price === '') errors.price = 'El precio es obligatorio'
+    else if (Number(form.price) > 9999999999.99) errors.price = 'El precio no puede ser mayor a 9,999,999,999.99'
+    if (form.cost !== '' && Number(form.cost) > 9999999999.99) errors.cost = 'El costo no puede ser mayor a 9,999,999,999.99'
+    if (form.stock !== '' && Number(form.stock) > 2147483647) errors.stock = 'El stock no puede ser mayor a 2,147,483,647'
+    if (form.minStock !== '' && Number(form.minStock) > 2147483647) errors.minStock = 'El stock mínimo no puede ser mayor a 2,147,483,647'
+    if (!form.categoryId) errors.categoryId = 'Selecciona una categoría'
+    else if (form.categoryId === NEW_CATEGORY_VALUE && !newCategoryName.trim()) errors.newCategoryName = 'Escribe el nombre de la nueva categoría'
+    if (form.apartadoDiscountPercent !== '') {
+      const pct = Number(form.apartadoDiscountPercent)
+      if (pct < 0) errors.apartadoDiscountPercent = 'El descuento de apartado no puede ser negativo'
+      else if (pct > 100) errors.apartadoDiscountPercent = 'El descuento de apartado no puede ser mayor a 100'
+    }
+    return errors
+  }
+
+  /**
    * Guarda el formulario de producto, ya sea creando uno nuevo o actualizando
    * `editProduct` según cuál esté seteado. Convierte los campos numéricos (vienen como
    * string desde los inputs) antes de enviarlos. Si el backend rechaza la operación,
@@ -392,16 +444,28 @@ export default function Inventory() {
    * muestra el error, para no dejar a medias un producto sin categoría real.
    *
    * Pide confirmación explícita antes de tocar el backend (crear o editar), para evitar
-   * altas/ediciones accidentales por un clic de más.
+   * altas/ediciones accidentales por un clic de más — pero solo si el formulario ya pasó
+   * la validación local (ver `validateProductForm`): no tiene sentido preguntar "¿deseas
+   * agregar/guardar?" si el backend lo va a rechazar de todas formas.
    */
   async function handleSave(e) {
     e.preventDefault()
+    const validationErrors = validateProductForm()
+    if (Object.keys(validationErrors).length > 0) {
+      // Advertencia de validación local, NO el mismo mensaje que un fallo real del
+      // backend (ver el catch de abajo) — aquí todavía no se intentó guardar nada.
+      setFieldErrors(validationErrors)
+      setError('')
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
     const confirmMsg = editProduct
       ? `¿Deseas guardar los cambios de "${form.name}"?`
       : `¿Deseas agregar el producto "${form.name}"?`
     if (!(await confirmDialog(confirmMsg, { confirmText: editProduct ? 'Guardar cambios' : 'Agregar', danger: false }))) return
     setLoading(true)
     setError('')
+    setFieldErrors({})
     try {
       let categoryId = form.categoryId
       if (categoryId === NEW_CATEGORY_VALUE) {
@@ -432,8 +496,21 @@ export default function Inventory() {
       setPendingImages([])
       setShowModal(false)
       reloadAll()
+      notify(editProduct ? 'Producto editado correctamente' : 'Producto guardado correctamente', 'success')
     } catch (err) {
-      setError(err.response?.data?.message ?? 'Error al guardar')
+      // Errores de validación (ver GlobalExceptionHandler#handleValidation en el backend)
+      // traen { campo: mensaje } en `data` — se reparten a `fieldErrors` para mostrarse
+      // justo debajo de cada input y poner su asterisco en rojo. Cualquier otro tipo de
+      // error (regla de negocio, 500, etc.) no tiene campo asociado: va al mensaje general.
+      const data = err.response?.data?.data
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        setFieldErrors(data)
+        setError('')
+      } else {
+        setFieldErrors({})
+        setError(err.response?.data?.message ?? 'Error al guardar')
+      }
+      notify(editProduct ? 'Error al guardar el producto' : 'Error al registrar el producto', 'error')
     } finally {
       setLoading(false)
     }
@@ -451,6 +528,12 @@ export default function Inventory() {
   const adjustQtyNum = Math.abs(Number(adjustQty) || 0)
   const adjustSignedQty = adjustDirection === 'OUT' ? -adjustQtyNum : adjustQtyNum
   const adjustPreviewStock = adjustModal ? adjustModal.stock + adjustSignedQty : null
+  // Mismo límite que ProductService#adjustStock en el backend (máximo de un INTEGER de
+  // Postgres) — sin filtro de longitud en el input de Cantidad, nada impide teclear 40
+  // dígitos seguidos; Number() de eso da un float gigante que JS renderiza en notación
+  // científica ("8.78e+37") en el "Nuevo stock" de abajo, ilegible para el usuario. Cubre
+  // ambas direcciones (agregar Y quitar) porque compara el resultado ya con signo aplicado.
+  const adjustPreviewExceedsLimit = adjustQtyNum > 2147483647 || adjustPreviewStock > 2147483647
 
   /**
    * Envía el ajuste manual de stock (entrada o salida, ver `adjustSignedQty`) para el
@@ -464,7 +547,24 @@ export default function Inventory() {
    */
   async function handleAdjust(e) {
     e.preventDefault()
-    if (adjustSignedQty === 0) return
+    // Validación local ANTES del modal de confirmación — mismo criterio que
+    // validateProductForm: sin `required`/`min` nativos (ver el JSX del modal), así que
+    // esto es lo único que impide mandar una cantidad en 0 o un motivo demasiado largo.
+    const validationErrors = {}
+    if (adjustQtyNum <= 0) validationErrors.quantity = 'La cantidad debe ser mayor a 0'
+    // Mismo límite que ProductService#adjustStock en el backend: el stock resultante
+    // (actual + esta cantidad) no puede pasar el máximo de un INTEGER de Postgres — sin
+    // esto, un valor muy alto pasaba hasta el backend y ahí desbordaba la aritmética.
+    else if (adjustPreviewExceedsLimit) {
+      validationErrors.quantity = 'El número es excesivamente grande — el máximo permitido es 2,147,483,647'
+    }
+    if (adjustReason.length > 255) validationErrors.reason = 'El motivo no puede tener más de 255 caracteres'
+    if (Object.keys(validationErrors).length > 0) {
+      setAdjustFieldErrors(validationErrors)
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
+    setAdjustFieldErrors({})
     const verb = adjustDirection === 'IN' ? 'agregar' : 'quitar'
     const prep = adjustDirection === 'IN' ? 'a' : 'de'
     const confirmMsg = `¿Deseas ${verb} ${adjustQtyNum} ${adjustModal.unit} ${prep} "${adjustModal.name}"?`
@@ -477,11 +577,23 @@ export default function Inventory() {
       setAdjustQty('')
       setAdjustReason('')
       reloadAll()
+      notify(
+        adjustDirection === 'IN'
+          ? `${adjustQtyNum} ${adjustModal.unit} agregada(s) a "${adjustModal.name}"`
+          : `${adjustQtyNum} ${adjustModal.unit} descontada(s) de "${adjustModal.name}"`,
+        'success'
+      )
       if (updated && updated.stock <= updated.minStock) {
         setAdjustNotice(`⚠️ "${updated.name}" ya está en su nivel mínimo de stock (${updated.stock} ${updated.unit} disponibles)`)
       }
     } catch (err) {
-      notify(err.response?.data?.message ?? 'Error')
+      const data = err.response?.data?.data
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        setAdjustFieldErrors(data)
+      } else {
+        setAdjustFieldErrors({})
+      }
+      notify(err.response?.data?.message ?? 'Error al ajustar el stock', 'error')
     } finally {
       setLoading(false)
     }
@@ -496,8 +608,13 @@ export default function Inventory() {
    */
   async function handleDelete(p) {
     if (!(await confirmDialog(`¿Desactivar "${p.name}"?`, { confirmText: 'Desactivar' }))) return
-    await deleteProduct(p.id)
-    reloadAll()
+    try {
+      await deleteProduct(p.id)
+      reloadAll()
+      notify(`"${p.name}" desactivado correctamente`, 'success')
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'Error al desactivar el producto', 'error')
+    }
   }
 
   /** Marca/desmarca el checkbox de una fila de la tabla. */
@@ -797,34 +914,48 @@ export default function Inventory() {
             <h3 className="text-lg font-bold mb-4">{editProduct ? 'Editar producto' : 'Nuevo producto'}</h3>
             <form onSubmit={handleSave} className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div><label className="text-xs font-medium text-gray-600">Nombre *</label>
-                  <input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+                {/* Sin `required` nativo en Nombre/Precio/Categoría a propósito (ver
+                    validateProductForm): el globo del navegador se disparaba antes de que
+                    este formulario corriera, tapando nuestro propio manejo de errores. */}
+                <div><label className="text-xs font-medium text-gray-600">Nombre <span className={fieldErrors.name ? 'text-red-600' : ''}>*</span></label>
+                  <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                  {fieldErrors.name && <p className="text-red-600 text-xs mt-1">{fieldErrors.name}</p>}</div>
                 <div><label className="text-xs font-medium text-gray-600">Código de barras</label>
-                  <input className="input" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} /></div>
-                <div><label className="text-xs font-medium text-gray-600">Precio venta *</label>
-                  <input className="input" type="number" step="0.01" required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
+                  <input className="input" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
+                  {fieldErrors.barcode && <p className="text-red-600 text-xs mt-1">{fieldErrors.barcode}</p>}</div>
+                <div><label className="text-xs font-medium text-gray-600">Precio venta <span className={fieldErrors.price ? 'text-red-600' : ''}>*</span></label>
+                  <input className="input" type="number" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+                  {fieldErrors.price && <p className="text-red-600 text-xs mt-1">{fieldErrors.price}</p>}</div>
                 <div><label className="text-xs font-medium text-gray-600">Costo</label>
-                  <input className="input" type="number" step="0.01" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} /></div>
+                  <input className="input" type="number" step="0.01" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} />
+                  {fieldErrors.cost && <p className="text-red-600 text-xs mt-1">{fieldErrors.cost}</p>}</div>
                 <div><label className="text-xs font-medium text-gray-600">Stock inicial</label>
-                  <input className="input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></div>
+                  <input className="input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
+                  {fieldErrors.stock && <p className="text-red-600 text-xs mt-1">{fieldErrors.stock}</p>}</div>
                 <div><label className="text-xs font-medium text-gray-600">Stock mínimo</label>
-                  <input className="input" type="number" value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} /></div>
+                  <input className="input" type="number" value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} />
+                  {fieldErrors.minStock && <p className="text-red-600 text-xs mt-1">{fieldErrors.minStock}</p>}</div>
                 <div><label className="text-xs font-medium text-gray-600">Unidad</label>
-                  <input className="input" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} /></div>
-                <div><label className="text-xs font-medium text-gray-600">Categoría *</label>
-                  <select className="input" required value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
+                  <input className="input" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} />
+                  {fieldErrors.unit && <p className="text-red-600 text-xs mt-1">{fieldErrors.unit}</p>}</div>
+                <div><label className="text-xs font-medium text-gray-600">Categoría <span className={fieldErrors.categoryId ? 'text-red-600' : ''}>*</span></label>
+                  <select className="input" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
                     <option value="">Seleccionar...</option>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     <option value={NEW_CATEGORY_VALUE}>Otra...</option>
-                  </select></div>
+                  </select>
+                  {fieldErrors.categoryId && <p className="text-red-600 text-xs mt-1">{fieldErrors.categoryId}</p>}
+                </div>
                 {form.categoryId === NEW_CATEGORY_VALUE && (
-                  <div><label className="text-xs font-medium text-gray-600">Nombre de la nueva categoría *</label>
-                    <input className="input" required autoFocus value={newCategoryName}
-                      onChange={(e) => setNewCategoryName(e.target.value)} placeholder="Ej. Electrónica" /></div>
+                  <div><label className="text-xs font-medium text-gray-600">Nombre de la nueva categoría <span className={fieldErrors.newCategoryName ? 'text-red-600' : ''}>*</span></label>
+                    <input className="input" autoFocus value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)} placeholder="Ej. Electrónica" />
+                    {fieldErrors.newCategoryName && <p className="text-red-600 text-xs mt-1">{fieldErrors.newCategoryName}</p>}</div>
                 )}
               </div>
               <div><label className="text-xs font-medium text-gray-600">Descripción</label>
-                <textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
+                <textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                {fieldErrors.description && <p className="text-red-600 text-xs mt-1">{fieldErrors.description}</p>}</div>
 
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -838,12 +969,18 @@ export default function Inventory() {
               {form.isReservable && (
                 <div>
                   <label className="text-xs font-medium text-gray-600">Descuento de oferta (%) — se le muestra al cliente</label>
+                  {/* Sin min/max nativos a propósito: el navegador los valida con su propio
+                      globo emergente ANTES de que este formulario alcance a correr — con
+                      eso, el rango 0-100 lo reporta el backend (@DecimalMin/@DecimalMax en
+                      ProductRequest) y se muestra igual que cualquier otro error, como texto
+                      debajo del campo (fieldErrors.apartadoDiscountPercent de abajo). */}
                   <input
-                    className="input sm:max-w-[160px]" type="number" min="0" max="100" step="1"
+                    className="input sm:max-w-[160px]" type="number" step="1"
                     placeholder="Sin oferta"
                     value={form.apartadoDiscountPercent}
                     onChange={(e) => setForm({ ...form, apartadoDiscountPercent: e.target.value })}
                   />
+                  {fieldErrors.apartadoDiscountPercent && <p className="text-red-600 text-xs mt-1">{fieldErrors.apartadoDiscountPercent}</p>}
                 </div>
               )}
 
@@ -895,7 +1032,7 @@ export default function Inventory() {
                 <p className="text-xs text-gray-400">PNG, JPG o WEBP, máximo {MAX_IMAGE_MB} MB por foto.</p>
               </div>
 
-              {error && <p className="text-red-600 text-sm">{error}</p>}
+              {error && <p className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</p>}
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary" disabled={loading}>{loading ? 'Guardando...' : 'Guardar'}</button>
@@ -941,41 +1078,55 @@ export default function Inventory() {
                   <button type="button"
                     className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
                       adjustDirection === 'IN' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                    onClick={() => setAdjustDirection('IN')}
+                    onClick={() => { setAdjustDirection('IN'); setAdjustFieldErrors({}) }}
                   >➕ Agregar piezas</button>
                   {isAdmin && (
                     <button type="button"
                       className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
                         adjustDirection === 'OUT' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                      onClick={() => setAdjustDirection('OUT')}
+                      onClick={() => { setAdjustDirection('OUT'); setAdjustFieldErrors({}) }}
                     >➖ Quitar piezas</button>
                   )}
                 </div>
               </div>
+              {/* Sin `min`/`required` nativos a propósito (ver handleAdjust): el globo del
+                  navegador se disparaba antes de que este formulario corriera. */}
               <div>
-                <label className="text-xs font-medium text-gray-600">Cantidad de piezas *</label>
+                <label className="text-xs font-medium text-gray-600">Cantidad de piezas <span className={adjustFieldErrors.quantity ? 'text-red-600' : ''}>*</span></label>
                 <div className="flex items-center gap-2">
                   <button type="button" className="w-9 h-9 rounded border text-gray-600 hover:bg-gray-100 text-lg leading-none"
                     onClick={() => setAdjustQty((q) => String(Math.max(0, (Number(q) || 0) - 1)))}>−</button>
-                  <input className="input text-center" type="number" min="1" required value={adjustQty}
-                    onChange={(e) => setAdjustQty(e.target.value)} />
+                  {/* type="text" a propósito, no "number": un <input type="number"> deja
+                      teclear "e" (notación científica, ej. "1e10") y la normaliza sola —
+                      con solo dígitos (inputMode numérico para el teclado del celular) eso
+                      ya no puede pasar. */}
+                  <input className="input text-center" type="text" inputMode="numeric" value={adjustQty}
+                    onChange={(e) => setAdjustQty(e.target.value.replace(/[^0-9]/g, ''))} />
                   <button type="button" className="w-9 h-9 rounded border text-gray-600 hover:bg-gray-100 text-lg leading-none"
                     onClick={() => setAdjustQty((q) => String((Number(q) || 0) + 1))}>+</button>
                 </div>
+                {adjustFieldErrors.quantity && <p className="text-red-600 text-xs mt-1">{adjustFieldErrors.quantity}</p>}
               </div>
               {adjustQtyNum > 0 && (
-                <div className={`text-sm rounded-lg px-3 py-2 ${adjustPreviewStock < 0 ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-700'}`}>
-                  Nuevo stock: <span className="font-bold">{adjustPreviewStock}</span> {adjustModal.unit}
-                  {adjustPreviewStock < 0 && ' — no puede ser negativo'}
+                <div className={`text-sm rounded-lg px-3 py-2 ${(adjustPreviewStock < 0 || adjustPreviewExceedsLimit) ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-700'}`}>
+                  {adjustPreviewExceedsLimit ? (
+                    'El número es excesivamente grande — el máximo permitido es 2,147,483,647'
+                  ) : (
+                    <>
+                      Nuevo stock: <span className="font-bold">{adjustPreviewStock}</span> {adjustModal.unit}
+                      {adjustPreviewStock < 0 && ' — no puede ser negativo'}
+                    </>
+                  )}
                 </div>
               )}
               <div>
                 <label className="text-xs font-medium text-gray-600">Motivo</label>
                 <input className="input" value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder="Compra, merma, corrección..." />
+                {adjustFieldErrors.reason && <p className="text-red-600 text-xs mt-1">{adjustFieldErrors.reason}</p>}
               </div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setAdjustModal(null)}>Cancelar</button>
-                <button type="submit" className="btn-primary" disabled={loading || adjustQtyNum === 0 || adjustPreviewStock < 0}>
+                <button type="submit" className="btn-primary" disabled={loading || adjustQtyNum === 0 || adjustPreviewStock < 0 || adjustPreviewExceedsLimit}>
                   {loading ? 'Guardando...' : 'Guardar'}
                 </button>
               </div>

@@ -9,6 +9,8 @@ import usePolling from '../hooks/usePolling'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
+// Mismo patrón que Users.jsx/POS.jsx para validar formato de correo del lado del cliente.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const STATUS_LABELS = {
   PENDING: { label: 'Pendiente', color: 'bg-yellow-100 text-yellow-800' },
@@ -72,6 +74,10 @@ export default function Apartados() {
   const [confirmModal, setConfirmModal] = useState(null) // apartado en confirmación
   const [confirmHours, setConfirmHours] = useState(24)
   const [confirmDiscounts, setConfirmDiscounts] = useState({}) // itemId -> string
+  // Errores de validación local del modal de confirmar: { durationHours: mensaje } y/o
+  // { [itemId]: mensaje } por cada línea con descuento inválido — solo se llenan al dar
+  // clic en Confirmar (mismo patrón que Usuarios/Inventario/Roles/Categorías).
+  const [confirmFieldErrors, setConfirmFieldErrors] = useState({})
 
   const [completeModal, setCompleteModal] = useState(null) // apartado a completar
   const [paymentMethod, setPaymentMethod] = useState('CASH')
@@ -85,6 +91,9 @@ export default function Apartados() {
 
   const [cancelModal, setCancelModal] = useState(null) // apartado a cancelar
   const [cancelReason, setCancelReason] = useState('')
+  // Solo se llena al dar clic en "Cancelar apartado" (mismo patrón que Notas en
+  // CashCuts.jsx) — el motivo no valida en vivo mientras se escribe.
+  const [cancelReasonError, setCancelReasonError] = useState('')
 
   // Cierra con ESC el modal que esté abierto (confirmar, completar o cancelar apartado),
   // descartando lo capturado — mismo efecto que "Cancelar"/"Cerrar" de cada uno.
@@ -126,6 +135,7 @@ export default function Apartados() {
     setConfirmModal(apartado)
     setConfirmHours(tienda?.defaultApartadoHours ?? 24)
     setConfirmDiscounts(Object.fromEntries(apartado.items.map((i) => [i.id, Number(i.discount) > 0 ? String(i.discount) : ''])))
+    setConfirmFieldErrors({})
     // El renglón de la lista no trae `availableStock` (piezas que de verdad quedan
     // libres, descontando lo que ya reclaman OTROS apartados PENDING del mismo
     // producto) — se pide el detalle fresco al backend y se reemplaza en cuanto llega,
@@ -169,10 +179,30 @@ export default function Apartados() {
 
   async function handleConfirm(e) {
     e.preventDefault()
+    // Validación local ANTES del modal de confirmación — sin `min` nativo en Horas de
+    // vigencia ni en el descuento de cada línea (ver el JSX del modal), así que esto es lo
+    // único que impide un valor fuera de rango. Mismo patrón que Inventario/Usuarios: se
+    // evalúa TODO el formulario de una vez, no con `return` anticipados por campo, para que
+    // el mensaje de un campo ya corregido no se quede pegado si otro falla en el intento.
+    const errors = {}
+    const hours = Number(confirmHours) || 0
+    if (hours < 1) errors.durationHours = 'Las horas de vigencia deben ser al menos 1'
+    else if (hours > 8760) errors.durationHours = 'Las horas de vigencia no pueden ser mayores a 8,760 (1 año)'
+    for (const item of confirmModal.items) {
+      const discount = Number(confirmDiscounts[item.id]) || 0
+      if (discount < 0) errors[item.id] = 'El descuento no puede ser negativo'
+      else if (discount > resolveCap(item)) errors[item.id] = `El descuento no puede ser mayor a ${fmt(resolveCap(item))}`
+    }
+    if (Object.keys(errors).length > 0) {
+      setConfirmFieldErrors(errors)
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
+    setConfirmFieldErrors({})
     if (!(await confirmDialog(`¿Confirmar el apartado de "${confirmModal.customerName}"? Se descontará el stock.`, { confirmText: 'Confirmar apartado', danger: false }))) return
     try {
       const items = confirmModal.items.map((i) => ({ itemId: i.id, discount: Number(confirmDiscounts[i.id]) || 0 }))
-      await confirmApartado(confirmModal.id, { durationHours: Number(confirmHours) || 24, items })
+      await confirmApartado(confirmModal.id, { durationHours: hours, items })
       notify('Apartado confirmado', 'success')
       setConfirmModal(null)
       load()
@@ -207,7 +237,7 @@ export default function Apartados() {
 
   async function handleComplete(e) {
     e.preventDefault()
-    if (digitalEmailMissing) return
+    if (!canComplete) return
     if (!(await confirmDialog(`¿Registrar el cobro de "${completeModal.customerName}" por ${fmt(completeModal.total)}?`, { confirmText: 'Completar', danger: false }))) return
     try {
       const res = await completeApartado(completeModal.id, {
@@ -235,10 +265,19 @@ export default function Apartados() {
   function openCancel(apartado) {
     setCancelModal(apartado)
     setCancelReason('')
+    setCancelReasonError('')
   }
 
   async function handleCancelSubmit(e) {
     e.preventDefault()
+    // Sin límite nativo en el textarea (ver el JSX del modal) — motivo solo se valida aquí,
+    // al dar clic, mismo patrón que Notas en CashCuts.jsx (no en vivo).
+    if (cancelReason.length > 500) {
+      setCancelReasonError('El motivo no puede tener más de 500 caracteres')
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
+    setCancelReasonError('')
     const warn = cancelModal.status === 'ACTIVE' ? ' Se restituirá el stock.' : ''
     if (!(await confirmDialog(`¿Cancelar el apartado de "${cancelModal.customerName}"?${warn}`, { confirmText: 'Cancelar apartado', danger: true }))) return
     try {
@@ -257,7 +296,15 @@ export default function Apartados() {
   // Ticket digital exige correo (igual que en POS.jsx) — a diferencia de POS, aquí suele
   // venir prellenado del que el cliente ya dejó al solicitar el apartado.
   const digitalEmailMissing = ticketType === 'digital' && !completeEmail.trim()
-  const canComplete = (paymentMethod !== 'CASH' || (amountReceivedNum != null && amountReceivedNum >= completeTotal)) && !digitalEmailMissing
+  // Mismo límite que Sale.amountReceived en el backend (NUMERIC(12,2)) — igual que en
+  // POS.jsx, en vivo mientras se escribe.
+  const completeAmountExceedsLimit = paymentMethod === 'CASH' && amountReceivedNum != null && amountReceivedNum > 9999999999.99
+  // Correo/nombre siempre opcionales (salvo el correo en modo digital, ya cubierto arriba)
+  // — mismo patrón que POS.jsx: formato y longitud solo importan si sí se capturó algo.
+  const completeEmailInvalid = completeEmail.trim() !== '' && !EMAIL_RE.test(completeEmail.trim())
+  const completeEmailTooLong = completeEmail.length > 150
+  const canComplete = (paymentMethod !== 'CASH' || (amountReceivedNum != null && amountReceivedNum >= completeTotal && !completeAmountExceedsLimit))
+    && !digitalEmailMissing && !completeEmailInvalid && !completeEmailTooLong
 
   return (
     <div>
@@ -387,9 +434,12 @@ export default function Apartados() {
               </p>
             )}
             <form onSubmit={handleConfirm} className="space-y-4">
+              {/* Sin `min` nativo a propósito (ver handleConfirm): el globo del navegador se
+                  disparaba antes de que este formulario alcanzara a correr. */}
               <div>
                 <label className="text-xs font-medium text-gray-600">Horas de vigencia</label>
-                <input className="input" type="number" min="1" value={confirmHours} onChange={(e) => setConfirmHours(e.target.value)} />
+                <input className="input" type="number" value={confirmHours} onChange={(e) => setConfirmHours(e.target.value)} />
+                {confirmFieldErrors.durationHours && <p className="text-red-600 text-xs mt-1">{confirmFieldErrors.durationHours}</p>}
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-medium text-gray-600 block">Productos</label>
@@ -412,8 +462,9 @@ export default function Apartados() {
                         {discountsDisabled ? (
                           <span className="text-xs text-gray-400 italic" title="El administrador debe configurar un límite de descuento de apartados en Datos de la tienda">Sin descuento</span>
                         ) : (
+                          // Sin `min` nativo a propósito (ver handleConfirm).
                           <input
-                            className="input !w-24 !py-1 text-xs" type="number" min="0" step="0.01" placeholder="Descuento $"
+                            className="input !w-24 !py-1 text-xs" type="number" step="0.01" placeholder="Descuento $"
                             value={confirmDiscounts[item.id] ?? ''}
                             onChange={(e) => setConfirmDiscounts((prev) => ({ ...prev, [item.id]: e.target.value }))}
                           />
@@ -425,6 +476,7 @@ export default function Apartados() {
                         )}
                       </div>
                     </div>
+                    {confirmFieldErrors[item.id] && <p className="text-red-600 text-xs text-right">{confirmFieldErrors[item.id]}</p>}
                   </div>
                 ))}
               </div>
@@ -463,15 +515,21 @@ export default function Apartados() {
                 <label className="text-xs font-medium text-gray-600">
                   Correo para enviar el ticket {ticketType === 'digital' ? <span className="text-red-500">*</span> : '(opcional)'}
                 </label>
+                {/* Sin type="email" ni required nativos a propósito (ver POS.jsx): el
+                    navegador metía su propio globo de validación de formato. */}
                 <input
-                  className="input mt-1" type="email" placeholder="cliente@correo.com"
-                  required={ticketType === 'digital'}
+                  className="input mt-1" type="text" placeholder="cliente@correo.com"
                   value={completeEmail}
                   onChange={(e) => setCompleteEmail(e.target.value)}
                 />
-                {digitalEmailMissing && (
+                <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, cliente@outlook.com</p>
+                {digitalEmailMissing ? (
                   <p className="text-xs text-red-500 mt-1">El ticket digital se manda por correo, captura uno para poder completar.</p>
-                )}
+                ) : completeEmailInvalid ? (
+                  <p className="text-xs text-red-500 mt-1">El correo no tiene un formato válido</p>
+                ) : completeEmailTooLong ? (
+                  <p className="text-xs text-red-500 mt-1">El correo no puede tener más de 150 caracteres</p>
+                ) : null}
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600">Método de pago</label>
@@ -484,17 +542,21 @@ export default function Apartados() {
               {paymentMethod === 'CASH' && (
                 <div>
                   <label className="text-xs font-medium text-gray-600">¿Con cuánto paga el cliente?</label>
-                  <input className="input mt-1" type="number" min="0" step="0.01" placeholder="0.00" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
-                  {amountReceivedNum != null && (
+                  {/* Sin `min` nativo a propósito (ver POS.jsx, mismo campo). */}
+                  <input className="input mt-1" type="number" step="0.01" placeholder="0.00" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
+                  {completeAmountExceedsLimit && (
+                    <p className="text-xs text-red-500 mt-1">El número es excesivamente grande — el máximo permitido es 9,999,999,999.99</p>
+                  )}
+                  {!completeAmountExceedsLimit && amountReceivedNum != null && (
                     change != null && change >= 0 ? (
-                      <div className="mt-2 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 text-center">
+                      <div className="mt-2 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 text-center overflow-hidden">
                         <p className="text-xs font-semibold text-green-700 uppercase tracking-wide">Cambio a entregar</p>
-                        <p className="text-3xl font-bold text-green-700 mt-0.5">{fmt(change)}</p>
+                        <p className="font-bold text-green-700 text-3xl mt-0.5 break-words">{fmt(change)}</p>
                       </div>
                     ) : (
-                      <div className="mt-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-center">
+                      <div className="mt-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-center overflow-hidden">
                         <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Falta por cobrar</p>
-                        <p className="text-3xl font-bold text-red-600 mt-0.5">{fmt(completeTotal - amountReceivedNum)}</p>
+                        <p className="font-bold text-red-600 text-3xl mt-0.5 break-words">{fmt(completeTotal - amountReceivedNum)}</p>
                       </div>
                     )
                   )}
@@ -533,6 +595,7 @@ export default function Apartados() {
                       ? `El cliente no dejó correo al solicitarlo, se le puede avisar por llamada al número que dejó registrado: ${cancelModal.customerPhone}.`
                       : 'El cliente no dejó correo ni teléfono al solicitarlo, no se le podrá avisar.'}
                 </p>
+                {cancelReasonError && <p className="text-red-600 text-xs mt-1">{cancelReasonError}</p>}
               </div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setCancelModal(null)}>Cerrar</button>

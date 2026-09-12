@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { resetPassword } from '../api/auth'
 import { applyDefaultBrand } from '../utils/theme'
+import { useNotify } from '../context/NotifyContext'
 import logo from '../assets/logo.png'
 
 /**
@@ -14,6 +15,7 @@ import logo from '../assets/logo.png'
  * devuelve el backend, con un link para pedir uno nuevo.
  */
 export default function ResetPassword() {
+  const { notify } = useNotify()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const token = searchParams.get('token') ?? ''
@@ -22,6 +24,8 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
+  // Solo al dar clic en "Restablecer contraseña" — mismo patrón que Login/Usuarios/Roles.
+  const [fieldErrors, setFieldErrors] = useState({})
 
   useEffect(() => {
     applyDefaultBrand()
@@ -29,11 +33,23 @@ export default function ResetPassword() {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    setError('')
-    if (newPassword !== confirmPassword) {
-      setError('Las contraseñas no coinciden')
+    // Sin `minLength`/`required` nativos en los inputs (ver el JSX de abajo) — esto es lo
+    // único que valida antes de mandar la solicitud. Mismo límite que ResetPasswordRequest
+    // en el backend (6-72 caracteres, 72 por el truncado silencioso de BCrypt).
+    const errors = {}
+    if (!newPassword) errors.newPassword = 'La contraseña es obligatoria'
+    else if (newPassword.length < 6) errors.newPassword = 'La contraseña debe tener al menos 6 caracteres'
+    else if (newPassword.length > 72) errors.newPassword = 'La contraseña no puede tener más de 72 caracteres'
+    if (!confirmPassword) errors.confirmPassword = 'Confirma la contraseña'
+    else if (newPassword && confirmPassword !== newPassword) errors.confirmPassword = 'Las contraseñas no coinciden'
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setError('')
+      notify('Revisa los campos marcados en rojo', 'error')
       return
     }
+    setFieldErrors({})
+    setError('')
     setLoading(true)
     try {
       await resetPassword(token, newPassword)
@@ -76,15 +92,15 @@ export default function ResetPassword() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Nueva contraseña</label>
+              {/* Sin minLength/required nativos a propósito (ver handleSubmit). */}
               <input
                 type="password"
                 className="input"
                 placeholder="••••••••"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                minLength={6}
-                required
               />
+              {fieldErrors.newPassword && <p className="text-red-600 text-xs mt-1">{fieldErrors.newPassword}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar contraseña</label>
@@ -94,9 +110,8 @@ export default function ResetPassword() {
                 placeholder="••••••••"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                minLength={6}
-                required
               />
+              {fieldErrors.confirmPassword && <p className="text-red-600 text-xs mt-1">{fieldErrors.confirmPassword}</p>}
             </div>
 
             {error && (

@@ -18,6 +18,9 @@ export default function Login() {
   const navigate = useNavigate()
   const [form, setForm] = useState({ email: '', password: '' })
   const [error, setError] = useState('')
+  // Errores de validación por campo, solo al dar clic en "Iniciar sesión" — mismo patrón
+  // que Usuarios/Roles/Categorías (no en vivo, ver el análisis de todos los módulos).
+  const [fieldErrors, setFieldErrors] = useState({})
   const [loading, setLoading] = useState(false)
 
   // El login siempre es azul Nexora fijo, sin importar el color que haya quedado
@@ -33,10 +36,25 @@ export default function Login() {
    */
   async function handleSubmit(e) {
     e.preventDefault()
+    // Validación local ANTES de llamar al backend — sin `type="email"`/`required` nativos
+    // en los inputs (ver el JSX de abajo), así que esto es lo único que impide mandar
+    // cualquiera de los dos campos vacío. Sin validar formato ni mostrar alerta aparte:
+    // solo que estén llenos.
+    const errors = {}
+    if (!form.email.trim()) errors.email = 'El correo es obligatorio'
+    if (!form.password) errors.password = 'La contraseña es obligatoria'
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setError('')
+      return
+    }
+    setFieldErrors({})
     setError('')
     setLoading(true)
     try {
-      await login(form.email, form.password)
+      // Se manda recortado (mismo valor que se validó arriba) para que un espacio de más
+      // al final no lo rechace el @Email del backend con su mensaje genérico.
+      await login(form.email.trim(), form.password)
       navigate('/')
     } catch (err) {
       setError(err.response?.data?.message || 'Error al iniciar sesión')
@@ -60,17 +78,20 @@ export default function Login() {
           <p className="text-gray-500 text-sm mt-1">Sistema de Punto de Venta</p>
         </div>
 
+        {/* Sin type="email" ni required nativos a propósito (ver handleSubmit): el globo
+            del navegador se disparaba antes de que este formulario alcanzara a correr. */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Correo electrónico</label>
             <input
-              type="email"
+              type="text"
               className="input"
               placeholder="admin@boutique.com"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
-              required
             />
+            <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, cliente@outlook.com</p>
+            {fieldErrors.email && <p className="text-red-600 text-xs mt-1">{fieldErrors.email}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
@@ -80,8 +101,8 @@ export default function Login() {
               placeholder="••••••••"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
-              required
             />
+            {fieldErrors.password && <p className="text-red-600 text-xs mt-1">{fieldErrors.password}</p>}
           </div>
 
           {error && (

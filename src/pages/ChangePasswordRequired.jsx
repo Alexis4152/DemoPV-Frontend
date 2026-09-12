@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { changePassword } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
+import { useNotify } from '../context/NotifyContext'
 import logo from '../assets/logo.png'
 
 /**
@@ -17,24 +18,37 @@ import logo from '../assets/logo.png'
  */
 export default function ChangePasswordRequired() {
   const { user, logout, clearMustChangePassword } = useAuth()
+  const { notify } = useNotify()
   const navigate = useNavigate()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Solo al dar clic en "Cambiar contraseña y continuar" — mismo patrón que Login/ResetPassword.
+  const [fieldErrors, setFieldErrors] = useState({})
 
   async function handleSubmit(e) {
     e.preventDefault()
+    // Sin `required`/`minLength` nativos en los inputs (ver el JSX de abajo) — esto es lo
+    // único que valida antes de mandar la solicitud. Mismo límite que ChangePasswordRequest
+    // en el backend (6-72 caracteres, 72 por el truncado silencioso de BCrypt).
+    const errors = {}
+    if (!currentPassword) errors.currentPassword = 'La contraseña temporal es obligatoria'
+    if (!newPassword) errors.newPassword = 'La contraseña es obligatoria'
+    else if (newPassword.length < 6) errors.newPassword = 'La contraseña debe tener al menos 6 caracteres'
+    else if (newPassword.length > 72) errors.newPassword = 'La contraseña no puede tener más de 72 caracteres'
+    else if (newPassword === currentPassword) errors.newPassword = 'La nueva contraseña debe ser distinta a la temporal'
+    if (!confirmPassword) errors.confirmPassword = 'Confirma la contraseña'
+    else if (newPassword && !errors.newPassword && confirmPassword !== newPassword) errors.confirmPassword = 'Las contraseñas no coinciden'
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setError('')
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
+    setFieldErrors({})
     setError('')
-    if (newPassword !== confirmPassword) {
-      setError('Las contraseñas no coinciden')
-      return
-    }
-    if (newPassword === currentPassword) {
-      setError('La nueva contraseña debe ser distinta a la temporal')
-      return
-    }
     setLoading(true)
     try {
       await changePassword(currentPassword, newPassword)
@@ -67,14 +81,15 @@ export default function ChangePasswordRequired() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña temporal</label>
+            {/* Sin required/minLength nativos a propósito (ver handleSubmit). */}
             <input
               type="password"
               className="input"
               placeholder="La que recibiste por correo"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              required
             />
+            {fieldErrors.currentPassword && <p className="text-red-600 text-xs mt-1">{fieldErrors.currentPassword}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Nueva contraseña</label>
@@ -84,9 +99,8 @@ export default function ChangePasswordRequired() {
               placeholder="••••••••"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              minLength={6}
-              required
             />
+            {fieldErrors.newPassword && <p className="text-red-600 text-xs mt-1">{fieldErrors.newPassword}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar contraseña</label>
@@ -96,9 +110,8 @@ export default function ChangePasswordRequired() {
               placeholder="••••••••"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              minLength={6}
-              required
             />
+            {fieldErrors.confirmPassword && <p className="text-red-600 text-xs mt-1">{fieldErrors.confirmPassword}</p>}
           </div>
 
           {error && (

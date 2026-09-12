@@ -10,20 +10,45 @@ import defaultLogo from '../assets/logo.png'
 // también evita el viaje redondo al servidor solo para enterarse de que pesa de más.
 const MAX_LOGO_MB = 3
 
+// Mismos límites reales de columna que TiendaInfoRequest en el backend (ver ese archivo) —
+// redesSociales/notasAdicionales son TEXT sin límite de columna, su tope de 500 es solo de
+// aplicación, igual que en ProductRequest.description.
 const FIELDS = [
-  { key: 'name', label: 'Nombre de la tienda', required: true },
-  { key: 'razonSocial', label: 'Razón social' },
-  { key: 'rfc', label: 'RFC' },
-  { key: 'telefono', label: 'Teléfono' },
-  { key: 'paginaWeb', label: 'Página web' },
-  { key: 'calle', label: 'Calle' },
-  { key: 'colonia', label: 'Colonia' },
-  { key: 'codigoPostal', label: 'Código postal' },
-  { key: 'localidad', label: 'Localidad' },
-  { key: 'estado', label: 'Estado' },
-  { key: 'redesSociales', label: 'Redes sociales', textarea: true },
-  { key: 'notasAdicionales', label: 'Otros datos', textarea: true },
+  { key: 'name', label: 'Nombre de la tienda', required: true, maxLength: 150 },
+  { key: 'razonSocial', label: 'Razón social', maxLength: 200 },
+  { key: 'rfc', label: 'RFC', maxLength: 20 },
+  { key: 'telefono', label: 'Teléfono', maxLength: 30 },
+  { key: 'paginaWeb', label: 'Página web', maxLength: 200 },
+  { key: 'calle', label: 'Calle', maxLength: 200 },
+  { key: 'colonia', label: 'Colonia', maxLength: 150 },
+  { key: 'codigoPostal', label: 'Código postal', maxLength: 10 },
+  { key: 'localidad', label: 'Localidad', maxLength: 150 },
+  { key: 'estado', label: 'Estado', maxLength: 100 },
+  { key: 'redesSociales', label: 'Redes sociales', textarea: true, maxLength: 500 },
+  { key: 'notasAdicionales', label: 'Otros datos', textarea: true, maxLength: 500 },
 ]
+
+const CONTACT_EMAIL_MAX = 150
+const PUBLIC_SLUG_MAX = 80
+const MONEY_MAX = 9999999999.99
+const PERCENT_MAX = 100
+const HOURS_MAX = 24
+const money = (n) => n.toLocaleString('es-MX', { minimumFractionDigits: 2 })
+
+// Mismo patrón simple que el resto de la app para validar formato de correo del lado del
+// cliente — no reemplaza al @Email real del backend, solo adelanta el error más común.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+// Sin type="number"/type="email" nativos en ningún input de este formulario (ver el JSX
+// de abajo) — así se evita el globo de validación del navegador y la potencia "e" que
+// permite type="number"; estos sanitizan lo que se escribe en su lugar.
+const sanitizeDecimalInput = (raw) => {
+  let v = raw.replace(/[^0-9.]/g, '')
+  const firstDot = v.indexOf('.')
+  if (firstDot !== -1) v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '')
+  return v
+}
+const sanitizeIntegerInput = (raw) => raw.replace(/[^0-9]/g, '')
 
 // Pestañas en las que se agrupa el formulario — puramente visual: las cuatro viven
 // dentro del mismo <form>/`handleSave`, así que cambiar de pestaña nunca pierde lo
@@ -33,7 +58,6 @@ const TABS = [
   { key: 'general', label: 'General', icon: '🏬' },
   { key: 'ventas', label: 'Ventas', icon: '💰' },
   { key: 'apartados', label: 'Apartados', icon: '🛍️' },
-  { key: 'sistema', label: 'Sistema', icon: '⚙️' },
 ]
 
 /**
@@ -61,6 +85,8 @@ export default function StoreInfo() {
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  // Solo al dar clic en "Guardar cambios" — mismo patrón que Usuarios/Roles/Categorías.
+  const [fieldErrors, setFieldErrors] = useState({})
   const [downloadingPromo, setDownloadingPromo] = useState(false)
   const [downloadingQr, setDownloadingQr] = useState(false)
   const [activeTab, setActiveTab] = useState('general')
@@ -112,6 +138,52 @@ export default function StoreInfo() {
    */
   async function handleSave(e) {
     e.preventDefault()
+    // Valida que ningún campo supere su máximo real (mismos límites que TiendaInfoRequest
+    // en el backend) ANTES de pedir confirmación — así el usuario ve el error de inmediato
+    // en vez de confirmar y que lo rechace el backend.
+    const errors = {}
+    for (const f of FIELDS) {
+      const value = form[f.key] || ''
+      if (f.maxLength && value.length > f.maxLength) {
+        errors[f.key] = `${f.label} no puede tener más de ${f.maxLength} caracteres`
+      }
+    }
+    if ((form.contactEmail || '').length > CONTACT_EMAIL_MAX) {
+      errors.contactEmail = `El correo de contacto no puede tener más de ${CONTACT_EMAIL_MAX} caracteres`
+    } else if (form.contactEmail && !EMAIL_RE.test(form.contactEmail)) {
+      errors.contactEmail = 'El correo de contacto no es válido'
+    }
+    if ((form.publicSlug || '').length > PUBLIC_SLUG_MAX) {
+      errors.publicSlug = `El enlace no puede tener más de ${PUBLIC_SLUG_MAX} caracteres`
+    }
+    if (form.dailySalesGoal !== '' && Number(form.dailySalesGoal) > MONEY_MAX) {
+      errors.dailySalesGoal = `El número es excesivamente grande — el máximo permitido es ${money(MONEY_MAX)}`
+    }
+    if (form.maxDiscountAmount !== '' && Number(form.maxDiscountAmount) > MONEY_MAX) {
+      errors.maxDiscountAmount = `El número es excesivamente grande — el máximo permitido es ${money(MONEY_MAX)}`
+    }
+    if (form.maxDiscountPercent !== '' && Number(form.maxDiscountPercent) > PERCENT_MAX) {
+      errors.maxDiscountPercent = `El porcentaje máximo de descuento no puede ser mayor a ${PERCENT_MAX}`
+    }
+    if (form.maxApartadoDiscountAmount !== '' && Number(form.maxApartadoDiscountAmount) > MONEY_MAX) {
+      errors.maxApartadoDiscountAmount = `El número es excesivamente grande — el máximo permitido es ${money(MONEY_MAX)}`
+    }
+    if (form.maxApartadoDiscountPercent !== '' && Number(form.maxApartadoDiscountPercent) > PERCENT_MAX) {
+      errors.maxApartadoDiscountPercent = `El porcentaje máximo de descuento de apartado no puede ser mayor a ${PERCENT_MAX}`
+    }
+    if (form.apartadosEnabled) {
+      if (form.defaultApartadoHours === '' || Number(form.defaultApartadoHours) < 1) {
+        errors.defaultApartadoHours = 'Las horas que dura un apartado deben ser al menos 1'
+      } else if (Number(form.defaultApartadoHours) > HOURS_MAX) {
+        errors.defaultApartadoHours = `Las horas que dura un apartado no pueden ser más de ${HOURS_MAX}`
+      }
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
+    setFieldErrors({})
     if (!(await confirmDialog('¿Deseas guardar estos datos? Se usarán en el ticket de venta.', { confirmText: 'Guardar datos', danger: false }))) return
     setSaving(true)
     setError('')
@@ -305,6 +377,7 @@ export default function StoreInfo() {
                   onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
                 />
               )}
+              {fieldErrors[f.key] && <p className="text-red-600 text-xs mt-1">{fieldErrors[f.key]}</p>}
             </div>
           ))}
         </div>
@@ -313,13 +386,15 @@ export default function StoreInfo() {
         {activeTab === 'general' && (
         <div className="border-t border-gray-100 pt-4">
           <label className="block text-sm font-medium text-gray-700 mb-1">Correo de contacto</label>
+          {/* Sin type="email" nativo a propósito (ver handleSave). */}
           <input
-            type="email"
+            type="text"
             className="input sm:max-w-md"
             placeholder="ej. contacto@tunegocio.com"
             value={form.contactEmail}
             onChange={(e) => setForm({ ...form, contactEmail: e.target.value })}
           />
+          {fieldErrors.contactEmail && <p className="text-red-600 text-xs mt-1">{fieldErrors.contactEmail}</p>}
           <p className="text-xs text-gray-400 mt-1">
             Los tickets y avisos por correo de tu tienda siguen saliendo desde la cuenta del sistema, pero si un
             cliente le da "Responder", le llega a este correo en vez de a la cuenta general — déjalo en blanco si no
@@ -338,12 +413,14 @@ export default function StoreInfo() {
           </p>
           <div className="max-w-xs">
             <label className="block text-sm font-medium text-gray-700 mb-1">Meta diaria ($)</label>
+            {/* Sin type="number" nativo a propósito (ver handleSave). */}
             <input
-              type="number" min="0" step="0.01"
+              type="text" inputMode="decimal"
               className="input" placeholder="Sin definir"
               value={form.dailySalesGoal}
-              onChange={(e) => setForm({ ...form, dailySalesGoal: e.target.value })}
+              onChange={(e) => setForm({ ...form, dailySalesGoal: sanitizeDecimalInput(e.target.value) })}
             />
+            {fieldErrors.dailySalesGoal && <p className="text-red-600 text-xs mt-1">{fieldErrors.dailySalesGoal}</p>}
           </div>
         </div>
 
@@ -358,21 +435,25 @@ export default function StoreInfo() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto máximo de descuento ($)</label>
+              {/* Sin type="number" nativo a propósito (ver handleSave). */}
               <input
-                type="number" min="0" step="0.01"
+                type="text" inputMode="decimal"
                 className="input" placeholder="Sin definir (descuentos deshabilitados)"
                 value={form.maxDiscountAmount}
-                onChange={(e) => setForm({ ...form, maxDiscountAmount: e.target.value })}
+                onChange={(e) => setForm({ ...form, maxDiscountAmount: sanitizeDecimalInput(e.target.value) })}
               />
+              {fieldErrors.maxDiscountAmount && <p className="text-red-600 text-xs mt-1">{fieldErrors.maxDiscountAmount}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Porcentaje máximo de descuento (%)</label>
+              {/* Sin type="number" nativo a propósito (ver handleSave). */}
               <input
-                type="number" min="0" max="100" step="1"
+                type="text" inputMode="numeric"
                 className="input" placeholder="Sin definir (descuentos deshabilitados)"
                 value={form.maxDiscountPercent}
-                onChange={(e) => setForm({ ...form, maxDiscountPercent: e.target.value })}
+                onChange={(e) => setForm({ ...form, maxDiscountPercent: sanitizeIntegerInput(e.target.value) })}
               />
+              {fieldErrors.maxDiscountPercent && <p className="text-red-600 text-xs mt-1">{fieldErrors.maxDiscountPercent}</p>}
             </div>
           </div>
         </div>
@@ -414,6 +495,7 @@ export default function StoreInfo() {
                     Copiar link
                   </button>
                 </div>
+                {fieldErrors.publicSlug && <p className="text-red-600 text-xs mt-1">{fieldErrors.publicSlug}</p>}
                 {form.publicSlug && (
                   <p className="text-xs text-gray-400 mt-1 break-all">{window.location.origin}/apartar/{form.publicSlug}</p>
                 )}
@@ -440,11 +522,13 @@ export default function StoreInfo() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Horas que dura un apartado</label>
+                {/* Sin type="number" nativo a propósito (ver handleSave). */}
                 <input
-                  type="number" min="1" className="input sm:max-w-[160px]"
+                  type="text" inputMode="numeric" className="input sm:max-w-[160px]"
                   value={form.defaultApartadoHours}
-                  onChange={(e) => setForm({ ...form, defaultApartadoHours: e.target.value })}
+                  onChange={(e) => setForm({ ...form, defaultApartadoHours: sanitizeIntegerInput(e.target.value) })}
                 />
+                {fieldErrors.defaultApartadoHours && <p className="text-red-600 text-xs mt-1">{fieldErrors.defaultApartadoHours}</p>}
                 <p className="text-xs text-gray-400 mt-1">A partir de que lo confirmes (no de cuando el cliente lo solicita) — si no lo recoge a tiempo, el producto vuelve solo al inventario.</p>
               </div>
 
@@ -457,43 +541,27 @@ export default function StoreInfo() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Monto máximo ($)</label>
+                    {/* Sin type="number" nativo a propósito (ver handleSave). */}
                     <input
-                      type="number" min="0" step="0.01" className="input" placeholder="Sin definir (deshabilitado)"
+                      type="text" inputMode="decimal" className="input" placeholder="Sin definir (deshabilitado)"
                       value={form.maxApartadoDiscountAmount}
-                      onChange={(e) => setForm({ ...form, maxApartadoDiscountAmount: e.target.value })}
+                      onChange={(e) => setForm({ ...form, maxApartadoDiscountAmount: sanitizeDecimalInput(e.target.value) })}
                     />
+                    {fieldErrors.maxApartadoDiscountAmount && <p className="text-red-600 text-xs mt-1">{fieldErrors.maxApartadoDiscountAmount}</p>}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Porcentaje máximo (%)</label>
                     <input
-                      type="number" min="0" max="100" step="1" className="input" placeholder="Sin definir (deshabilitado)"
+                      type="text" inputMode="numeric" className="input" placeholder="Sin definir (deshabilitado)"
                       value={form.maxApartadoDiscountPercent}
-                      onChange={(e) => setForm({ ...form, maxApartadoDiscountPercent: e.target.value })}
+                      onChange={(e) => setForm({ ...form, maxApartadoDiscountPercent: sanitizeIntegerInput(e.target.value) })}
                     />
+                    {fieldErrors.maxApartadoDiscountPercent && <p className="text-red-600 text-xs mt-1">{fieldErrors.maxApartadoDiscountPercent}</p>}
                   </div>
                 </div>
               </div>
             </div>
           )}
-        </div>
-        )}
-
-        {activeTab === 'sistema' && (
-        <div>
-          <p className="text-sm font-semibold text-gray-800">Actualización automática</p>
-          <p className="text-xs text-gray-500 mb-3">
-            Cada cuántos segundos se refrescan solos Apartados y el Dashboard, sin que nadie tenga que
-            recargar la página. Un valor bajo se siente más "en vivo" pero le pide más seguido al servidor.
-          </p>
-          <div className="max-w-xs">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Intervalo (segundos)</label>
-            <input
-              type="number" min="5" max="300" step="1"
-              className="input"
-              value={form.pollingIntervalSeconds}
-              onChange={(e) => setForm({ ...form, pollingIntervalSeconds: e.target.value })}
-            />
-          </div>
         </div>
         )}
 
@@ -508,7 +576,7 @@ export default function StoreInfo() {
           <button className="btn-primary" disabled={saving}>
             {saving ? 'Guardando...' : 'Guardar cambios'}
           </button>
-          <p className="text-xs text-gray-400">Guarda lo de las 4 pestañas juntas, sin importar cuál esté abierta.</p>
+          <p className="text-xs text-gray-400">Guarda lo de las 3 pestañas juntas, sin importar cuál esté abierta.</p>
         </div>
       </form>
     </div>

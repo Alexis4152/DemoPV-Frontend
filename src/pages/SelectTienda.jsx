@@ -2,9 +2,14 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTiendas, createTienda, updateTiendaName, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
+import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
 import logo from '../assets/logo.png'
 import useEscapeClose from '../hooks/useEscapeClose'
+
+// Mismo límite que Inventory.jsx para fotos de producto — evita el viaje redondo al
+// servidor solo para enterarse de que pesa de más.
+const MAX_IMAGE_MB = 5
 
 /**
  * Selector de tienda para SUPER_ADMIN y SUPERVISOR — los dos roles "de plataforma" sin
@@ -27,7 +32,7 @@ import useEscapeClose from '../hooks/useEscapeClose'
  * `StoreInfo.jsx`, reservada a la tienda sobre la que se está actuando.
  */
 export default function SelectTienda() {
-  const { user, selectTienda, patchTienda, logout } = useAuth()
+  const { user, selectTienda, patchTienda, logout, isSuperAdmin } = useAuth()
   const navigate = useNavigate()
   const [tiendas, setTiendas] = useState([])
   const [loading, setLoading] = useState(true)
@@ -80,8 +85,9 @@ export default function SelectTienda() {
           <img src={logo} alt="Nexora Systems" className="w-20 h-20 rounded-full mx-auto mb-3 shadow-[0_0_24px_rgba(43,132,245,0.5)]" />
           <h1 className="text-2xl font-bold text-gray-900">¿Con cuál tienda quieres trabajar?</h1>
           <p className="text-gray-500 text-sm mt-1">
-            Como SUPER_ADMIN puedes administrar cualquier tienda — elige una para entrar a su Inventario,
-            Ventas, Usuarios y Configuración, exactamente como su administrador. Puedes cambiarla después.
+            {isSuperAdmin
+              ? 'Como SUPER_ADMIN puedes administrar cualquier tienda — elige una para entrar a su Inventario, Ventas, Usuarios y Configuración, exactamente como su administrador. Puedes cambiarla después.'
+              : 'Como SUPERVISOR puedes administrar las tiendas que tienes asignadas — elige una para entrar a su Inventario, Ventas, Usuarios y Configuración, exactamente como su administrador. Puedes cambiarla después.'}
           </p>
         </div>
 
@@ -154,27 +160,38 @@ export default function SelectTienda() {
 
 /** Modal "+ Nueva tienda": nombre (obligatorio) y logo (opcional, se sube justo después de crearla). */
 function CreateTiendaModal({ onClose, onCreated }) {
+  const { notify } = useNotify()
   const [name, setName] = useState('')
   const [logoFile, setLogoFile] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // Solo al dar clic en "Crear tienda" — mismo patrón que Usuarios/Roles/Categorías.
+  const [nameError, setNameError] = useState('')
   useEscapeClose(true, onClose)
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!name.trim()) return
+    // Sin `required` nativo en el input (ver el JSX de abajo) — esto es lo único que valida
+    // antes de mandar la solicitud. Mismo límite que TiendaRequest.name en el backend (150,
+    // por Tienda.name VARCHAR(150)).
+    const trimmed = name.trim()
+    if (!trimmed) { setNameError('El nombre es obligatorio'); notify('Revisa los campos marcados en rojo', 'error'); return }
+    if (trimmed.length > 150) { setNameError('El nombre no puede tener más de 150 caracteres'); notify('Revisa los campos marcados en rojo', 'error'); return }
+    setNameError('')
     setSaving(true)
     setError('')
     try {
-      const res = await createTienda(name.trim())
+      const res = await createTienda(trimmed)
       let tienda = res.data.data
       if (logoFile) {
         const logoRes = await uploadTiendaLogo(tienda.id, logoFile)
         tienda = logoRes.data.data
       }
+      notify('Tienda creada correctamente', 'success')
       onCreated(tienda)
     } catch (err) {
       setError(err.response?.data?.message || 'No se pudo crear la tienda')
+      notify('Error al crear la tienda', 'error')
     } finally {
       setSaving(false)
     }
@@ -191,17 +208,29 @@ function CreateTiendaModal({ onClose, onCreated }) {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-          <input type="text" className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
+          {/* Sin required nativo a propósito (ver handleSubmit). */}
+          <input type="text" className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+          {nameError && <p className="text-red-600 text-xs mt-1">{nameError}</p>}
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Logo (opcional)</label>
           <input
             type="file" accept="image/png,image/jpeg,image/webp"
-            onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (!file) { setLogoFile(null); return }
+              if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+                notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
+                e.target.value = ''
+                setLogoFile(null)
+                return
+              }
+              setLogoFile(file)
+            }}
             className="text-sm"
           />
-          <p className="text-xs text-gray-400 mt-1">Si no subes uno, se usa el logo de Nexora. Puedes cambiarlo después.</p>
+          <p className="text-xs text-gray-400 mt-1">Si no subes uno, se usa el logo de Nexora. Puedes cambiarlo después. PNG, JPG o WEBP, máximo {MAX_IMAGE_MB} MB.</p>
         </div>
 
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}
@@ -217,23 +246,34 @@ function CreateTiendaModal({ onClose, onCreated }) {
 
 /** Modal de edición rápida (nombre + logo) para una tienda existente, sin tener que "entrar" a ella. */
 function EditTiendaModal({ tienda, onClose, onSaved }) {
+  const { notify } = useNotify()
   const [name, setName] = useState(tienda.name)
   const [logoPath, setLogoPath] = useState(tienda.logoPath)
   const [saving, setSaving] = useState(false)
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [error, setError] = useState('')
+  // Solo al dar clic en "Guardar" — mismo patrón que Usuarios/Roles/Categorías.
+  const [nameError, setNameError] = useState('')
   useEscapeClose(true, onClose)
 
   async function handleSave(e) {
     e.preventDefault()
-    if (!name.trim()) return
+    // Sin `required` nativo en el input (ver el JSX de abajo) — esto es lo único que valida
+    // antes de mandar la solicitud. Mismo límite que TiendaRequest.name en el backend (150,
+    // por Tienda.name VARCHAR(150)).
+    const trimmed = name.trim()
+    if (!trimmed) { setNameError('El nombre es obligatorio'); notify('Revisa los campos marcados en rojo', 'error'); return }
+    if (trimmed.length > 150) { setNameError('El nombre no puede tener más de 150 caracteres'); notify('Revisa los campos marcados en rojo', 'error'); return }
+    setNameError('')
     setSaving(true)
     setError('')
     try {
-      const res = await updateTiendaName(tienda.id, name.trim())
+      const res = await updateTiendaName(tienda.id, trimmed)
+      notify('Tienda editada correctamente', 'success')
       onSaved({ ...res.data.data, logoPath })
     } catch (err) {
       setError(err.response?.data?.message || 'No se pudo guardar el nombre')
+      notify('Error al guardar la tienda', 'error')
     } finally {
       setSaving(false)
     }
@@ -242,6 +282,11 @@ function EditTiendaModal({ tienda, onClose, onSaved }) {
   async function handleLogoChange(e) {
     const file = e.target.files?.[0]
     if (!file) return
+    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+      notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
+      e.target.value = ''
+      return
+    }
     setUploadingLogo(true)
     setError('')
     try {
@@ -298,7 +343,9 @@ function EditTiendaModal({ tienda, onClose, onSaved }) {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-          <input type="text" className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+          {/* Sin required nativo a propósito (ver handleSave). */}
+          <input type="text" className="input" value={name} onChange={(e) => setName(e.target.value)} />
+          {nameError && <p className="text-red-600 text-xs mt-1">{nameError}</p>}
         </div>
 
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}

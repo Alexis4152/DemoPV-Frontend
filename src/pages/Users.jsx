@@ -47,9 +47,14 @@ const rankOf = (roleName) => ROLE_RANK[roleName] ?? 3
  * tecla; fecha/rol/estado disparan de inmediato. Cualquier cambio de filtro reinicia a la
  * primera página, para no quedar "atorado" en una página que ya no existe con el nuevo filtro.
  */
+// Mismo patrón simple que el resto de la app para validar formato de correo del lado del
+// cliente (ver validateUserForm) — no reemplaza al @Email real del backend, solo adelanta
+// el error más común sin esperar el viaje redondo al servidor.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 export default function Users() {
   const { user, isAdmin, isSuperAdmin, isPlatformActor } = useAuth()
-  const { confirmDialog } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [roles, setRoles] = useState([])
   // Tiendas visibles para el actor (todas si es SUPER_ADMIN, solo las suyas si es
@@ -64,7 +69,14 @@ export default function Users() {
   const [showModal, setShowModal] = useState(false)
   const [editUser, setEditUser] = useState(null)
   const [form, setForm] = useState(emptyForm)
+  // Error general del modal de usuario (reglas de negocio sin campo asociado, o
+  // cualquier fallo que no venga de @Valid/FieldConflictException).
   const [error, setError] = useState('')
+  // Errores de validación por campo, { nombreDelCampo: mensaje } — mismo formato que
+  // GlobalExceptionHandler ya manda para @Valid y para FieldConflictException (ver
+  // UserService#create/#update, "El correo ya está registrado"). Se muestran justo debajo
+  // de su input y ponen en rojo el asterisco de "obligatorio" de ese campo.
+  const [fieldErrors, setFieldErrors] = useState({})
   const [loading, setLoading] = useState(false)
 
   /**
@@ -115,12 +127,16 @@ export default function Users() {
 
   const hasFilters = filters.from || filters.to || filters.name || filters.email || filters.roleId || filters.isActive
 
-  // Abre el modal en blanco para crear un usuario nuevo, preseleccionando el primer rol
-  // disponible como valor por default del select.
+  // Abre el modal en blanco para crear un usuario nuevo. `roleId` arranca vacío a
+  // propósito (no se preselecciona el primer rol de la lista): así el select siempre
+  // muestra "Selecciona un rol" por default y de verdad obliga a elegir uno — antes
+  // quedaba preseleccionado, así que un admin distraído podía crear un usuario con el
+  // primer rol de la lista sin haberlo elegido conscientemente.
   function openNew() {
     setEditUser(null)
-    setForm({ ...emptyForm, roleId: roles[0]?.id ?? '' })
+    setForm({ ...emptyForm })
     setError('')
+    setFieldErrors({})
     setShowModal(true)
   }
 
@@ -134,6 +150,7 @@ export default function Users() {
     setEditUser(u)
     setForm({ name: u.name, email: u.email, password: '', roleId: u.role?.id ?? '', supervisedTiendaIds: [], tiendaId: u.tienda?.id ?? '' })
     setError('')
+    setFieldErrors({})
     setShowModal(true)
     if (isSuperAdmin && u.role?.name === 'SUPERVISOR') {
       getTiendasBySupervisor(u.id).then((r) => {
@@ -142,17 +159,55 @@ export default function Users() {
     }
   }
 
+  /**
+   * Valida el formulario de usuario del lado del cliente, replicando los límites que ya
+   * exige `UserRequest` en el backend (mismos mensajes) — para adelantar el error más
+   * común antes de pedir confirmación de guardado (ver `handleSave`), en vez de hacerlo
+   * hasta después del viaje redondo al servidor. El backend sigue siendo quien de verdad
+   * decide (esto no lo reemplaza).
+   *
+   * @returns {{[field: string]: string}} vacío si el formulario es válido
+   */
+  function validateUserForm() {
+    const errors = {}
+    if (!form.name.trim()) errors.name = 'El nombre es obligatorio'
+    else if (form.name.length > 100) errors.name = 'El nombre no puede tener más de 100 caracteres'
+    if (!form.email.trim()) errors.email = 'El correo es obligatorio'
+    else if (!EMAIL_RE.test(form.email)) errors.email = 'El correo no tiene un formato válido'
+    else if (form.email.length > 150) errors.email = 'El correo no puede tener más de 150 caracteres'
+    // La contraseña solo se valida si de verdad se va a cambiar (al crear, este campo ni
+    // siquiera se muestra — ver el JSX; al editar, vacío significa "no cambiarla").
+    if (editUser && form.password && (form.password.length < 6 || form.password.length > 72)) {
+      errors.password = 'La contraseña debe tener entre 6 y 72 caracteres'
+    }
+    if (!form.roleId) errors.roleId = 'Selecciona un rol'
+    if (showMoveTiendaPicker && !form.tiendaId) errors.tiendaId = 'Selecciona una tienda'
+    return errors
+  }
+
   // Crea o actualiza el usuario según haya o no un `editUser` en edición (previa
   // confirmación explícita, para evitar altas/ediciones accidentales), y recarga el
-  // listado (respetando los filtros aplicados).
+  // listado (respetando los filtros aplicados). La confirmación solo se pide si el
+  // formulario ya pasó `validateUserForm` — no tiene sentido preguntar "¿deseas crear/
+  // guardar?" si el backend lo va a rechazar de todas formas.
   async function handleSave(e) {
     e.preventDefault()
+    const validationErrors = validateUserForm()
+    if (Object.keys(validationErrors).length > 0) {
+      // Advertencia de validación local, NO el mismo mensaje que un fallo real del
+      // backend (ver el catch de abajo) — aquí todavía no se intentó guardar nada.
+      setFieldErrors(validationErrors)
+      setError('')
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
     const confirmMsg = editUser
       ? `¿Deseas guardar los cambios de "${form.name}"?`
       : `¿Deseas crear el usuario "${form.name}"? Se le enviará una contraseña temporal a ${form.email}.`
     if (!(await confirmDialog(confirmMsg, { confirmText: editUser ? 'Guardar cambios' : 'Crear', danger: false }))) return
     setLoading(true)
     setError('')
+    setFieldErrors({})
     try {
       // tiendaId viaja como número solo cuando de verdad hay un selector visible para
       // elegirla (showMoveTiendaPicker) — de lo contrario se manda `undefined` (axios lo
@@ -162,8 +217,21 @@ export default function Users() {
       else await createUser(payload)
       setShowModal(false)
       load()
+      notify(editUser ? 'Usuario editado correctamente' : 'Usuario agregado correctamente', 'success')
     } catch (err) {
-      setError(err.response?.data?.message ?? 'Error al guardar')
+      // Errores de validación (@Valid) y de conflicto por campo (ej. correo duplicado,
+      // ver UserService#create/#update) traen { campo: mensaje } en `data` — se reparten a
+      // `fieldErrors` para mostrarse justo debajo de cada input. Cualquier otro tipo de
+      // error (regla de negocio sin campo asociado, 500, etc.) va al mensaje general.
+      const data = err.response?.data?.data
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        setFieldErrors(data)
+        setError('')
+      } else {
+        setFieldErrors({})
+        setError(err.response?.data?.message ?? 'Error al guardar')
+      }
+      notify(editUser ? 'Error al guardar el usuario' : 'Error al registrar el usuario', 'error')
     } finally { setLoading(false) }
   }
 
@@ -356,14 +424,20 @@ export default function Users() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">{editUser ? 'Editar usuario' : 'Nuevo usuario'}</h3>
+            {/* Sin `required`/`type="email"` nativos a propósito (ver validateUserForm):
+                el globo del navegador se disparaba antes de que este formulario corriera,
+                tapando nuestro propio manejo de errores. */}
             <form onSubmit={handleSave} className="space-y-3">
-              <div><label className="text-xs font-medium text-gray-600">Nombre *</label>
-                <input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-              <div><label className="text-xs font-medium text-gray-600">Email *</label>
-                <input className="input" type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+              <div><label className="text-xs font-medium text-gray-600">Nombre <span className={fieldErrors.name ? 'text-red-600' : ''}>*</span></label>
+                <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                {fieldErrors.name && <p className="text-red-600 text-xs mt-1">{fieldErrors.name}</p>}</div>
+              <div><label className="text-xs font-medium text-gray-600">Email <span className={fieldErrors.email ? 'text-red-600' : ''}>*</span></label>
+                <input className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                {fieldErrors.email && <p className="text-red-600 text-xs mt-1">{fieldErrors.email}</p>}</div>
               {editUser ? (
                 <div><label className="text-xs font-medium text-gray-600">Contraseña (dejar vacío para no cambiar)</label>
                   <input className="input" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                  {fieldErrors.password && <p className="text-red-600 text-xs mt-1">{fieldErrors.password}</p>}
                   <p className="text-xs text-gray-400 mt-1">Si la cambias aquí, se le pedirá elegir una nueva la próxima vez que inicie sesión.</p>
                 </div>
               ) : (
@@ -371,14 +445,15 @@ export default function Users() {
                   📧 Se le va a enviar una contraseña temporal por correo, y se le pedirá cambiarla al iniciar sesión por primera vez.
                 </p>
               )}
-              <div><label className="text-xs font-medium text-gray-600">Rol *</label>
-                <select className="input" required value={form.roleId} onChange={(e) => setForm({ ...form, roleId: e.target.value })}>
-                  <option value="" disabled>Selecciona un rol</option>
+              <div><label className="text-xs font-medium text-gray-600">Rol <span className={fieldErrors.roleId ? 'text-red-600' : ''}>*</span></label>
+                <select className="input" value={form.roleId} onChange={(e) => setForm({ ...form, roleId: e.target.value })}>
+                  <option value="">Selecciona un rol</option>
                   {/* Sin tienda = rol de plataforma (SUPERVISOR); se distingue en el label
                       por si ya existe un rol personalizado con el mismo nombre en esta
                       tienda (el nombre de un rol no es único entre plataforma y tiendas). */}
                   {assignableRoles.map((r) => <option key={r.id} value={r.id}>{r.name}{!r.tienda ? ' (plataforma)' : ''}</option>)}
-                </select></div>
+                </select>
+                {fieldErrors.roleId && <p className="text-red-600 text-xs mt-1">{fieldErrors.roleId}</p>}</div>
               {showSupervisorTiendaPicker && (
                 <div>
                   <label className="text-xs font-medium text-gray-600">¿Qué tiendas va a administrar? *</label>
@@ -403,17 +478,18 @@ export default function Users() {
               )}
               {showMoveTiendaPicker && (
                 <div>
-                  <label className="text-xs font-medium text-gray-600">Tienda *</label>
-                  <select className="input" required value={form.tiendaId} onChange={(e) => setForm({ ...form, tiendaId: e.target.value })}>
+                  <label className="text-xs font-medium text-gray-600">Tienda <span className={fieldErrors.tiendaId ? 'text-red-600' : ''}>*</span></label>
+                  <select className="input" value={form.tiendaId} onChange={(e) => setForm({ ...form, tiendaId: e.target.value })}>
                     <option value="" disabled>Selecciona una tienda</option>
                     {allTiendas.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
+                  {fieldErrors.tiendaId && <p className="text-red-600 text-xs mt-1">{fieldErrors.tiendaId}</p>}
                   <p className="text-xs text-gray-400 mt-1">
                     Si tiene un corte de caja abierto, primero debe cerrarlo antes de poder moverlo a otra tienda.
                   </p>
                 </div>
               )}
-              {error && <p className="text-red-600 text-sm">{error}</p>}
+              {error && <p className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</p>}
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary" disabled={loading}>{loading ? 'Guardando...' : 'Guardar'}</button>

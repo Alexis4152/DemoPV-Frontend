@@ -2,7 +2,12 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { forgotPassword } from '../api/auth'
 import { applyDefaultBrand } from '../utils/theme'
+import { useNotify } from '../context/NotifyContext'
 import logo from '../assets/logo.png'
+
+// Mismo patrón simple que el resto de la app para validar formato de correo del lado del
+// cliente — no reemplaza al @Email real del backend, solo adelanta el error más común.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /**
  * Pantalla pública "Olvidé mi contraseña": captura el correo del usuario y pide al
@@ -14,10 +19,13 @@ import logo from '../assets/logo.png'
  * sin distinguir ambos casos.
  */
 export default function ForgotPassword() {
+  const { notify } = useNotify()
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  // Solo al dar clic en "Enviar enlace" — mismo patrón que Login/Usuarios/Roles.
+  const [emailError, setEmailError] = useState('')
 
   useEffect(() => {
     applyDefaultBrand()
@@ -25,6 +33,11 @@ export default function ForgotPassword() {
 
   async function handleSubmit(e) {
     e.preventDefault()
+    // Sin type="email"/required nativos (ver el JSX de abajo) — esto es lo único que
+    // valida antes de mandar la solicitud.
+    if (!email.trim()) { setEmailError('El correo es obligatorio'); notify('Revisa los campos marcados en rojo', 'error'); return }
+    if (!EMAIL_RE.test(email.trim())) { setEmailError('El correo no tiene un formato válido'); notify('Revisa los campos marcados en rojo', 'error'); return }
+    setEmailError('')
     setError('')
     setMessage('')
     setLoading(true)
@@ -64,14 +77,15 @@ export default function ForgotPassword() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Correo electrónico</label>
+              {/* Sin type="email"/required nativos a propósito (ver handleSubmit). */}
               <input
-                type="email"
+                type="text"
                 className="input"
                 placeholder="admin@boutique.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
               />
+              {emailError && <p className="text-red-600 text-xs mt-1">{emailError}</p>}
             </div>
 
             {error && (

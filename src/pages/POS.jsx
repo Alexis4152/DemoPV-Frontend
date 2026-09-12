@@ -11,6 +11,10 @@ import { useAuth } from '../context/AuthContext'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
+// Mismo patrón simple que Users.jsx para validar formato de correo del lado del cliente —
+// no reemplaza al @Email real del backend, solo adelanta el error más común.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 /**
  * Página "Punto de Venta" (POS): pantalla operativa donde el cajero busca/escanea
  * productos, arma el carrito, elige la forma de pago y cobra. Es el flujo central del
@@ -445,9 +449,19 @@ export default function POS() {
   // En efectivo, cobrar exige un monto recibido válido que alcance para cubrir el total —
   // el backend vuelve a validar esto de todas formas, esta es solo la barrera de UI.
   const cashAmountMissing = paymentMethod === 'CASH' && (change === null || change < 0)
+  // Mismo límite que Sale.amountReceived en el backend (NUMERIC(12,2), ver SaleRequest) —
+  // sin esto, un monto absurdamente grande pasaba hasta el backend y tronaba con un error
+  // crudo en vez de un mensaje claro (mismo caso que ya se resolvió en Inventario).
+  const amountExceedsLimit = paymentMethod === 'CASH' && amountReceivedNum != null && amountReceivedNum > 9999999999.99
   // Ticket digital exige correo del cliente (es el único medio de entrega en ese modo,
   // a diferencia del físico donde el correo es opcional).
   const digitalEmailMissing = ticketType === 'digital' && !customerEmail.trim()
+  // Nombre y correo del cliente son SIEMPRE opcionales (se puede vender sin capturar
+  // ninguno de los dos) — estos chequeos solo importan cuando sí se escribió algo. Máximos
+  // alineados a sales.customer_name/customer_email VARCHAR(150) en el backend (SaleRequest).
+  const customerNameTooLong = customerName.length > 150
+  const customerEmailTooLong = customerEmail.length > 150
+  const customerEmailInvalid = customerEmail.trim() !== '' && !EMAIL_RE.test(customerEmail.trim())
 
   /** Cambia el método de pago, limpiando el monto recibido si ya no aplica (no es CASH). */
   function handlePaymentMethodChange(value) {
@@ -478,7 +492,8 @@ export default function POS() {
    * `customerEmail`), que en este modo es obligatorio (`digitalEmailMissing`).
    */
   async function handleCheckout() {
-    if (cart.length === 0 || !cashCut || cashAmountMissing || digitalEmailMissing) return
+    if (cart.length === 0 || !cashCut || cashAmountMissing || amountExceedsLimit || digitalEmailMissing
+      || customerNameTooLong || customerEmailTooLong || customerEmailInvalid) return
     if (!(await confirmDialog(`¿Deseas realizar esta venta por ${fmt(subtotal)}?`, { confirmText: 'Realizar venta', danger: false }))) return
     setLoading(true)
     setError('')
@@ -838,20 +853,30 @@ export default function POS() {
               <label className="text-xs font-medium text-gray-600">Cliente (opcional)</label>
               <input className="input mt-1" placeholder="Nombre del cliente" value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)} />
+              {customerNameTooLong && (
+                <p className="text-xs text-red-500 mt-1">El nombre no puede tener más de 150 caracteres</p>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">
                 Correo para enviar el ticket {ticketType === 'digital' ? <span className="text-red-500">*</span> : '(opcional)'}
               </label>
+              {/* Sin type="email" ni required nativos a propósito: el navegador metía su
+                  propio globo de validación de formato antes de que este formulario
+                  alcanzara a correr, tapando nuestro manejo de errores de abajo. */}
               <input
-                className="input mt-1" type="email" placeholder="cliente@correo.com"
-                required={ticketType === 'digital'}
+                className="input mt-1" type="text" placeholder="cliente@correo.com"
                 value={customerEmail}
                 onChange={(e) => setCustomerEmail(e.target.value)}
               />
-              {digitalEmailMissing && (
+              <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, cliente@outlook.com</p>
+              {digitalEmailMissing ? (
                 <p className="text-xs text-red-500 mt-1">El ticket digital se manda por correo, captura uno para poder cobrar.</p>
-              )}
+              ) : customerEmailInvalid ? (
+                <p className="text-xs text-red-500 mt-1">El correo no tiene un formato válido</p>
+              ) : customerEmailTooLong ? (
+                <p className="text-xs text-red-500 mt-1">El correo no puede tener más de 150 caracteres</p>
+              ) : null}
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Método de pago</label>
@@ -875,16 +900,19 @@ export default function POS() {
                   onChange={(e) => setAmountReceived(e.target.value)}
                   disabled={cart.length === 0}
                 />
-                {cart.length > 0 && amountReceived !== '' && (
+                {amountExceedsLimit && (
+                  <p className="text-red-600 text-xs mt-1">El número es excesivamente grande — el máximo permitido es 9,999,999,999.99</p>
+                )}
+                {!amountExceedsLimit && cart.length > 0 && amountReceived !== '' && (
                   change != null && change >= 0 ? (
-                    <div className="mt-2 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 text-center">
+                    <div className="mt-2 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 text-center overflow-hidden">
                       <p className="text-xs font-semibold text-green-700 uppercase tracking-wide">Cambio a entregar</p>
-                      <p className="text-3xl font-bold text-green-700 mt-0.5">{fmt(change)}</p>
+                      <p className="font-bold text-green-700 text-3xl mt-0.5 break-words">{fmt(change)}</p>
                     </div>
                   ) : (
-                    <div className="mt-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-center">
+                    <div className="mt-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-center overflow-hidden">
                       <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Falta por cobrar</p>
-                      <p className="text-3xl font-bold text-red-600 mt-0.5">{fmt(subtotal - amountReceivedNum)}</p>
+                      <p className="font-bold text-red-600 text-3xl mt-0.5 break-words">{fmt(subtotal - amountReceivedNum)}</p>
                     </div>
                   )
                 )}
@@ -911,13 +939,17 @@ export default function POS() {
           <button
             className="btn-primary w-full py-3 text-base disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={handleCheckout}
-            disabled={cart.length === 0 || loading || !cashCut || cashAmountMissing || digitalEmailMissing}
-            title={!cashCut ? 'Abre un corte de caja para poder cobrar' : cashAmountMissing ? 'Captura cuánto pagó el cliente en efectivo' : digitalEmailMissing ? 'Captura el correo del cliente para el ticket digital' : undefined}
+            disabled={cart.length === 0 || loading || !cashCut || cashAmountMissing || amountExceedsLimit || digitalEmailMissing
+              || customerNameTooLong || customerEmailTooLong || customerEmailInvalid}
+            title={!cashCut ? 'Abre un corte de caja para poder cobrar' : amountExceedsLimit ? 'El monto capturado es excesivamente grande' : cashAmountMissing ? 'Captura cuánto pagó el cliente en efectivo' : digitalEmailMissing ? 'Captura el correo del cliente para el ticket digital' : customerEmailInvalid ? 'El correo capturado no es válido' : (customerNameTooLong || customerEmailTooLong) ? 'Revisa los campos marcados en rojo' : undefined}
           >
             {loading ? 'Procesando...'
               : !cashCut ? 'Abre un corte para cobrar'
               : digitalEmailMissing ? 'Captura el correo del cliente'
+              : amountExceedsLimit ? 'El monto es excesivamente grande'
               : cashAmountMissing ? 'Captura el monto recibido'
+              : customerEmailInvalid ? 'Revisa el correo del cliente'
+              : (customerNameTooLong || customerEmailTooLong) ? 'Revisa los campos marcados en rojo'
               : `Cobrar ${fmt(subtotal)}`}
           </button>
         </div>

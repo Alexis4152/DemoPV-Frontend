@@ -33,7 +33,13 @@ export default function Roles() {
   const [showModal, setShowModal] = useState(false)
   const [editRole, setEditRole] = useState(null)
   const [form, setForm] = useState(emptyForm)
+  // Error general del modal de rol (reglas de negocio sin campo asociado, o cualquier
+  // fallo que no venga de @Valid).
   const [error, setError] = useState('')
+  // Errores de validación por campo, { nombreDelCampo: mensaje } — mismo formato que
+  // GlobalExceptionHandler ya manda para @Valid (ver RoleRequest en el backend). Se
+  // muestran justo debajo de su input/grupo y ponen en rojo el asterisco correspondiente.
+  const [fieldErrors, setFieldErrors] = useState({})
   const [loading, setLoading] = useState(false)
 
   // Recarga la página actual de roles (tras crear/editar/eliminar, cambiar de página/tamaño,
@@ -52,6 +58,7 @@ export default function Roles() {
     setEditRole(null)
     setForm(emptyForm)
     setError('')
+    setFieldErrors({})
     setShowModal(true)
   }
 
@@ -60,7 +67,29 @@ export default function Roles() {
     setEditRole(r)
     setForm({ name: r.name, description: r.description ?? '', sections: r.sections ?? [] })
     setError('')
+    setFieldErrors({})
     setShowModal(true)
+  }
+
+  /**
+   * Valida el formulario de rol del lado del cliente, replicando los límites que ya exige
+   * `RoleRequest` en el backend (mismos textos de mensaje) — para detectar el error ANTES
+   * de pedir confirmación de guardado (ver `handleSave`), en vez de hacerlo hasta después
+   * del viaje redondo al servidor. El backend sigue siendo quien de verdad decide.
+   *
+   * Sin `required` nativo en Nombre (ver el JSX del modal) — ese globo del navegador se
+   * disparaba antes de que este formulario alcanzara a correr, tapando nuestro propio
+   * manejo de errores.
+   *
+   * @returns {{[field: string]: string}} vacío si el formulario es válido
+   */
+  function validateRoleForm() {
+    const errors = {}
+    if (!form.name.trim()) errors.name = 'El nombre del rol es obligatorio'
+    else if (form.name.length > 40) errors.name = 'El nombre del rol no puede tener más de 40 caracteres'
+    if (form.description.length > 200) errors.description = 'La descripción no puede tener más de 200 caracteres'
+    if (form.sections.length === 0) errors.sections = 'Selecciona al menos una sección'
+    return errors
   }
 
   /**
@@ -81,21 +110,47 @@ export default function Roles() {
 
   // Crea o actualiza el rol según haya o no un `editRole` en edición (previa confirmación
   // explícita, para evitar altas/ediciones accidentales de permisos), y recarga el listado.
+  // La validación local (`validateRoleForm`) corre ANTES de pedir esa confirmación: no
+  // tiene sentido preguntar "¿deseas crear/guardar?" si el backend lo va a rechazar de
+  // todas formas.
   async function handleSave(e) {
     e.preventDefault()
+    const validationErrors = validateRoleForm()
+    if (Object.keys(validationErrors).length > 0) {
+      // Advertencia de validación local, NO el mismo mensaje que un fallo real del
+      // backend (ver el catch de abajo) — aquí todavía no se intentó guardar nada.
+      setFieldErrors(validationErrors)
+      setError('')
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
     const confirmMsg = editRole
       ? `¿Deseas guardar los cambios del rol "${form.name}"?`
       : `¿Deseas crear el rol "${form.name}"?`
     if (!(await confirmDialog(confirmMsg, { confirmText: editRole ? 'Guardar cambios' : 'Crear', danger: false }))) return
     setLoading(true)
     setError('')
+    setFieldErrors({})
     try {
       if (editRole) await updateRole(editRole.id, form)
       else await createRole(form)
       setShowModal(false)
       load()
+      notify(editRole ? 'Rol editado correctamente' : 'Rol guardado correctamente', 'success')
     } catch (err) {
-      setError(err.response?.data?.message ?? 'Error al guardar')
+      // Errores de validación (@Valid o FieldConflictException, ver GlobalExceptionHandler
+      // en el backend) traen { campo: mensaje } en `data` — se reparten a `fieldErrors`
+      // para mostrarse justo debajo de cada input. Cualquier otro tipo de error (regla de
+      // negocio sin campo asociado, 500, etc.) no tiene campo: va al mensaje general.
+      const data = err.response?.data?.data
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        setFieldErrors(data)
+        setError('')
+      } else {
+        setFieldErrors({})
+        setError(err.response?.data?.message ?? 'Error al guardar')
+      }
+      notify(editRole ? 'Error al guardar el rol' : 'Error al registrar el rol', 'error')
     } finally { setLoading(false) }
   }
 
@@ -208,18 +263,21 @@ export default function Roles() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">{editRole ? 'Editar rol' : 'Nuevo rol'}</h3>
             <form onSubmit={handleSave} className="space-y-3">
-              <div><label className="text-xs font-medium text-gray-600">Nombre *</label>
+              {/* Sin `required` nativo en Nombre a propósito (ver validateRoleForm): el
+                  globo del navegador se disparaba antes de que este formulario corriera. */}
+              <div><label className="text-xs font-medium text-gray-600">Nombre <span className={fieldErrors.name ? 'text-red-600' : ''}>*</span></label>
                 <input
                   className="input"
-                  required
                   disabled={!!editRole?.isSystem}
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                /></div>
+                />
+                {fieldErrors.name && <p className="text-red-600 text-xs mt-1">{fieldErrors.name}</p>}</div>
               <div><label className="text-xs font-medium text-gray-600">Descripción</label>
-                <input className="input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
+                <textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                {fieldErrors.description && <p className="text-red-600 text-xs mt-1">{fieldErrors.description}</p>}</div>
               <div>
-                <label className="text-xs font-medium text-gray-600">Secciones visibles *</label>
+                <label className="text-xs font-medium text-gray-600">Secciones visibles <span className={fieldErrors.sections ? 'text-red-600' : ''}>*</span></label>
                 <div className="mt-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                   {SECTIONS.map((s) => (
                     <label key={s.code} className="flex items-center gap-2 text-sm">
@@ -233,8 +291,9 @@ export default function Roles() {
                     </label>
                   ))}
                 </div>
+                {fieldErrors.sections && <p className="text-red-600 text-xs mt-1">{fieldErrors.sections}</p>}
               </div>
-              {error && <p className="text-red-600 text-sm">{error}</p>}
+              {error && <p className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</p>}
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary" disabled={loading}>{loading ? 'Guardando...' : 'Guardar'}</button>
