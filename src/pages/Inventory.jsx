@@ -289,11 +289,17 @@ export default function Inventory() {
     setProductImages(r.data.data ?? [])
   }
 
-  /** Abre el modal de "Ajustar stock" para `p` en modo "Agregar piezas" (el modo por default tras un escaneo). */
-  function openAdjust(p) {
+  /**
+   * Abre el modal de "Ajustar stock" para `p` en modo "Agregar piezas" (el modo por
+   * default tras un escaneo). `initialQty` deja la cantidad en 1 cuando se abre a raíz de
+   * un escaneo (ese primer escaneo ya cuenta como la primera pieza — ver
+   * `handleScannedCode`); al abrirse desde el botón "Ajustar" de la tabla se deja vacía,
+   * para que el usuario teclee la cantidad a mano sin un valor de partida que no pidió.
+   */
+  function openAdjust(p, initialQty = '') {
     setAdjustModal(p)
     setAdjustDirection('IN')
-    setAdjustQty('')
+    setAdjustQty(initialQty)
     setAdjustReason('')
     setAdjustFieldErrors({})
   }
@@ -307,10 +313,22 @@ export default function Inventory() {
    * con el código ya precargado, para dar de alta sin volver a teclearlo.
    */
   async function handleScannedCode(code) {
+    // Con el modal de "Ajustar stock" ya abierto, volver a escanear el MISMO producto suma
+    // 1 a la cantidad en vez de reabrir otro modal — así se puede ajustar varias piezas
+    // seguidas con la pistola lectora sin tocar el teclado. Un código distinto se ignora
+    // con un aviso, en vez de cambiar de producto a medio ajuste.
+    if (adjustModal) {
+      if (code === adjustModal.barcode) {
+        setAdjustQty((q) => String((Number(q) || 0) + 1))
+      } else {
+        notify(`Código "${code}" no coincide con el producto que estás ajustando`, 'warning')
+      }
+      return
+    }
     const found = (await getProductByBarcode(code).catch(() => null))?.data?.data
     if (found) {
       if (isAdmin) setChoiceModal(found)
-      else openAdjust(found)
+      else openAdjust(found, '1')
     } else {
       notify(`Código "${code}" no encontrado — completa los datos para darlo de alta`, 'info')
       openNew(code)
@@ -328,11 +346,22 @@ export default function Inventory() {
     scanInputRef.current?.focus()
   }
 
-  // Mantiene al día si hay algún modal abierto (producto, ajuste, o la elección
-  // editar/ajustar), para que el listener global de escaneo no interfiera con lo que el
-  // usuario esté tecleando dentro de esos modales (p. ej. el campo código de barras del
-  // formulario de "Nuevo producto").
-  useEffect(() => { modalOpenRef.current = showModal || !!adjustModal || !!choiceModal }, [showModal, adjustModal, choiceModal])
+  // El listener global de abajo se monta una sola vez (deps `[]`, ver ese efecto) para no
+  // reinstalar el listener en cada tecla — así que su callback NO puede llamar directo a
+  // `handleScannedCode`: esa función se vuelve a crear en cada render y cerraría sobre un
+  // `adjustModal`/`isAdmin` obsoletos (siempre los del montaje inicial), por lo que un
+  // segundo escaneo con el modal de ajuste ya abierto nunca lo detectaba y reiniciaba el
+  // flujo en vez de sumar. Este ref siempre apunta a la versión más reciente.
+  const handleScannedCodeRef = useRef(handleScannedCode)
+  useEffect(() => { handleScannedCodeRef.current = handleScannedCode })
+
+  // Mantiene al día si hay algún modal abierto con campos de texto propios (producto, o la
+  // elección editar/ajustar), para que el listener global de escaneo no interfiera con lo
+  // que el usuario esté tecleando ahí (p. ej. el campo código de barras del formulario de
+  // "Nuevo producto"). El modal de "Ajustar stock" queda fuera a propósito: mientras está
+  // abierto, seguir escaneando el mismo producto debe sumar a la cantidad (ver
+  // `handleScannedCode`), no bloquearse.
+  useEffect(() => { modalOpenRef.current = showModal || !!choiceModal }, [showModal, choiceModal])
 
   // Captura de escaneo "global": igual que en el POS, una pistola lectora teclea cada
   // carácter en milisegundos y termina con Enter, mucho más rápido que una persona
@@ -359,7 +388,7 @@ export default function Inventory() {
         if (code.length < MIN_CODE_LENGTH || gap >= SCAN_GAP_MS) return
         if (document.activeElement === scanInputRef.current) return
         e.preventDefault()
-        handleScannedCode(code)
+        handleScannedCodeRef.current(code)
         return
       }
 
@@ -1057,8 +1086,13 @@ export default function Inventory() {
               <button
                 type="button"
                 className="btn-primary"
-                onClick={() => { const p = choiceModal; setChoiceModal(null); openAdjust(p) }}
+                onClick={() => { const p = choiceModal; setChoiceModal(null); openAdjust(p, '1') }}
               >➕ Ajustar stock</button>
+              <button
+                type="button"
+                className="btn-secondary text-red-600"
+                onClick={() => { const p = choiceModal; setChoiceModal(null); handleDelete(p) }}
+              >🚫 Desactivar producto</button>
             </div>
             <button type="button" className="text-sm text-gray-400 hover:text-gray-600 mt-4 w-full text-center" onClick={() => setChoiceModal(null)}>Cancelar</button>
           </div>
