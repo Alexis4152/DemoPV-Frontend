@@ -367,19 +367,93 @@ export default function POS() {
   }
 
   /**
-   * Cambia la cantidad de una línea del carrito (usado por los botones +/- de la tabla).
-   * Igual que en `addToCart`, la cantidad nunca puede bajar de 1 (para eso está
+   * Cambia la cantidad de una línea del carrito (botones +/- y el cuadro de texto de la
+   * tabla). Igual que en `addToCart`, la cantidad nunca puede bajar de 1 (para eso está
    * `removeItem`) ni superar el stock disponible que se capturó al agregar el producto;
-   * en ambos casos el cambio simplemente se ignora, sin mensaje de error.
+   * en ambos casos el cambio simplemente se topa al límite, sin mensaje de error.
    */
-  function updateQty(productId, qty) {
-    if (qty < 1) return
+  // Suma/resta `delta` a la cantidad de una línea, siempre a partir del estado más
+  // reciente (no de `item.quantity` capturado en el render) — necesario para que
+  // mantener presionado el botón (ver `startQtyHold` de abajo) acumule bien cada tick del
+  // intervalo en vez de repetir el mismo valor una y otra vez. `Number(...)` por si acaso
+  // `quantity` quedó como cadena vacía (mientras se edita el cuadro de texto, ver
+  // `handleQtyInputChange` de abajo) al momento de presionar +/-.
+  function bumpQty(productId, delta) {
     setCart((prev) => prev.map((i) => {
       if (i.productId !== productId) return i
-      if (i.stock != null && qty > i.stock) return i
+      let qty = Number(i.quantity || 0) + delta
+      if (qty < 1) qty = 1
+      if (i.stock != null && qty > i.stock) qty = i.stock
       return { ...i, quantity: qty }
     }))
   }
+
+  // Cantidad tecleada directamente (más rápido que +/- para carritos de muchas piezas,
+  // ej. 65 de una vez). Se permite vacío TEMPORALMENTE mientras se edita — si se forzara
+  // el mínimo de 1 en cada tecla, borrar el número para escribir uno nuevo se rompería
+  // (se resetearía a 1 a medio borrado). Sí se topa al stock disponible en cada tecla: como
+  // los dígitos se escriben de izquierda a derecha, cualquier prefijo del número final es
+  // menor o igual a él, así que topar antes de terminar de escribir nunca corta un dígito
+  // de más. El mínimo de 1 se corrige hasta que se sale del campo, ver `commitQtyInput`.
+  function handleQtyInputChange(productId, raw) {
+    const digits = raw.replace(/\D/g, '')
+    setCart((prev) => prev.map((i) => {
+      if (i.productId !== productId) return i
+      if (digits === '') return { ...i, quantity: '' }
+      let qty = Number(digits)
+      if (i.stock != null && qty > i.stock) qty = i.stock
+      return { ...i, quantity: qty }
+    }))
+  }
+
+  // Al salir del cuadro (blur) o presionar Enter: si quedó vacío o en 0, regresa a 1 — no
+  // se puede dejar una línea en 0 piezas, para eso está el botón de quitar la línea (✕).
+  function commitQtyInput(productId) {
+    setCart((prev) => prev.map((i) => {
+      if (i.productId !== productId) return i
+      let qty = Number(i.quantity) || 0
+      if (qty < 1) qty = 1
+      if (i.stock != null && qty > i.stock) qty = i.stock
+      return { ...i, quantity: qty }
+    }))
+  }
+
+  // Mantener presionado +/- para subir o bajar la cantidad rápido (útil con carritos de
+  // muchas piezas, ej. 65 de una vez) — un botón normal no repite solo al detenerse el
+  // clic, así que se arma a mano con un timeout (arranca el repetido tras 400ms, para no
+  // duplicar el bump de un clic normal) + un intervalo (un bump cada 80ms mientras se
+  // sigue presionando). `bumpQty` ya topa en 1 y en el stock disponible, así que no hace
+  // falta detener el intervalo al llegar al límite.
+  const qtyHoldRef = useRef({ timeout: null, interval: null, repeated: false })
+
+  function clearQtyHold() {
+    clearTimeout(qtyHoldRef.current.timeout)
+    clearInterval(qtyHoldRef.current.interval)
+    qtyHoldRef.current.timeout = null
+    qtyHoldRef.current.interval = null
+  }
+
+  function startQtyHold(productId, delta) {
+    qtyHoldRef.current.repeated = false
+    qtyHoldRef.current.timeout = setTimeout(() => {
+      qtyHoldRef.current.repeated = true
+      bumpQty(productId, delta)
+      qtyHoldRef.current.interval = setInterval(() => bumpQty(productId, delta), 80)
+    }, 400)
+  }
+
+  // Suelta el botón (mouseup/touchend): si nunca llegó a repetir (fue un clic normal),
+  // aplica el único bump que le correspondía; si ya venía repitiendo, solo detiene el
+  // intervalo sin sumar uno extra.
+  function endQtyHold(productId, delta) {
+    const wasRepeating = qtyHoldRef.current.repeated
+    clearQtyHold()
+    if (!wasRepeating) bumpQty(productId, delta)
+  }
+
+  // Por si el componente se desmonta mientras se sigue presionando (ej. el cajero navega
+  // a otra pantalla sin soltar) — evita un intervalo corriendo sobre un state ya destruido.
+  useEffect(() => clearQtyHold, [])
 
   /**
    * Quita por completo una línea del carrito. Si era la última que quedaba, también
@@ -771,12 +845,32 @@ export default function POS() {
                     <td className="px-4 py-3 text-gray-400">{item.stock}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <button className="w-6 h-6 rounded border text-gray-600 hover:bg-gray-100"
-                          onClick={() => updateQty(item.productId, item.quantity - 1)}>−</button>
-                        <span className="w-8 text-center">{item.quantity}</span>
-                        <button className="w-6 h-6 rounded border text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                        <button className="w-6 h-6 rounded border text-gray-600 hover:bg-gray-100 select-none touch-manipulation"
+                          onMouseDown={() => startQtyHold(item.productId, -1)}
+                          onMouseUp={() => endQtyHold(item.productId, -1)}
+                          onMouseLeave={clearQtyHold}
+                          onTouchStart={() => startQtyHold(item.productId, -1)}
+                          onTouchEnd={() => endQtyHold(item.productId, -1)}
+                          onTouchCancel={clearQtyHold}
+                        >−</button>
+                        <input
+                          type="text" inputMode="numeric"
+                          className="input w-12 !px-1 py-0.5 text-center"
+                          value={item.quantity}
+                          onChange={(e) => handleQtyInputChange(item.productId, e.target.value)}
+                          onBlur={() => commitQtyInput(item.productId)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                          aria-label={`Cantidad de ${item.productName}`}
+                        />
+                        <button className="w-6 h-6 rounded border text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed select-none touch-manipulation"
                           disabled={item.stock != null && item.quantity >= item.stock}
-                          onClick={() => updateQty(item.productId, item.quantity + 1)}>+</button>
+                          onMouseDown={() => startQtyHold(item.productId, 1)}
+                          onMouseUp={() => endQtyHold(item.productId, 1)}
+                          onMouseLeave={clearQtyHold}
+                          onTouchStart={() => startQtyHold(item.productId, 1)}
+                          onTouchEnd={() => endQtyHold(item.productId, 1)}
+                          onTouchCancel={clearQtyHold}
+                        >+</button>
                       </div>
                     </td>
                     <td className="px-4 py-3">
