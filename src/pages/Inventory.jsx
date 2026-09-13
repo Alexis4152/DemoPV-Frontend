@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductReservedStats,
   getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage, getSiblingStock,
+  getBulkImportTemplate, bulkImportProducts,
 } from '../api/products'
 import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
@@ -61,7 +62,7 @@ const NEW_CATEGORY_VALUE = '__new__'
  * producto" con el código ya precargado, para dar de alta sin volver a teclearlo.
  */
 export default function Inventory() {
-  const { isAdmin } = useAuth()
+  const { isAdmin, isSuperAdmin } = useAuth()
   const { notify, confirmDialog } = useNotify()
   // Permite llegar con el filtro ya aplicado desde afuera (ej. la tarjeta "Stock bajo" del
   // Dashboard enlaza a `/inventory?availability=lowStock`). Solo se lee al montar — un
@@ -128,6 +129,13 @@ export default function Inventory() {
   // cualquier rol, no solo ADMIN: es una consulta de solo lectura entre sucursales del
   // mismo Supervisor, útil para cualquiera que atienda al cliente en el mostrador.
   const [showSiblingStock, setShowSiblingStock] = useState(false)
+  // Modal "Carga masiva" (solo SUPER_ADMIN, ver isSuperAdmin) — `bulkImportResult` queda
+  // null mientras no se ha subido nada; una vez subido, se queda con el resumen (creados/
+  // errores) para mostrarlo dentro del mismo modal hasta que lo cierren.
+  const [bulkImportModal, setBulkImportModal] = useState(false)
+  const [bulkImportFile, setBulkImportFile] = useState(null)
+  const [bulkImporting, setBulkImporting] = useState(false)
+  const [bulkImportResult, setBulkImportResult] = useState(null)
   const scanInputRef = useRef(null)
   const modalOpenRef = useRef(false)
 
@@ -361,7 +369,7 @@ export default function Inventory() {
   // "Nuevo producto"). El modal de "Ajustar stock" queda fuera a propósito: mientras está
   // abierto, seguir escaneando el mismo producto debe sumar a la cantidad (ver
   // `handleScannedCode`), no bloquearse.
-  useEffect(() => { modalOpenRef.current = showModal || !!choiceModal }, [showModal, choiceModal])
+  useEffect(() => { modalOpenRef.current = showModal || !!choiceModal || bulkImportModal }, [showModal, choiceModal, bulkImportModal])
 
   // Captura de escaneo "global": igual que en el POS, una pistola lectora teclea cada
   // carácter en milisegundos y termina con Enter, mucho más rápido que una persona
@@ -404,17 +412,18 @@ export default function Inventory() {
   // Cierra con ESC el modal que esté abierto (producto, ajuste, elección o descuento
   // masivo), descartando lo capturado — mismo comportamiento que el botón "Cancelar" de cada uno.
   useEffect(() => {
-    if (!showModal && !adjustModal && !choiceModal && !bulkDiscountModal) return
+    if (!showModal && !adjustModal && !choiceModal && !bulkDiscountModal && !bulkImportModal) return
     function onKeyDown(e) {
       if (e.key !== 'Escape') return
       if (showModal) setShowModal(false)
       else if (adjustModal) setAdjustModal(null)
       else if (choiceModal) setChoiceModal(null)
       else if (bulkDiscountModal) setBulkDiscountModal(false)
+      else if (bulkImportModal) setBulkImportModal(false)
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [showModal, adjustModal, choiceModal, bulkDiscountModal])
+  }, [showModal, adjustModal, choiceModal, bulkDiscountModal, bulkImportModal])
 
   /**
    * Valida el formulario de producto del lado del cliente, replicando exactamente los
@@ -720,11 +729,67 @@ export default function Inventory() {
     }
   }
 
+  /** Descarga un blob ya en memoria (plantilla o reporte de errores) con el nombre dado. */
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  /** Descarga la plantilla de carga masiva (ADMIN/SUPER_ADMIN/SUPERVISOR). */
+  async function handleDownloadTemplate() {
+    try {
+      const res = await getBulkImportTemplate()
+      downloadBlob(res.data, 'plantilla-carga-masiva-productos.xlsx')
+    } catch (err) {
+      notify('No se pudo descargar la plantilla', 'error')
+    }
+  }
+
+  function openBulkImport() {
+    setBulkImportModal(true)
+    setBulkImportFile(null)
+    setBulkImportResult(null)
+  }
+
+  /**
+   * Sube el archivo de carga masiva y se queda con el resultado (no cierra el modal solo):
+   * el admin necesita ver el resumen de creados/errores antes de decidir qué hacer.
+   */
+  async function handleBulkImportSubmit(e) {
+    e.preventDefault()
+    if (!bulkImportFile) return
+    setBulkImporting(true)
+    try {
+      const res = await bulkImportProducts(bulkImportFile)
+      setBulkImportResult(res.data.data)
+      reloadAll()
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudo procesar el archivo', 'error')
+    } finally {
+      setBulkImporting(false)
+    }
+  }
+
+  /** Decodifica el Excel de errores (viene en base64 dentro de la misma respuesta) y lo descarga. */
+  function handleDownloadErrorReport() {
+    const bytes = Uint8Array.from(atob(bulkImportResult.errorReportBase64), (c) => c.charCodeAt(0))
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    downloadBlob(blob, 'errores-carga-masiva-productos.xlsx')
+  }
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Inventario</h2>
-        {isAdmin && <button className="btn-primary" onClick={() => openNew()}>+ Nuevo producto</button>}
+        <div className="flex flex-wrap gap-2">
+          {isAdmin && <button className="btn-secondary text-sm" onClick={handleDownloadTemplate}>⬇️ Plantilla de carga masiva</button>}
+          {isSuperAdmin && <button className="btn-secondary text-sm" onClick={openBulkImport}>📤 Carga masiva</button>}
+          {isAdmin && <button className="btn-primary" onClick={() => openNew()}>+ Nuevo producto</button>}
+        </div>
       </div>
 
       {adjustNotice && (
@@ -1203,6 +1268,70 @@ export default function Inventory() {
       )}
 
       {showSiblingStock && <SiblingStockModal onClose={() => setShowSiblingStock(false)} />}
+
+      {/* Carga masiva de productos por Excel — solo SUPER_ADMIN (ver el botón que lo abre). */}
+      {bulkImportModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setBulkImportModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-1">Carga masiva de productos</h3>
+
+            {!bulkImportResult ? (
+              <>
+                <p className="text-sm text-gray-500 mb-4">
+                  Sube un Excel con el mismo formato que la plantilla — cada fila válida da de alta un producto nuevo.
+                  Un código de barras repetido (contra el catálogo o dentro del mismo archivo) se reporta como error,
+                  nunca actualiza el producto existente.
+                </p>
+                <form onSubmit={handleBulkImportSubmit} className="space-y-3">
+                  <input
+                    type="file" accept=".xlsx"
+                    onChange={(e) => setBulkImportFile(e.target.files?.[0] || null)}
+                    className="text-sm"
+                  />
+                  <div className="flex gap-2 justify-end pt-2">
+                    <button type="button" className="btn-secondary" onClick={() => setBulkImportModal(false)} disabled={bulkImporting}>Cancelar</button>
+                    <button type="submit" className="btn-primary" disabled={!bulkImportFile || bulkImporting}>
+                      {bulkImporting ? 'Procesando...' : 'Subir archivo'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-700 mb-1">
+                  <span className="font-semibold text-green-700">{bulkImportResult.created}</span> producto{bulkImportResult.created === 1 ? '' : 's'} creado{bulkImportResult.created === 1 ? '' : 's'}
+                  {bulkImportResult.errorCount > 0 && (
+                    <> — <span className="font-semibold text-red-600">{bulkImportResult.errorCount}</span> con error</>
+                  )}
+                </p>
+                {bulkImportResult.errorCount > 0 && (
+                  <div className="mt-3 space-y-1.5 max-h-64 overflow-y-auto">
+                    {bulkImportResult.errors.map((e, i) => (
+                      <div key={i} className="text-xs bg-red-50 text-red-700 rounded px-3 py-2">
+                        <span className="font-semibold">Fila {e.row}:</span> {e.message}
+                      </div>
+                    ))}
+                    {bulkImportResult.errorCount > bulkImportResult.errors.length && (
+                      <p className="text-xs text-gray-400 pt-1">
+                        y {bulkImportResult.errorCount - bulkImportResult.errors.length} error{bulkImportResult.errorCount - bulkImportResult.errors.length === 1 ? '' : 'es'} más — descarga el reporte completo abajo.
+                      </p>
+                    )}
+                  </div>
+                )}
+                <div className="flex gap-2 justify-end pt-4">
+                  {bulkImportResult.errorReportBase64 && (
+                    <button type="button" className="btn-secondary text-sm mr-auto" onClick={handleDownloadErrorReport}>
+                      ⬇️ Descargar reporte de errores
+                    </button>
+                  )}
+                  <button type="button" className="btn-secondary" onClick={openBulkImport}>Cargar otro archivo</button>
+                  <button type="button" className="btn-primary" onClick={() => setBulkImportModal(false)}>Cerrar</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

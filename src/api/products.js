@@ -136,3 +136,26 @@ export const setPrimaryProductImage = (id, imageId) => api.put(`/products/${id}/
  */
 export const deleteProductImage = (id, imageId) => api.delete(`/products/${id}/images/${imageId}`)
 
+// ── Carga masiva de productos por Excel ────────────────────────────────────────────────
+
+/**
+ * Descarga la plantilla (.xlsx) de carga masiva de productos, con las columnas esperadas
+ * y una fila de ejemplo. Disponible para ADMIN/SUPER_ADMIN/SUPERVISOR.
+ * @returns {Promise} Respuesta de axios con el archivo en `data` (blob).
+ */
+export const getBulkImportTemplate = () => api.get('/products/bulk-import/template', { responseType: 'blob' })
+
+/**
+ * Sube un archivo de carga masiva de productos. Solo SUPER_ADMIN. Crea un producto por
+ * cada fila válida y reporta el resto como errores, sin tumbar la carga completa por una
+ * sola fila mala — ver `data.errors` (primeros 10) y `data.errorReportBase64` (el Excel
+ * completo de errores en base64, solo si hubo más de 10).
+ * @param {File} file Archivo .xlsx con el mismo formato que la plantilla.
+ * @returns {Promise} Respuesta de axios con el resumen de la carga.
+ */
+export const bulkImportProducts = (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post('/products/bulk-import', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+}
+
