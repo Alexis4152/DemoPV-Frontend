@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { getSales, cancelSale } from '../api/sales'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
+import { printSaleTicket } from '../utils/printer'
+import useEscapeClose from '../hooks/useEscapeClose'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
@@ -18,74 +21,89 @@ const EMPTY_FILTERS = { from: '', to: '', customerName: '', paymentMethod: '', s
  * estado, ver el detalle (partidas y totales) de una venta, y — solo administradores —
  * cancelarla.
  *
- * Patrón de filtros + paginación (se repite igual en otras páginas de listado, como
- * CashCuts): existen dos copias del estado de filtros, `filters` (lo que el usuario va
- * tecleando en el formulario) y `appliedFilters` (lo que realmente se envía al backend).
- * Solo al enviar el formulario (`handleApplyFilters`) se copian los `filters` a
- * `appliedFilters`, lo que dispara la recarga vía el `useEffect` de abajo; así se evita
- * pegarle a la API en cada tecleo. La paginación es server-side: `page`/`size` viajan como
- * query params y el backend responde `{content, page, size, totalElements, totalPages}`;
- * el rango "X–Y de Z" que se muestra en el pie de la tabla se calcula localmente a partir
- * de esos totales.
+ * Filtros: aplican solos al cambiar cualquier campo (mismo patrón que Apartados.jsx/
+ * Inventory.jsx) — el único con debounce de 250ms es el de texto libre ("Cliente"), para
+ * no pegarle a la API en cada tecla; fecha/método/estado disparan de inmediato, son
+ * cambios discretos. La paginación es server-side: `page`/`size` viajan como query params
+ * y el backend responde `{content, page, size, totalElements, totalPages}`; el rango
+ * "X–Y de Z" que se muestra en el pie de la tabla se calcula localmente a partir de esos
+ * totales.
  *
  * Cancelar una venta (`handleCancel`) es una operación destructiva en términos de negocio
  * (revierte el stock de los productos vendidos) por lo que se pide confirmación explícita
  * y solo está disponible para ventas `COMPLETED`; la fila nunca se borra, el backend solo
  * le cambia el `status` a `CANCELLED` (por eso sigue apareciendo en el listado).
+ *
+ * Permite llegar con un rango de fechas ya aplicado desde afuera (ej. la tarjeta "Ventas
+ * del mes" del Dashboard enlaza a `/sales?from=YYYY-MM-DD&to=YYYY-MM-DD`) — se lee una
+ * sola vez al montar.
  */
 export default function Sales() {
   const { isAdmin } = useAuth()
-  const { confirmDialog } = useNotify()
-  const [filters, setFilters] = useState(EMPTY_FILTERS)
-  const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
+  const { notify, confirmDialog } = useNotify()
+  const [searchParams] = useSearchParams()
+  const initialFilters = () => ({
+    ...EMPTY_FILTERS,
+    from: searchParams.get('from') || EMPTY_FILTERS.from,
+    to: searchParams.get('to') || EMPTY_FILTERS.to,
+  })
+  const [filters, setFilters] = useState(initialFilters)
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Id de la venta que se está reimprimiendo en este momento (o null) — deshabilita solo
+  // el botón de esa fila mientras QZ Tray manda el ticket, sin bloquear el resto de la tabla.
+  const [printingId, setPrintingId] = useState(null)
+
+  // Cierra con ESC el modal de detalle de venta (mismo efecto que la ✕).
+  useEscapeClose(!!detail, () => setDetail(null))
 
   /**
-   * Trae la página actual de ventas usando `page`/`size` y los `appliedFilters` vigentes.
-   * Las fechas se envían como rango de día completo: `from` se ancla a las 00:00:00 y `to`
-   * a las 23:59:59 para incluir todas las ventas del día seleccionado, no solo la medianoche.
-   * Se re-ejecuta automáticamente (ver `useEffect` de abajo) cada vez que cambian `page`,
-   * `size` o `appliedFilters`.
+   * Trae la página actual de ventas usando `page`/`size` y los `filters` vigentes. Las
+   * fechas se envían como rango de día completo: `from` se ancla a las 00:00:00 y `to` a
+   * las 23:59:59 para incluir todas las ventas del día seleccionado, no solo la medianoche.
+   * Se re-ejecuta automáticamente (ver el `useEffect` de abajo, con debounce de 250ms sobre
+   * el texto) cada vez que cambia cualquiera de esos valores.
    */
   function load() {
     setLoading(true)
     const params = {
       page,
       size,
-      customerName: appliedFilters.customerName || undefined,
-      paymentMethod: appliedFilters.paymentMethod || undefined,
-      status: appliedFilters.status || undefined,
-      from: appliedFilters.from ? `${appliedFilters.from}T00:00:00` : undefined,
-      to: appliedFilters.to ? `${appliedFilters.to}T23:59:59` : undefined,
+      customerName: filters.customerName || undefined,
+      paymentMethod: filters.paymentMethod || undefined,
+      status: filters.status || undefined,
+      from: filters.from ? `${filters.from}T00:00:00` : undefined,
+      to: filters.to ? `${filters.to}T23:59:59` : undefined,
     }
     getSales(params)
       .then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [page, size, appliedFilters])
+  // Debounce de 250ms sobre el texto de "Cliente" (mismo patrón que Inventory.jsx/POS.jsx),
+  // para no pegarle a la API en cada tecla; fecha/método/estado/página disparan de inmediato.
+  useEffect(() => {
+    const t = setTimeout(load, 250)
+    return () => clearTimeout(t)
+  }, [page, size, filters])
 
-  /**
-   * Aplica los filtros capturados en el formulario: los copia a `appliedFilters` (lo que
-   * dispara la recarga) y reinicia la paginación a la primera página, para no quedar
-   * "atorado" en una página que ya no existe con el nuevo filtro.
-   */
-  function handleApplyFilters(e) {
-    e.preventDefault()
+  /** Actualiza un filtro y reinicia a la primera página, para no quedar "atorado" en una
+   *  página que ya no existe con el nuevo filtro. */
+  function setFilter(patch) {
+    setFilters((prev) => ({ ...prev, ...patch }))
     setPage(0)
-    setAppliedFilters(filters)
   }
 
-  /** Limpia filtros capturados y aplicados, y vuelve a la primera página. */
+  /** Limpia todos los filtros y vuelve a la primera página. */
   function handleClearFilters() {
     setFilters(EMPTY_FILTERS)
-    setAppliedFilters(EMPTY_FILTERS)
     setPage(0)
   }
+
+  const hasFilters = filters.from || filters.to || filters.customerName || filters.paymentMethod || filters.status
 
   /**
    * Cancela una venta completada. Pide confirmación porque la cancelación revierte el
@@ -101,6 +119,24 @@ export default function Sales() {
     load()
   }
 
+  /**
+   * Reimprime el ticket de una venta ya registrada (misma impresora térmica vía QZ Tray
+   * que usa el POS al cobrar — ver `utils/printer.js`). Pide confirmación primero porque,
+   * a diferencia del ticket que se imprime justo al cobrar, esto es una reimpresión
+   * deliberada y gasta papel de la térmica.
+   */
+  async function handleReprint(id) {
+    if (!(await confirmDialog('¿Reimprimir el ticket de esta venta? Se usará papel de la impresora.', { confirmText: 'Reimprimir' }))) return
+    setPrintingId(id)
+    try {
+      await printSaleTicket(id)
+    } catch (err) {
+      notify(err.message ?? 'No se pudo imprimir el ticket', 'error')
+    } finally {
+      setPrintingId(null)
+    }
+  }
+
   const sales = pageData.content ?? []
   const totalPages = pageData.totalPages ?? 0
   const totalElements = pageData.totalElements ?? 0
@@ -113,41 +149,42 @@ export default function Sales() {
     <div>
       <h2 className="text-2xl font-bold text-gray-900 mb-6">Ventas</h2>
 
-      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
-        <div>
+      {/* flex-wrap, sin botón "Filtrar": cada campo aplica solo al cambiar (mismo patrón
+          que Apartados.jsx/Inventory.jsx) — "Limpiar filtros" solo aparece si hay algo que limpiar. */}
+      <div className="card mb-4 flex flex-wrap gap-3 items-end">
+        <div className="w-36">
           <label className="text-xs font-medium text-gray-600 block mb-1">Desde</label>
-          <input type="date" className="input" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
+          <input type="date" className="input" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} />
         </div>
-        <div>
+        <div className="w-36">
           <label className="text-xs font-medium text-gray-600 block mb-1">Hasta</label>
-          <input type="date" className="input" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
+          <input type="date" className="input" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} />
         </div>
-        <div>
+        <div className="w-44">
           <label className="text-xs font-medium text-gray-600 block mb-1">Cliente</label>
-          <input type="text" className="input" placeholder="Nombre del cliente" value={filters.customerName} onChange={(e) => setFilters({ ...filters, customerName: e.target.value })} />
+          <input type="text" className="input" placeholder="Nombre del cliente" value={filters.customerName} onChange={(e) => setFilter({ customerName: e.target.value })} />
         </div>
-        <div>
+        <div className="w-40">
           <label className="text-xs font-medium text-gray-600 block mb-1">Método</label>
-          <select className="input" value={filters.paymentMethod} onChange={(e) => setFilters({ ...filters, paymentMethod: e.target.value })}>
+          <select className="input" value={filters.paymentMethod} onChange={(e) => setFilter({ paymentMethod: e.target.value })}>
             <option value="">Todos</option>
             <option value="CASH">Efectivo</option>
             <option value="CARD">Tarjeta</option>
             <option value="TRANSFER">Transferencia</option>
           </select>
         </div>
-        <div>
+        <div className="w-40">
           <label className="text-xs font-medium text-gray-600 block mb-1">Estado</label>
-          <select className="input" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
+          <select className="input" value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
             <option value="">Todos</option>
             <option value="COMPLETED">Completada</option>
             <option value="CANCELLED">Cancelada</option>
           </select>
         </div>
-        <div className="flex gap-2">
-          <button type="submit" className="btn-primary flex-1">Filtrar</button>
-          <button type="button" className="btn-secondary" onClick={handleClearFilters}>Limpiar</button>
-        </div>
-      </form>
+        {hasFilters && (
+          <button type="button" className="btn-secondary text-sm" onClick={handleClearFilters}>Limpiar filtros</button>
+        )}
+      </div>
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
@@ -176,6 +213,13 @@ export default function Sales() {
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
                     <button className="text-blue-600 hover:underline text-xs" onClick={() => setDetail(s)}>Ver</button>
+                    <button
+                      className="text-gray-500 hover:underline text-xs disabled:opacity-40 disabled:hover:no-underline"
+                      disabled={printingId === s.id}
+                      onClick={() => handleReprint(s.id)}
+                    >
+                      {printingId === s.id ? 'Imprimiendo…' : '🖨️ Reimprimir'}
+                    </button>
                     {isAdmin && s.status === 'COMPLETED' && (
                       <button className="text-red-500 hover:underline text-xs" onClick={() => handleCancel(s.id)}>Cancelar</button>
                     )}
@@ -225,8 +269,8 @@ export default function Sales() {
 
       {/* Detail modal */}
       {detail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDetail(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h3 className="text-lg font-bold">Venta #{detail.id}</h3>
@@ -243,11 +287,12 @@ export default function Sales() {
             </div>
 
             <div className="overflow-x-auto">
-            <table className="w-full text-sm mb-4 min-w-[360px]">
+            <table className="w-full text-sm mb-4 min-w-[420px]">
               <thead className="border-b border-gray-100">
                 <tr>
                   <th className="text-left py-2 text-gray-600">Producto</th>
                   <th className="text-right py-2 text-gray-600">Cant.</th>
+                  <th className="text-right py-2 text-gray-600">Descuento</th>
                   <th className="text-right py-2 text-gray-600">Subtotal</th>
                 </tr>
               </thead>
@@ -256,6 +301,7 @@ export default function Sales() {
                   <tr key={i}>
                     <td className="py-2 text-gray-800">{item.productName}</td>
                     <td className="py-2 text-right text-gray-600">{item.quantity}</td>
+                    <td className="py-2 text-right text-green-600">{item.discount > 0 ? `-${fmt(item.discount)}` : '—'}</td>
                     <td className="py-2 text-right font-medium">{fmt(item.subtotal)}</td>
                   </tr>
                 ))}
@@ -263,8 +309,18 @@ export default function Sales() {
             </table>
             </div>
 
-            <div className="border-t border-gray-100 pt-3 flex justify-between font-bold text-base">
-              <span>Total</span><span className="text-purple-700">{fmt(detail.total)}</span>
+            <div className="border-t border-gray-100 pt-3 text-sm space-y-1">
+              <div className="flex justify-between text-gray-600">
+                <span>Subtotal</span><span>{fmt(detail.subtotal)}</span>
+              </div>
+              {detail.discount > 0 && (
+                <div className="flex justify-between text-green-600">
+                  <span>Descuento</span><span>-{fmt(detail.discount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-bold text-base text-gray-900">
+                <span>Total</span><span className="text-purple-700">{fmt(detail.total)}</span>
+              </div>
             </div>
             {detail.amountReceived != null && (
               <div className="text-sm text-gray-500 mt-1">

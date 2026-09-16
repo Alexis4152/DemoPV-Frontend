@@ -9,6 +9,13 @@ import api from './axios'
 export const getCashCuts = (params) => api.get('/cash-cuts', { params })
 
 /**
+ * Cajeros distintos con al menos un corte de caja en la tienda del usuario — para poblar
+ * el filtro "Cajero" del historial, sin depender de la sección Usuarios.
+ * @returns {Promise} Respuesta de axios con `[{id, name}]`.
+ */
+export const getCashCutCashiers = () => api.get('/cash-cuts/cashiers')
+
+/**
  * Obtiene el corte de caja abierto actualmente (puede haber varios cajeros con
  * corte abierto a la vez en la misma tienda; este endpoint resuelve el del contexto actual).
  * @returns {Promise} Respuesta de axios con el corte abierto.

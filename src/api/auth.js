@@ -14,3 +14,47 @@ export const login = (data) => api.post('/auth/login', data)
  * @returns {Promise} Respuesta de axios con los datos actuales del usuario.
  */
 export const me = () => api.get('/auth/me')
+
+/**
+ * Canjea el refresh token de la cookie httpOnly por un access token nuevo. Normalmente no
+ * hace falta llamarla a mano — el interceptor de `api/axios.js` ya la dispara sola cuando
+ * cualquier petición falla con 401 por access token vencido.
+ * @returns {Promise} Respuesta de axios; `data.data.token` trae el JWT nuevo.
+ */
+export const refresh = () => api.post('/auth/refresh')
+
+/**
+ * Cierra la sesión: revoca el refresh token actual del lado servidor (además de que
+ * `AuthContext#logout` limpia el estado local). Idempotente — no falla aunque ya no
+ * hubiera sesión activa.
+ * @returns {Promise} Respuesta de axios confirmando el cierre de sesión.
+ */
+export const logout = () => api.post('/auth/logout')
+
+/**
+ * Pide el link de recuperación de contraseña para el correo dado. El backend responde
+ * siempre el mismo mensaje genérico exista o no el correo (protección contra enumeración),
+ * así que esta llamada nunca debe usarse para inferir si un correo está registrado.
+ * @param {string} email Correo del usuario que quiere recuperar su contraseña.
+ * @returns {Promise} Respuesta de axios con el mensaje genérico a mostrar.
+ */
+export const forgotPassword = (email) => api.post('/auth/forgot-password', { email })
+
+/**
+ * Completa la recuperación de contraseña con el token recibido por correo.
+ * @param {string} token Token del link (query param `?token=` de la pantalla de reset).
+ * @param {string} newPassword Nueva contraseña elegida por el usuario.
+ * @returns {Promise} Respuesta de axios confirmando el cambio.
+ */
+export const resetPassword = (token, newPassword) => api.post('/auth/reset-password', { token, newPassword })
+
+/**
+ * Cambia la contraseña del usuario ya autenticado (exige la actual como comprobante de
+ * identidad) — a diferencia de `resetPassword`, que es anónimo vía token de correo. Es lo
+ * que usa la pantalla obligatoria de "cambia tu contraseña" cuando un admin dio de alta al
+ * usuario con una temporal (`user.mustChangePassword`).
+ * @param {string} currentPassword Contraseña actual.
+ * @param {string} newPassword Nueva contraseña elegida.
+ * @returns {Promise} Respuesta de axios confirmando el cambio.
+ */
+export const changePassword = (currentPassword, newPassword) => api.post('/auth/change-password', { currentPassword, newPassword })

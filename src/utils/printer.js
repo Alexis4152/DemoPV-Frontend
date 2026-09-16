@@ -1,5 +1,6 @@
 import qz from 'qz-tray'
 import { getSaleTicketEscPos } from '../api/sales'
+import { getQzCertificate, signQzData } from '../api/qz'
 
 /**
  * Puente con la impresora térmica de tickets (USB) y el cajón de dinero (conectado por
@@ -15,20 +16,40 @@ import { getSaleTicketEscPos } from '../api/sales'
  * (https://qz.io/download/). Sin eso, imprimir/abrir el cajón desde aquí no es posible —
  * fallará con un error claro, no en silencio.
  *
- * No se configuró firma digital de certificado (eso es para distribuir a muchas
- * computadoras sin que salga ningún aviso). Con la conexión sin firmar, QZ Tray va a
- * pedirle una vez al cajero que "permita" la conexión desde este sitio — normal, se
- * puede marcar "recordar esta decisión" para que no vuelva a preguntar.
+ * Firma digital de la conexión: cada conexión se firma con el certificado/llave que expone
+ * el backend (`/api/qz/certificate`, `/api/qz/sign` — ver `QzSigningService` del backend).
+ * Sin esto, QZ Tray trata la conexión como "anónima" y el checkbox "recordar esta decisión"
+ * queda deshabilitado — le pide permiso al cajero en CADA impresión, sin poder recordarlo.
+ * Con firma (aunque el certificado sea autofirmado, no hace falta comprarlo a QZ), QZ Tray
+ * sigue mostrando "sitio no confiable" la primera vez, pero el cajero SÍ puede marcar
+ * "recordar esta decisión" de forma permanente.
  */
 
 let securityConfigured = false
 
 function ensureSecurityConfigured() {
   if (securityConfigured) return
-  // Sin certificado/firma: QZ Tray simplemente le pedirá una vez al usuario que autorice
-  // la conexión desde este sitio, en vez de aceptarla en automático y sin aviso.
-  qz.security.setCertificatePromise((resolve) => resolve())
-  qz.security.setSignaturePromise(() => (resolve) => resolve())
+  // { rejectOnFailure: true }: por default, si esta promesa falla, QZ Tray NO avisa — cae
+  // en silencio a una conexión anónima (mismo síntoma que sin firmar en absoluto). Con
+  // rejectOnFailure el error se propaga de verdad, para poder ver qué está fallando en vez
+  // de adivinar por qué "no queda memorizada la autorización".
+  qz.security.setCertificatePromise((resolve, reject) => {
+    getQzCertificate()
+      .then((r) => resolve(r.data.data))
+      .catch((err) => {
+        console.error('[QZ] No se pudo obtener el certificado de firma', err)
+        reject(err)
+      })
+  }, { rejectOnFailure: true })
+  qz.security.setSignatureAlgorithm('SHA512')
+  qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
+    signQzData(toSign)
+      .then((r) => resolve(r.data.data))
+      .catch((err) => {
+        console.error('[QZ] No se pudo firmar la conexión', err)
+        reject(err)
+      })
+  })
   securityConfigured = true
 }
 
@@ -97,8 +118,8 @@ export async function printSaleTicket(saleId) {
   const data = [
     {
       type: 'raw',
-      format: 'hex',
-      flavor: 'plain',
+      format: 'command',
+      flavor: 'hex',
       data: hex,
     },
   ]

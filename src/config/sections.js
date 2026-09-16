@@ -26,6 +26,7 @@ export const SECTIONS = [
   { code: 'INVENTORY', label: 'Inventario', icon: '📦', to: '/inventory' },
   { code: 'SALES', label: 'Ventas', icon: '📋', to: '/sales' },
   { code: 'CASH_CUTS', label: 'Cortes de Caja', icon: '💰', to: '/cash-cuts' },
+  { code: 'APARTADOS', label: 'Apartados', icon: '🛍️', to: '/apartados' },
   { code: 'REPORTS', label: 'Reportes', icon: '📈', to: '/reports' },
   { code: 'USERS', label: 'Usuarios', icon: '👥', to: '/users' },
   { code: 'ROLES', label: 'Roles y Permisos', icon: '🔑', to: '/roles' },

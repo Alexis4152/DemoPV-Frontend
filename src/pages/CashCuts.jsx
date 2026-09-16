@@ -1,9 +1,23 @@
 import { useEffect, useState } from 'react'
-import { getCashCuts, getOpenCashCut, getMyTodayCashCut, openCashCut, closeCashCut, getCashCutSummary } from '../api/cashCuts'
+import { getCashCuts, getOpenCashCut, getMyTodayCashCut, openCashCut, closeCashCut, getCashCutSummary, getCashCutCashiers } from '../api/cashCuts'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
+// Mismo límite que cash_cuts.opening_amount/expenses en el backend (NUMERIC(12,2), ver
+// CashCutRequest) — mismo mensaje que ya se usa en Inventario y POS para el mismo caso.
+const MAX_AMOUNT = 9999999999.99
+const EXCESS_MSG = 'El número es excesivamente grande — el máximo permitido es 9,999,999,999.99'
+// Deja escribir solo dígitos y un único punto decimal — usado en vez de type="number" en
+// Fondo inicial/Gastos adicionales: un <input type="number"> deja teclear "e" (notación
+// científica) y el navegador la normaliza solo, además de mostrar sus propios globos
+// nativos de validación (mismo caso ya resuelto en Inventory.jsx para Cantidad).
+const sanitizeDecimalInput = (raw) => {
+  let v = raw.replace(/[^0-9.]/g, '')
+  const firstDot = v.indexOf('.')
+  if (firstDot !== -1) v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '')
+  return v
+}
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 // Un corte cerrado sin `closedBy` significa que lo cerró el job automático del backend
 // (por horario configurado), no una persona; se etiqueta como "Sistema". Mientras el
@@ -11,7 +25,7 @@ const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'sho
 const closedByLabel = (c) => c.status !== 'CLOSED' ? '—' : (c.closedBy?.name ?? 'Sistema')
 
 const PAGE_SIZES = [10, 20, 50, 100]
-const EMPTY_FILTERS = { from: '', to: '', status: '' }
+const EMPTY_FILTERS = { from: '', to: '', status: '', userId: '' }
 
 /**
  * Página "Cortes de Caja": abre/cierra el corte de caja del cajero autenticado y, si es
@@ -28,18 +42,23 @@ const EMPTY_FILTERS = { from: '', to: '', status: '' }
  * - `pageData` (la tabla paginada): el historial completo, solo se carga y se muestra para
  *   administradores — un cajero normal no ve los cortes de sus compañeros.
  *
- * Patrón de filtros + paginación: igual que en Sales — `filters` es lo que se captura en
- * el formulario, `appliedFilters` es lo que realmente se envía al backend y dispara la
- * recarga; ver el JSDoc de `Sales` para el detalle completo del patrón.
+ * Filtros: aplican solos al cambiar cualquier campo (mismo patrón que Apartados.jsx/
+ * Inventory.jsx/Sales.jsx) — todos son fecha o selects, así que no hace falta debounce, se
+ * dispara de inmediato. El filtro "Cajero" se resuelve por separado (`GET
+ * /cash-cuts/cashiers`, cargado una sola vez al montar) en vez de reusar `getUsers()`: así
+ * no depende de que el ADMIN tenga habilitada la sección Usuarios, que es independiente de
+ * Cortes de Caja.
  */
 export default function CashCuts() {
   const { isAdmin } = useAuth()
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const [filters, setFilters] = useState(EMPTY_FILTERS)
-  const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
+  // Cajeros distintos con al menos un corte, para poblar el filtro "Cajero" — se carga una
+  // sola vez al montar, no depende de la página/filtros vigentes de la tabla.
+  const [cashiers, setCashiers] = useState([])
   const [openCut, setOpenCut] = useState(null)
   const [myToday, setMyToday] = useState(null)
   const [showOpen, setShowOpen] = useState(false)
@@ -48,15 +67,24 @@ export default function CashCuts() {
   const [expenses, setExpenses] = useState('')
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
+  // Errores de validación local de los modales de abrir/cerrar corte — cada uno tiene un
+  // solo campo numérico relevante, así que basta un mensaje por modal (no hace falta un
+  // objeto { campo: mensaje } completo como en formularios con varios campos).
+  const [openAmountError, setOpenAmountError] = useState('')
+  const [expensesError, setExpensesError] = useState('')
+  // A diferencia de openAmount/expenses (que sí validan en vivo, ver openAmountExceedsLimit/
+  // expensesExceedsLimit más abajo), Notas sigue el mismo patrón que Usuarios/Inventario/
+  // Roles/Categorías: solo se valida al dar clic en Abrir/Cerrar, no mientras se escribe.
+  const [notesError, setNotesError] = useState('')
   const [detail, setDetail] = useState(null)
   const [summary, setSummary] = useState(null)
 
   /**
    * Recarga los tres bloques de datos de la pantalla: el historial paginado (solo si
-   * `isAdmin`, usando `page`/`size`/`appliedFilters` — ver el patrón de filtros descrito
-   * en el JSDoc del componente), el corte abierto del usuario actual, y el corte de hoy
-   * del usuario aunque ya esté cerrado. Cada bloque atrapa sus propios errores por
-   * separado y cae a un valor vacío/null, para que un fallo en uno no tumbe a los otros.
+   * `isAdmin`, usando `page`/`size`/`filters` vigentes), el corte abierto del usuario
+   * actual, y el corte de hoy del usuario aunque ya esté cerrado. Cada bloque atrapa sus
+   * propios errores por separado y cae a un valor vacío/null, para que un fallo en uno no
+   * tumbe a los otros.
    */
   function load() {
     // el historial completo (la tabla) solo lo puede ver el administrador
@@ -64,9 +92,10 @@ export default function CashCuts() {
       const params = {
         page,
         size,
-        status: appliedFilters.status || undefined,
-        from: appliedFilters.from ? `${appliedFilters.from}T00:00:00` : undefined,
-        to: appliedFilters.to ? `${appliedFilters.to}T23:59:59` : undefined,
+        status: filters.status || undefined,
+        userId: filters.userId || undefined,
+        from: filters.from ? `${filters.from}T00:00:00` : undefined,
+        to: filters.to ? `${filters.to}T23:59:59` : undefined,
       }
       getCashCuts(params)
         .then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
@@ -77,21 +106,44 @@ export default function CashCuts() {
     getMyTodayCashCut().then((r) => setMyToday(r.data.data)).catch(() => setMyToday(null))
   }
 
-  useEffect(() => { load() }, [page, size, appliedFilters])
+  // Fecha/estado/cajero disparan de inmediato (son selects/date, no hace falta debounce).
+  useEffect(() => { load() }, [page, size, filters])
 
-  /** Aplica los filtros del formulario (historial de admin) y reinicia a la primera página. */
-  function handleApplyFilters(e) {
-    e.preventDefault()
+  // Cierra con ESC el modal que esté abierto (abrir corte, cerrar corte o detalle),
+  // descartando lo capturado — mismo efecto que "Cancelar"/la ✕ de cada uno.
+  useEffect(() => {
+    if (!showOpen && !showClose && !detail) return
+    function onKeyDown(e) {
+      if (e.key !== 'Escape') return
+      if (showOpen) setShowOpen(false)
+      else if (showClose) setShowClose(false)
+      else if (detail) setDetail(null)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [showOpen, showClose, detail])
+
+  // Lista de cajeros para el filtro — solo aplica para admin (es quien ve la tabla), y no
+  // depende de página/filtros vigentes, así que se carga una sola vez al montar.
+  useEffect(() => {
+    if (!isAdmin) return
+    getCashCutCashiers().then((r) => setCashiers(r.data.data ?? [])).catch(() => setCashiers([]))
+  }, [isAdmin])
+
+  /** Actualiza un filtro y reinicia a la primera página, para no quedar "atorado" en una
+   *  página que ya no existe con el nuevo filtro. */
+  function setFilter(patch) {
+    setFilters((prev) => ({ ...prev, ...patch }))
     setPage(0)
-    setAppliedFilters(filters)
   }
 
-  /** Limpia filtros capturados y aplicados, y vuelve a la primera página. */
+  /** Limpia todos los filtros y vuelve a la primera página. */
   function handleClearFilters() {
     setFilters(EMPTY_FILTERS)
-    setAppliedFilters(EMPTY_FILTERS)
     setPage(0)
   }
+
+  const hasFilters = filters.from || filters.to || filters.status || filters.userId
 
   /**
    * Abre un nuevo corte de caja para el usuario actual con el fondo inicial (`openAmount`)
@@ -102,6 +154,23 @@ export default function CashCuts() {
    */
   async function handleOpen(e) {
     e.preventDefault()
+    const amount = Number(openAmount) || 0
+    // Validación local ANTES del modal de confirmación — sin `required` nativo en el input
+    // (ver el JSX del modal), así que esto es lo único que impide un fondo vacío o un
+    // monto que exceda el límite de la columna en la base de datos. Cada campo se evalúa
+    // y limpia de forma INDEPENDIENTE (nunca dentro de un `if` que hace `return` del otro)
+    // — si no, el mensaje de un campo que ya quedó bien se quedaba pegado en pantalla
+    // simplemente porque el otro campo falló en ese mismo intento.
+    let hasError = false
+    if (openAmount === '') { setOpenAmountError('El fondo inicial es obligatorio'); hasError = true }
+    else { setOpenAmountError('') } // el caso "excede el límite" ya lo cubre openAmountExceedsLimit (en vivo)
+    if (openAmountExceedsLimit) hasError = true
+    // A diferencia del monto (en vivo, ver arriba), Notas solo se valida aquí, al dar clic
+    // — mismo patrón que Usuarios/Inventario/Roles/Categorías.
+    if (notes.length > 100) { setNotesError('Las notas no pueden tener más de 100 caracteres'); hasError = true }
+    else { setNotesError('') }
+    if (hasError) { notify('Revisa los campos marcados en rojo', 'error'); return }
+    if (!(await confirmDialog(`¿Deseas abrir un corte de caja con fondo inicial de ${fmt(amount)}?`, { confirmText: 'Abrir corte', danger: false }))) return
     setLoading(true)
     try {
       await openCashCut({ amount: Number(openAmount), notes })
@@ -109,8 +178,12 @@ export default function CashCuts() {
       setOpenAmount('')
       setNotes('')
       load()
+      notify('Corte de caja abierto correctamente', 'success')
     } catch (err) {
-      notify(err.response?.data?.message ?? 'Error')
+      const data = err.response?.data?.data
+      setOpenAmountError(data?.amount ?? '')
+      setNotesError(data?.notes ?? '')
+      notify(err.response?.data?.message ?? 'Error al abrir el corte', 'error')
     } finally { setLoading(false) }
   }
 
@@ -124,6 +197,8 @@ export default function CashCuts() {
   async function openCloseModal() {
     setNotes('')
     setExpenses('')
+    setExpensesError('')
+    setNotesError('')
     setSummary(null)
     setShowClose(true)
     try {
@@ -160,6 +235,13 @@ export default function CashCuts() {
   const expectedCash = summary
     ? Number(summary.openingAmount) + Number(summary.cashSales) - (Number(expenses) || 0)
     : null
+  // Derivados EN VIVO (recalculados en cada render, no solo al enviar) — mismo patrón que
+  // `amountExceedsLimit` en POS.jsx: el mensaje y el ocultamiento de "Efectivo esperado en
+  // caja" deben reaccionar mientras el cajero teclea, no hasta que le da clic a Abrir/Cerrar.
+  const openAmountNum = openAmount === '' ? null : Number(openAmount)
+  const openAmountExceedsLimit = openAmountNum != null && openAmountNum > MAX_AMOUNT
+  const expensesNum = Number(expenses) || 0
+  const expensesExceedsLimit = expensesNum > MAX_AMOUNT
 
   /**
    * Cierra el corte de caja abierto del usuario actual, enviando los gastos capturados
@@ -171,15 +253,33 @@ export default function CashCuts() {
    */
   async function handleClose(e) {
     e.preventDefault()
+    // Validación local ANTES del modal de confirmación — sin `min` nativo en el input (ver
+    // el JSX del modal), así que esto es lo único que impide un gasto que exceda el
+    // límite de la columna en la base de datos. Cada campo se evalúa y limpia de forma
+    // INDEPENDIENTE (ver mismo comentario en handleOpen) para que el mensaje de un campo
+    // ya corregido no se quede pegado solo porque el otro falló en ese intento.
+    let hasError = false
+    if (expensesExceedsLimit) hasError = true
+    else setExpensesError('') // solo limpia el error de un intento anterior si el gasto YA es válido ahora
+    // A diferencia del gasto (en vivo, ver arriba), Notas solo se valida aquí, al dar clic
+    // — mismo patrón que Usuarios/Inventario/Roles/Categorías.
+    if (notes.length > 100) { setNotesError('Las notas no pueden tener más de 100 caracteres'); hasError = true }
+    else { setNotesError('') }
+    if (hasError) { notify('Revisa los campos marcados en rojo', 'error'); return }
+    if (!(await confirmDialog(`¿Deseas cerrar el corte de caja? Efectivo esperado en caja: ${fmt(expectedCash)}`, { confirmText: 'Cerrar corte' }))) return
     setLoading(true)
     try {
-      await closeCashCut(openCut.id, { expenses: Number(expenses) || 0, notes })
+      await closeCashCut(openCut.id, { expenses: expensesNum, notes })
       setShowClose(false)
       setExpenses('')
       setNotes('')
       load()
+      notify('Corte de caja cerrado correctamente', 'success')
     } catch (err) {
-      notify(err.response?.data?.message ?? 'Error')
+      const data = err.response?.data?.data
+      setExpensesError(data?.expenses ?? '')
+      setNotesError(data?.notes ?? '')
+      notify(err.response?.data?.message ?? 'Error al cerrar el corte', 'error')
     } finally { setLoading(false) }
   }
 
@@ -190,7 +290,7 @@ export default function CashCuts() {
         {openCut ? (
           <button className="btn-danger" onClick={openCloseModal}>Cerrar corte</button>
         ) : (
-          <button className="btn-primary" onClick={() => { setShowOpen(true); setNotes('') }}>Abrir corte</button>
+          <button className="btn-primary" onClick={() => { setShowOpen(true); setNotes(''); setOpenAmountError(''); setNotesError('') }}>Abrir corte</button>
         )}
       </div>
 
@@ -235,28 +335,36 @@ export default function CashCuts() {
 
         return (
       <>
-      <form onSubmit={handleApplyFilters} className="card mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-        <div>
+      {/* flex-wrap, sin botón "Filtrar": cada campo aplica solo al cambiar (mismo patrón
+          que Apartados.jsx/Sales.jsx) — "Limpiar filtros" solo aparece si hay algo que limpiar. */}
+      <div className="card mb-4 flex flex-wrap gap-3 items-end">
+        <div className="w-36">
           <label className="text-xs font-medium text-gray-600 block mb-1">Desde</label>
-          <input type="date" className="input" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
+          <input type="date" className="input" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} />
         </div>
-        <div>
+        <div className="w-36">
           <label className="text-xs font-medium text-gray-600 block mb-1">Hasta</label>
-          <input type="date" className="input" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
+          <input type="date" className="input" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} />
         </div>
-        <div>
+        <div className="w-40">
           <label className="text-xs font-medium text-gray-600 block mb-1">Estado</label>
-          <select className="input" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
+          <select className="input" value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
             <option value="">Todos</option>
             <option value="OPEN">Abierto</option>
             <option value="CLOSED">Cerrado</option>
           </select>
         </div>
-        <div className="flex gap-2">
-          <button type="submit" className="btn-primary flex-1">Filtrar</button>
-          <button type="button" className="btn-secondary" onClick={handleClearFilters}>Limpiar</button>
+        <div className="w-48">
+          <label className="text-xs font-medium text-gray-600 block mb-1">Cajero</label>
+          <select className="input" value={filters.userId} onChange={(e) => setFilter({ userId: e.target.value })}>
+            <option value="">Todos</option>
+            {cashiers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
         </div>
-      </form>
+        {hasFilters && (
+          <button type="button" className="btn-secondary text-sm" onClick={handleClearFilters}>Limpiar filtros</button>
+        )}
+      </div>
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
@@ -333,14 +441,20 @@ export default function CashCuts() {
 
       {/* Open modal */}
       {showOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowOpen(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">Abrir corte de caja</h3>
             <form onSubmit={handleOpen} className="space-y-3">
+              {/* Sin `required` ni type="number" a propósito (ver handleOpen): el navegador
+                  no debe meter sus propios globos de validación ni notación científica. */}
               <div><label className="text-xs font-medium text-gray-600">Fondo inicial ($)</label>
-                <input className="input" type="number" step="0.01" required value={openAmount} onChange={(e) => setOpenAmount(e.target.value)} /></div>
+                <input className="input" type="text" inputMode="decimal" value={openAmount} onChange={(e) => setOpenAmount(sanitizeDecimalInput(e.target.value))} />
+                {(openAmountExceedsLimit || openAmountError) && (
+                  <p className="text-red-600 text-xs mt-1">{openAmountExceedsLimit ? EXCESS_MSG : openAmountError}</p>
+                )}</div>
               <div><label className="text-xs font-medium text-gray-600">Notas</label>
-                <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
+                <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} />
+                {notesError && <p className="text-red-600 text-xs mt-1">{notesError}</p>}</div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setShowOpen(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary" disabled={loading}>{loading ? '...' : 'Abrir'}</button>
@@ -352,8 +466,8 @@ export default function CashCuts() {
 
       {/* Close modal */}
       {showClose && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowClose(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">Cerrar corte de caja</h3>
             <form onSubmit={handleClose} className="space-y-3">
               <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
@@ -373,14 +487,26 @@ export default function CashCuts() {
                   </div>
                 )}
               </div>
+              {/* Sin `min` ni type="number" a propósito (ver handleClose): mismo motivo que
+                  Fondo inicial arriba. */}
               <div><label className="text-xs font-medium text-gray-600">Gastos adicionales ($)</label>
-                <input className="input" type="number" step="0.01" min="0" value={expenses} onChange={(e) => setExpenses(e.target.value)} placeholder="0.00" /></div>
-              <div className="flex justify-between items-center pt-1 border-t border-gray-100">
-                <span className="text-sm font-semibold text-gray-700">Efectivo esperado en caja</span>
-                <span className="text-lg font-bold text-purple-700">{fmt(expectedCash)}</span>
-              </div>
+                <input className="input" type="text" inputMode="decimal" value={expenses} onChange={(e) => setExpenses(sanitizeDecimalInput(e.target.value))} placeholder="0.00" />
+                {(expensesExceedsLimit || expensesError) && (
+                  <p className="text-red-600 text-xs mt-1">{expensesExceedsLimit ? EXCESS_MSG : expensesError}</p>
+                )}</div>
+              {/* Oculto mientras el gasto exceda el límite (en vivo, mientras se teclea) o
+                  haya un error del backend: el cálculo (fondo + ventas - gastos) tampoco es
+                  válido en esos casos — mostrarlo confundía más que ayudaba (ver captura del
+                  reporte original). */}
+              {!expensesExceedsLimit && !expensesError && (
+                <div className="flex flex-wrap justify-between items-center gap-x-2 gap-y-1 pt-1 border-t border-gray-100">
+                  <span className="text-sm font-semibold text-gray-700">Efectivo esperado en caja</span>
+                  <span className="text-lg font-bold text-purple-700">{fmt(expectedCash)}</span>
+                </div>
+              )}
               <div><label className="text-xs font-medium text-gray-600">Notas</label>
-                <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
+                <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} />
+                {notesError && <p className="text-red-600 text-xs mt-1">{notesError}</p>}</div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setShowClose(false)}>Cancelar</button>
                 <button type="submit" className="btn-danger" disabled={loading}>{loading ? '...' : 'Cerrar corte'}</button>
@@ -392,8 +518,8 @@ export default function CashCuts() {
 
       {/* Detail modal */}
       {detail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDetail(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-4">
               <h3 className="text-lg font-bold">Corte #{detail.id}</h3>
               <button className="text-gray-400 text-xl" onClick={() => setDetail(null)}>✕</button>
