@@ -272,6 +272,13 @@ export default function Sales() {
                 <div className="flex justify-between font-medium text-gray-700"><span>Cambio</span><span>{fmt(detail.changeGiven)}</span></div>
               </div>
             )}
+
+            {detail.notes && (
+              <div className="bg-purple-50/70 border border-purple-100 rounded-lg p-2.5 mt-3 text-xs">
+                <span className="font-semibold text-purple-900 block mb-0.5">Detalles / Pasarela:</span>
+                <span className="text-purple-700 font-mono select-all break-all">{detail.notes}</span>
+              </div>
+            )}
           </div>
         </div>
       )}

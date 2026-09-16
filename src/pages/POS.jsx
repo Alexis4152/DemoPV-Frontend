@@ -6,6 +6,11 @@ import { createSale } from '../api/sales'
 import { getOpenCashCut } from '../api/cashCuts'
 import { printSaleTicket } from '../utils/printer'
 import { useNotify } from '../context/NotifyContext'
+import CardPaymentModal from '../components/payments/CardPaymentModal'
+import StorePaynetModal from '../components/payments/StorePaynetModal'
+import SpeiPaymentModal from '../components/payments/SpeiPaymentModal'
+import { createPayment } from '../api/payments'
+import { getDeviceSessionId } from '../utils/openpay'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
@@ -46,10 +51,20 @@ export default function POS() {
   const [amountReceived, setAmountReceived] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
+  const [customerPhone, setCustomerPhone] = useState('')
   const [cashCut, setCashCut] = useState(null)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(null)
   const [error, setError] = useState('')
+
+  // Estados específicos para pasarela Openpay
+  const [cardModalOpen, setCardModalOpen] = useState(false)
+  const [openpayLoading, setOpenpayLoading] = useState(false)
+  const [openpayError, setOpenpayError] = useState('')
+  const [storeModalOpen, setStoreModalOpen] = useState(false)
+  const [speiModalOpen, setSpeiModalOpen] = useState(false)
+  const [openpayPaymentResult, setOpenpayPaymentResult] = useState(null)
+
   const searchInputRef = useRef(null)
 
   // Al montar: revisa si el cajero ya tiene un corte de caja abierto (silenciosamente —
@@ -197,8 +212,180 @@ export default function POS() {
    * servidor), se muestra el mensaje de error y el carrito se conserva intacto para poder
    * corregir y reintentar.
    */
+  /**
+   * Procesa el cargo con tarjeta mediante tokenización Openpay y registra la venta.
+   */
+  async function handleOpenpayCardPayment({ sourceId, deviceSessionId, customer }) {
+    setOpenpayLoading(true)
+    setOpenpayError('')
+    const orderId = `ORD-${Date.now()}`
+
+    try {
+      // 1. Crear el cargo con tarjeta en Openpay vía backend
+      const paymentRes = await createPayment({
+        orderId,
+        amount: subtotal,
+        currency: 'MXN',
+        method: 'CARD',
+        description: `Venta POS - ${customer.name} ${customer.lastName}`,
+        deviceSessionId,
+        sourceId,
+        customer,
+      })
+
+      const paymentData = paymentRes.data
+
+      // Reto 3D Secure si el banco emisor lo requiere
+      if (paymentData.paymentMethodDetails?.redirectUrl) {
+        window.location.href = paymentData.paymentMethodDetails.redirectUrl
+        return
+      }
+
+      if (paymentData.status !== 'COMPLETED') {
+        throw new Error(paymentData.failureReason || 'El cargo con tarjeta no fue aprobado.')
+      }
+
+      // 2. Registrar la venta en el POS con la nota de autorización
+      const saleNotes = `Openpay Tx: ${paymentData.openpayTransactionId || paymentData.id} | Aut: ${paymentData.authorizationCode || 'N/A'}`
+      const saleRes = await createSale({
+        customerName: `${customer.name} ${customer.lastName}`.trim() || customerName || null,
+        customerEmail: customer.email || customerEmail || null,
+        paymentMethod: 'CARD',
+        notes: saleNotes,
+        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
+      })
+
+      const lowStockWarnings = cart.filter((i) => i.minStock != null && (i.stock - i.quantity) <= i.minStock)
+      setSuccess({ ...saleRes.data.data, lowStockWarnings, openpayTx: paymentData })
+      setCart([])
+      setCustomerName('')
+      setCustomerEmail('')
+      setCustomerPhone('')
+      setAmountReceived('')
+      setCardModalOpen(false)
+      printTicket(saleRes.data.data.id)
+      notify('Pago con tarjeta aprobado exitosamente', 'success')
+    } catch (err) {
+      const errorMsg =
+        err.response?.data?.detail ||
+        err.response?.data?.message ||
+        err.message ||
+        'Error al procesar el cargo con tarjeta.'
+      setOpenpayError(errorMsg)
+      throw new Error(errorMsg)
+    } finally {
+      setOpenpayLoading(false)
+    }
+  }
+
+  /**
+   * Genera la ficha de pago para tiendas Paynet o transferencia SPEI vía Openpay.
+   */
+  async function processStoreOrSpeiPayment(method) {
+    setLoading(true)
+    setError('')
+    const orderId = `ORD-${Date.now()}`
+    const parts = (customerName || '').trim().split(' ')
+    const name = parts[0] || 'Cliente'
+    const lastName = parts.slice(1).join(' ') || (parts[0] ? 'Mostrador' : 'Mostrador')
+    const email = customerEmail || 'cliente@tienda.com'
+    const rawPhone = (customerPhone || '5500000000').replace(/\D/g, '').slice(0, 15)
+    const phone = rawPhone.length >= 10 ? rawPhone : '5512345678'
+
+    try {
+      const deviceSessionId = getDeviceSessionId()
+      const paymentRes = await createPayment({
+        orderId,
+        amount: subtotal,
+        currency: 'MXN',
+        method,
+        description: method === 'STORE' ? 'Pago en Tienda Paynet POS' : 'Transferencia SPEI POS',
+        deviceSessionId,
+        customer: {
+          name,
+          lastName,
+          email,
+          phoneNumber: phone,
+        },
+      })
+
+      const paymentData = paymentRes.data
+      setOpenpayPaymentResult(paymentData)
+
+      // Registrar la venta en POS como transferencia/pendiente
+      const notes = method === 'STORE'
+        ? `Paynet Ref: ${paymentData.paymentMethodDetails?.reference || ''} | Openpay ID: ${paymentData.id}`
+        : `SPEI CLABE: ${paymentData.paymentMethodDetails?.clabe || ''} | Openpay ID: ${paymentData.id}`
+
+      const saleRes = await createSale({
+        customerName: customerName || null,
+        customerEmail: customerEmail || null,
+        paymentMethod: 'TRANSFER',
+        notes,
+        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
+      })
+
+      const lowStockWarnings = cart.filter((i) => i.minStock != null && (i.stock - i.quantity) <= i.minStock)
+      setCart([])
+      setCustomerName('')
+      setCustomerEmail('')
+      setCustomerPhone('')
+
+      if (method === 'STORE') {
+        setStoreModalOpen(true)
+      } else {
+        setSpeiModalOpen(true)
+      }
+
+      notify(
+        method === 'STORE' ? 'Referencia Paynet generada exitosamente' : 'Cuenta CLABE SPEI generada exitosamente',
+        'success'
+      )
+    } catch (err) {
+      const errorMsg =
+        err.response?.data?.detail ||
+        err.response?.data?.message ||
+        err.message ||
+        'Error al generar ficha de pago con Openpay.'
+      setError(errorMsg)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /**
+   * Cobra el carrito: registra la venta en el backend (que la asocia al corte de caja
+   * abierto del cajero) y muestra la pantalla de éxito con el ticket. No hace nada si el
+   * carrito está vacío o si no hay corte de caja abierto (`cashCut`) — este último caso ya
+   * debería estar cubierto por el botón deshabilitado, esta es una segunda barrera.
+   *
+   * Aviso de stock mínimo post-venta: antes de vaciar el carrito, calcula qué líneas
+   * quedarán en su stock mínimo o por debajo (`stock - quantity <= minStock`) usando los
+   * valores de stock que ya traía el carrito (no se vuelve a consultar el backend), y se
+   * los pasa a la pantalla de éxito para avisarle al cajero que debe reabastecer pronto.
+   * Si el backend rechaza la venta (p. ej. por stock insuficiente detectado del lado del
+   * servidor), se muestra el mensaje de error y el carrito se conserva intacto para poder
+   * corregir y reintentar.
+   */
   async function handleCheckout() {
     if (cart.length === 0 || !cashCut || cashAmountMissing) return
+
+    // Canales digitales Openpay
+    if (paymentMethod === 'OPENPAY_CARD') {
+      setOpenpayError('')
+      setCardModalOpen(true)
+      return
+    }
+    if (paymentMethod === 'OPENPAY_STORE') {
+      await processStoreOrSpeiPayment('STORE')
+      return
+    }
+    if (paymentMethod === 'OPENPAY_SPEI') {
+      await processStoreOrSpeiPayment('SPEI')
+      return
+    }
+
+    // Canales tradicionales (Efectivo, Terminal física, Transferencia directa)
     setLoading(true)
     setError('')
     try {
@@ -216,6 +403,7 @@ export default function POS() {
       setCart([])
       setCustomerName('')
       setCustomerEmail('')
+      setCustomerPhone('')
       setAmountReceived('')
       // Se imprime "al vuelo": si la caja no tiene QZ Tray instalado/corriendo, o la
       // impresora está apagada, no debe tumbar la venta ya registrada — solo se avisa
@@ -411,11 +599,31 @@ export default function POS() {
             <div>
               <label className="text-xs font-medium text-gray-600">Método de pago</label>
               <select className="input mt-1" value={paymentMethod} onChange={(e) => handlePaymentMethodChange(e.target.value)}>
-                <option value="CASH">💵 Efectivo</option>
-                <option value="CARD">💳 Tarjeta</option>
-                <option value="TRANSFER">🏦 Transferencia</option>
+                <optgroup label="Cobro Tradicional">
+                  <option value="CASH">💵 Efectivo</option>
+                  <option value="CARD">💳 Tarjeta (Terminal física)</option>
+                  <option value="TRANSFER">🏦 Transferencia bancaria directa</option>
+                </optgroup>
+                <optgroup label="Pasarela Digital Openpay">
+                  <option value="OPENPAY_CARD">💳 Tarjeta Débito / Crédito (Openpay)</option>
+                  <option value="OPENPAY_STORE">🏪 Pago en Tiendas (Paynet)</option>
+                  <option value="OPENPAY_SPEI">⚡ Transferencia SPEI (Openpay)</option>
+                </optgroup>
               </select>
             </div>
+
+            {(paymentMethod === 'OPENPAY_STORE' || paymentMethod === 'OPENPAY_SPEI') && (
+              <div>
+                <label className="text-xs font-medium text-gray-600">Teléfono para comprobante (opcional)</label>
+                <input
+                  className="input mt-1 font-mono"
+                  type="tel"
+                  placeholder="5512345678"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                />
+              </div>
+            )}
 
             {paymentMethod === 'CASH' && (
               <div>
@@ -460,10 +668,40 @@ export default function POS() {
             {loading ? 'Procesando...'
               : !cashCut ? 'Abre un corte para cobrar'
               : cashAmountMissing ? 'Captura el monto recibido'
+              : paymentMethod === 'OPENPAY_CARD' ? `Cobrar con Tarjeta ${fmt(subtotal)}`
+              : paymentMethod === 'OPENPAY_STORE' ? `Generar Ficha Paynet ${fmt(subtotal)}`
+              : paymentMethod === 'OPENPAY_SPEI' ? `Generar CLABE SPEI ${fmt(subtotal)}`
               : `Cobrar ${fmt(subtotal)}`}
           </button>
         </div>
       </div>
+
+      {/* Modales de pasarela Openpay */}
+      <CardPaymentModal
+        isOpen={cardModalOpen}
+        onClose={() => setCardModalOpen(false)}
+        amount={subtotal}
+        initialCustomer={{ name: customerName, email: customerEmail, phone: customerPhone }}
+        onSubmitPayment={handleOpenpayCardPayment}
+        loading={openpayLoading}
+        errorMessage={openpayError}
+      />
+
+      <StorePaynetModal
+        isOpen={storeModalOpen}
+        onClose={() => setStoreModalOpen(false)}
+        paymentDetails={openpayPaymentResult?.paymentMethodDetails}
+        amount={openpayPaymentResult?.amount || subtotal}
+        orderId={openpayPaymentResult?.orderId}
+      />
+
+      <SpeiPaymentModal
+        isOpen={speiModalOpen}
+        onClose={() => setSpeiModalOpen(false)}
+        paymentDetails={openpayPaymentResult?.paymentMethodDetails}
+        amount={openpayPaymentResult?.amount || subtotal}
+        orderId={openpayPaymentResult?.orderId}
+      />
     </div>
   )
 }
