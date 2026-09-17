@@ -52,6 +52,11 @@ export default function POS() {
   const [printing, setPrinting] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
+  // Controla si el catálogo/dropdown de resultados se MUESTRA, separado de si hay datos
+  // en `results` — el clic afuera/ESC (ver más abajo) solo ocultan, nunca vacían
+  // `results`, para que cambiar entre Lista/Imágenes o volver a enfocar el buscador
+  // pueda mostrar de nuevo el catálogo ya cargado sin tener que re-pedirlo.
+  const [catalogVisible, setCatalogVisible] = useState(true)
   const [highlighted, setHighlighted] = useState(0)
   const [categories, setCategories] = useState([])
   const [categoryId, setCategoryId] = useState('')
@@ -164,10 +169,10 @@ export default function POS() {
   // hacer scroll dentro de la lista con el mouse.
   useEffect(() => {
     function onPointerDown(e) {
-      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target)) setResults([])
+      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target)) setCatalogVisible(false)
     }
     function onKeyDown(e) {
-      if (e.key === 'Escape') setResults([])
+      if (e.key === 'Escape') setCatalogVisible(false)
     }
     document.addEventListener('mousedown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
@@ -188,6 +193,7 @@ export default function POS() {
   function selectCategory(id) {
     setCategoryId(id)
     setBrowseRefresh((n) => n + 1)
+    setCatalogVisible(true)
     searchInputRef.current?.focus()
   }
 
@@ -195,6 +201,7 @@ export default function POS() {
   function changeViewMode(mode) {
     setViewMode(mode)
     localStorage.setItem('pos_view_mode', mode)
+    setCatalogVisible(true)
   }
 
   /**
@@ -675,7 +682,15 @@ export default function POS() {
           </div>
         )}
 
-        {/* Categories + vista */}
+        {/* searchBoxRef envuelve ESTE bloque completo (categorías + vista + buscador), no
+            solo el input: si el toolbar de categorías/vista quedara afuera, el listener de
+            "clic afuera cierra la lista" (más abajo) trataría un clic en un chip de
+            categoría o en Lista/Imágenes como un clic fuera del buscador y vaciaría
+            `results` antes de que termine de aplicarse el cambio. Los chips de categoría
+            se salvaban solos porque siempre fuerzan una recarga (`browseRefresh`), pero
+            cambiar de vista no, así que la lista se quedaba vacía hasta volver a tocar un
+            chip. */}
+        <div ref={searchBoxRef}>
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
           <div className="flex gap-2 flex-wrap">
             <button
@@ -706,16 +721,17 @@ export default function POS() {
           </div>
         </div>
 
-        <div className="relative mb-4" ref={searchBoxRef}>
+        <div className="relative mb-4">
           <input
             ref={searchInputRef}
             className="input pr-10"
             placeholder="Buscar producto por nombre o código... (↑↓ + Enter para seleccionar)"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => { setQuery(e.target.value); setCatalogVisible(true) }}
+            onFocus={() => setCatalogVisible(true)}
             onKeyDown={handleSearchKeyDown}
           />
-          {results.length > 0 && (
+          {catalogVisible && results.length > 0 && (
             // No es "absolute": si flotara sobre el carrito de abajo, con la lista de
             // resultados abierta se llegaba a tapar productos que el cajero ya había
             // agregado. Al quedar en el flujo normal, empuja el carrito hacia abajo en
@@ -779,6 +795,7 @@ export default function POS() {
               </div>
             )
           )}
+        </div>
         </div>
 
         {/* Cart */}

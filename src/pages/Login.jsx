@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import PasswordInput from '../components/PasswordInput'
 import { applyDefaultBrand } from '../utils/theme'
 import logo from '../assets/logo.png'
 
@@ -95,8 +96,7 @@ export default function Login() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
-            <input
-              type="password"
+            <PasswordInput
               className="input"
               placeholder="••••••••"
               value={form.password}
