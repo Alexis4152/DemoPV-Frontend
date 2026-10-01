@@ -5,6 +5,7 @@ import { getTiendas, getTiendasBySupervisor } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import useEscapeClose from '../hooks/useEscapeClose'
+import PasswordInput from '../components/PasswordInput'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
@@ -436,7 +437,7 @@ export default function Users() {
                 {fieldErrors.email && <p className="text-red-600 text-xs mt-1">{fieldErrors.email}</p>}</div>
               {editUser ? (
                 <div><label className="text-xs font-medium text-gray-600">Contraseña (dejar vacío para no cambiar)</label>
-                  <input className="input" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                  <PasswordInput className="input" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
                   {fieldErrors.password && <p className="text-red-600 text-xs mt-1">{fieldErrors.password}</p>}
                   <p className="text-xs text-gray-400 mt-1">Si la cambias aquí, se le pedirá elegir una nueva la próxima vez que inicie sesión.</p>
                 </div>
