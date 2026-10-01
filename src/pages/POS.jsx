@@ -318,9 +318,11 @@ export default function POS() {
         : `SPEI CLABE: ${paymentData.paymentMethodDetails?.clabe || ''} | Openpay ID: ${paymentData.id}`
 
       const saleRes = await createSale({
+        orderId,
         customerName: customerName || null,
         customerEmail: customerEmail || null,
         paymentMethod: 'TRANSFER',
+        status: 'PENDING',
         notes,
         items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
       })

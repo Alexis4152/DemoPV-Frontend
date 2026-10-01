@@ -7,6 +7,7 @@ const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency:
 const fmtDate = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
 
 const METHOD_LABELS = { CASH: '💵 Efectivo', CARD: '💳 Tarjeta', TRANSFER: '🏦 Transferencia' }
+const STATUS_LABELS = { COMPLETED: 'Completada', PENDING: 'Pendiente', CANCELLED: 'Cancelada' }
 const PAGE_SIZES = [10, 20, 50, 100]
 
 const EMPTY_FILTERS = { from: '', to: '', customerName: '', paymentMethod: '', status: '' }
@@ -140,6 +141,7 @@ export default function Sales() {
           <select className="input" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
             <option value="">Todos</option>
             <option value="COMPLETED">Completada</option>
+            <option value="PENDING">Pendiente</option>
             <option value="CANCELLED">Cancelada</option>
           </select>
         </div>
@@ -170,13 +172,15 @@ export default function Sales() {
                 <td className="px-4 py-3 font-semibold text-gray-900">{fmt(s.total)}</td>
                 <td className="px-4 py-3">
                   <span className={`text-xs font-medium px-2 py-1 rounded-full ${
-                    s.status === 'COMPLETED' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-                  }`}>{s.status === 'COMPLETED' ? 'Completada' : 'Cancelada'}</span>
+                    s.status === 'COMPLETED' ? 'bg-green-100 text-green-700' :
+                    s.status === 'PENDING' ? 'bg-amber-100 text-amber-800' :
+                    'bg-red-100 text-red-600'
+                  }`}>{STATUS_LABELS[s.status] ?? s.status}</span>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
                     <button className="text-blue-600 hover:underline text-xs" onClick={() => setDetail(s)}>Ver</button>
-                    {isAdmin && s.status === 'COMPLETED' && (
+                    {isAdmin && s.status !== 'CANCELLED' && (
                       <button className="text-red-500 hover:underline text-xs" onClick={() => handleCancel(s.id)}>Cancelar</button>
                     )}
                   </div>
@@ -239,7 +243,16 @@ export default function Sales() {
               <div className="flex justify-between"><span className="text-gray-500">Cliente</span><span>{detail.customerName ?? '—'}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Vendedor</span><span>{detail.user?.name ?? '—'}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Método</span><span>{METHOD_LABELS[detail.paymentMethod]}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Estado</span><span>{detail.status}</span></div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500">Estado</span>
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                  detail.status === 'COMPLETED' ? 'bg-green-100 text-green-700' :
+                  detail.status === 'PENDING' ? 'bg-amber-100 text-amber-800' :
+                  'bg-red-100 text-red-600'
+                }`}>
+                  {STATUS_LABELS[detail.status] ?? detail.status}
+                </span>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
