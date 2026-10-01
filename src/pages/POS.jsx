@@ -245,9 +245,10 @@ export default function POS() {
         throw new Error(paymentData.failureReason || 'El cargo con tarjeta no fue aprobado.')
       }
 
-      // 2. Registrar la venta en el POS con la nota de autorización
+      // 2. Registrar la venta en el POS con la nota de autorización y orden asociada
       const saleNotes = `Openpay Tx: ${paymentData.openpayTransactionId || paymentData.id} | Aut: ${paymentData.authorizationCode || 'N/A'}`
       const saleRes = await createSale({
+        orderId,
         customerName: `${customer.name} ${customer.lastName}`.trim() || customerName || null,
         customerEmail: customer.email || customerEmail || null,
         paymentMethod: 'CARD',

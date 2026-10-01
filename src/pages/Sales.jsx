@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { getSales, cancelSale } from '../api/sales'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
+import RefundModal from '../components/payments/RefundModal'
+import { getFriendlyErrorMessage } from '../utils/openpayErrors'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
@@ -43,6 +45,7 @@ export default function Sales() {
   const [size, setSize] = useState(20)
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [detail, setDetail] = useState(null)
+  const [cancellingSale, setCancellingSale] = useState(null)
   const [loading, setLoading] = useState(true)
 
   /**
@@ -89,17 +92,25 @@ export default function Sales() {
   }
 
   /**
-   * Cancela una venta completada. Pide confirmación porque la cancelación revierte el
-   * stock de los productos vendidos (efecto secundario en inventario) y queda registrada
-   * en el backend (quién/cuándo la canceló); la fila de la venta no se elimina, solo cambia
-   * su estado a CANCELLED. Solo se ofrece este botón a administradores y solo sobre ventas
-   * `COMPLETED` (ver JSX de la tabla). Al terminar, recarga el listado para reflejar el
-   * nuevo estado.
+   * Cancela una venta completada. Si la venta fue pagada con tarjeta (Openpay), abre
+   * el modal interactivo de cancelación y reembolso. Si fue en efectivo u otro método,
+   * solicita confirmación estándar y revierte el stock en el backend.
    */
-  async function handleCancel(id) {
-    if (!(await confirmDialog('¿Cancelar esta venta? Se revertirá el stock.', { confirmText: 'Cancelar venta' }))) return
-    await cancelSale(id)
-    load()
+  async function handleCancel(sale) {
+    if (sale.paymentMethod === 'CARD') {
+      setCancellingSale(sale)
+      return
+    }
+
+    if (!(await confirmDialog(`¿Cancelar la venta #${sale.id}? Se revertirá el stock de los productos.`, { confirmText: 'Cancelar venta' }))) return
+
+    try {
+      await cancelSale(sale.id)
+      notify('Venta cancelada exitosamente', 'success')
+      load()
+    } catch (err) {
+      notify(getFriendlyErrorMessage(err, 'Error al cancelar la venta'), 'error')
+    }
   }
 
   const sales = pageData.content ?? []
@@ -181,7 +192,7 @@ export default function Sales() {
                   <div className="flex gap-2">
                     <button className="text-blue-600 hover:underline text-xs" onClick={() => setDetail(s)}>Ver</button>
                     {isAdmin && s.status !== 'CANCELLED' && (
-                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleCancel(s.id)}>Cancelar</button>
+                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleCancel(s)}>Cancelar</button>
                     )}
                   </div>
                 </td>
@@ -294,6 +305,18 @@ export default function Sales() {
             )}
           </div>
         </div>
+      )}
+
+      {cancellingSale && (
+        <RefundModal
+          isOpen={!!cancellingSale}
+          onClose={() => setCancellingSale(null)}
+          sale={cancellingSale}
+          onSuccess={() => {
+            notify('Venta cancelada y procesada exitosamente', 'success')
+            load()
+          }}
+        />
       )}
     </div>
   )

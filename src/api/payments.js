@@ -32,6 +32,14 @@ export const createPayment = (data) => api.post('/v1/payments', data)
 export const getPaymentStatus = (paymentId) => api.get(`/v1/payments/${paymentId}`)
 
 /**
+ * Consulta la transacción de pago por su Order ID (ej. ORD-XXXX).
+ *
+ * @param {string} orderId - Identificador de orden asociado.
+ * @returns {Promise} AxiosResponse con PaymentResponse.
+ */
+export const getPaymentByOrderId = (orderId) => api.get(`/v1/payments/order/${orderId}`)
+
+/**
  * Solicita un reembolso total o parcial de un pago completado (restringido a ADMIN).
  *
  * @param {string} paymentId - UUID de la transacción interna.

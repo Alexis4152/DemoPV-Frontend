@@ -30,6 +30,14 @@ export const createSale = (data) => api.post('/sales', data)
 export const cancelSale = (id) => api.delete(`/sales/${id}`)
 
 /**
+ * Cancela una venta existente con opción de reembolso en pasarela Openpay.
+ * @param {number|string} id Id de la venta a cancelar.
+ * @param {Object} [data] Datos del reembolso (refundPayment, refundAmount, reason).
+ * @returns {Promise} Respuesta de axios con la venta cancelada.
+ */
+export const cancelSaleWithRefund = (id, data) => api.post(`/sales/${id}/cancel`, data)
+
+/**
  * Arma el ticket de una venta en formato ESC/POS (texto + comandos de control), listo
  * para pasárselo directo a un puente local de impresión (ver `utils/printer.js`) — no es
  * un PDF, es lo que la impresora térmica USB entiende byte por byte. Viene como una sola
