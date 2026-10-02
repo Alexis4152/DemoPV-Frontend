@@ -53,7 +53,7 @@ const STATUS_VALUES = Object.keys(STATUS_LABELS)
  * no obligar al cajero a saber de antemano si lo que recuerda es el cliente o el producto.
  */
 export default function Apartados() {
-  const { user } = useAuth()
+  const { user, hasAction } = useAuth()
   const { notify, confirmDialog } = useNotify()
   const [searchParams] = useSearchParams()
   const tienda = user?.tienda
@@ -378,13 +378,13 @@ export default function Apartados() {
                     <td className="px-4 py-3 text-gray-500 text-xs">{a.status === 'ACTIVE' ? fmtDate(a.expiresAt) : '—'}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2 justify-end whitespace-nowrap">
-                        {a.status === 'PENDING' && (
+                        {a.status === 'PENDING' && hasAction('APARTADOS', 'EDIT') && (
                           <button className="text-blue-600 hover:underline text-xs" onClick={() => openConfirm(a)}>Confirmar</button>
                         )}
-                        {a.status === 'ACTIVE' && (
+                        {a.status === 'ACTIVE' && hasAction('APARTADOS', 'EDIT') && (
                           <button className="text-purple-600 hover:underline text-xs" onClick={() => openComplete(a)}>Completar</button>
                         )}
-                        {(a.status === 'PENDING' || a.status === 'ACTIVE') && (
+                        {(a.status === 'PENDING' || a.status === 'ACTIVE') && hasAction('APARTADOS', 'DELETE') && (
                           <button className="text-red-500 hover:underline text-xs" onClick={() => openCancel(a)}>Cancelar</button>
                         )}
                         {a.status === 'COMPLETED' && (

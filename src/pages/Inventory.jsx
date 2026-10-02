@@ -62,7 +62,7 @@ const NEW_CATEGORY_VALUE = '__new__'
  * producto" con el código ya precargado, para dar de alta sin volver a teclearlo.
  */
 export default function Inventory() {
-  const { isAdmin, isSuperAdmin } = useAuth()
+  const { isAdmin, hasAction } = useAuth()
   const { notify, confirmDialog } = useNotify()
   // Permite llegar con el filtro ya aplicado desde afuera (ej. la tarjeta "Stock bajo" del
   // Dashboard enlaza a `/inventory?availability=lowStock`). Solo se lee al montar — un
@@ -129,7 +129,7 @@ export default function Inventory() {
   // cualquier rol, no solo ADMIN: es una consulta de solo lectura entre sucursales del
   // mismo Supervisor, útil para cualquiera que atienda al cliente en el mostrador.
   const [showSiblingStock, setShowSiblingStock] = useState(false)
-  // Modal "Carga masiva" (solo SUPER_ADMIN, ver isSuperAdmin) — `bulkImportResult` queda
+  // Modal "Carga masiva" (requiere permiso "Agregar" de Inventario) — `bulkImportResult` queda
   // null mientras no se ha subido nada; una vez subido, se queda con el resumen (creados/
   // errores) para mostrarlo dentro del mismo modal hasta que lo cierren.
   const [bulkImportModal, setBulkImportModal] = useState(false)
@@ -335,11 +335,13 @@ export default function Inventory() {
     }
     const found = (await getProductByBarcode(code).catch(() => null))?.data?.data
     if (found) {
-      if (isAdmin) setChoiceModal(found)
+      if (hasAction('INVENTORY', 'EDIT') || hasAction('INVENTORY', 'DELETE')) setChoiceModal(found)
       else openAdjust(found, '1')
-    } else {
+    } else if (hasAction('INVENTORY', 'CREATE')) {
       notify(`Código "${code}" no encontrado — completa los datos para darlo de alta`, 'info')
       openNew(code)
+    } else {
+      notify(`Código "${code}" no encontrado`, 'warning')
     }
   }
 
@@ -781,14 +783,21 @@ export default function Inventory() {
     downloadBlob(blob, 'errores-carga-masiva-productos.xlsx')
   }
 
+  // Carga masiva (plantilla + subida) va bajo el permiso "Agregar" de Inventario — crea
+  // productos igual que "+ Nuevo producto". La selección en lote (checkbox por fila,
+  // reservable/descuento) va bajo "Editar" — son ediciones masivas. Antes estaban fijos a
+  // isAdmin/isSuperAdmin; ahora respetan actionGrants de roles personalizados también.
+  const canBulkImport = hasAction('INVENTORY', 'CREATE')
+  const canBulkEdit = hasAction('INVENTORY', 'EDIT')
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Inventario</h2>
         <div className="flex flex-wrap gap-2">
-          {isAdmin && <button className="btn-secondary text-sm" onClick={handleDownloadTemplate}>⬇️ Plantilla de carga masiva</button>}
-          {isSuperAdmin && <button className="btn-secondary text-sm" onClick={openBulkImport}>📤 Carga masiva</button>}
-          {isAdmin && <button className="btn-primary" onClick={() => openNew()}>+ Nuevo producto</button>}
+          {canBulkImport && <button className="btn-secondary text-sm" onClick={handleDownloadTemplate}>⬇️ Plantilla de carga masiva</button>}
+          {canBulkImport && <button className="btn-secondary text-sm" onClick={openBulkImport}>📤 Carga masiva</button>}
+          {hasAction('INVENTORY', 'CREATE') && <button className="btn-primary" onClick={() => openNew()}>+ Nuevo producto</button>}
         </div>
       </div>
 
@@ -859,7 +868,7 @@ export default function Inventory() {
 
       {/* Table */}
       <div className="card p-0 overflow-hidden">
-        {isAdmin && selectedIds.size > 0 && (
+        {canBulkEdit && selectedIds.size > 0 && (
           <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 bg-purple-50">
             <span className="text-xs text-gray-600">{selectedIds.size} seleccionado{selectedIds.size === 1 ? '' : 's'}</span>
             <div className="flex items-center gap-2">
@@ -894,14 +903,14 @@ export default function Inventory() {
                 de datos de la tienda pública de apartados, para diferenciarlas a simple
                 vista del resto (que son datos de mostrador/inventario normal). */}
             <tr>
-              <th colSpan={(isAdmin ? 1 : 0) + 6} className="bg-gray-50"></th>
+              <th colSpan={(canBulkEdit ? 1 : 0) + 6} className="bg-gray-50"></th>
               <th colSpan={3} className="text-center px-2 py-1 text-[11px] font-semibold text-purple-700 bg-purple-50 border-l-2 border-purple-200">
                 🛍️ Tienda en línea de apartados
               </th>
               <th className="bg-gray-50"></th>
             </tr>
             <tr>
-              {isAdmin && (
+              {canBulkEdit && (
                 <th className="px-4 py-3 w-8">
                   <input type="checkbox" checked={products.length > 0 && selectedIds.size === products.length} onChange={toggleSelectAll} aria-label="Seleccionar todos" />
                 </th>
@@ -918,7 +927,7 @@ export default function Inventory() {
           <tbody className="divide-y divide-gray-50">
             {products.map((p) => (
               <tr key={p.id} className={`hover:bg-gray-50 ${selectedIds.has(p.id) ? 'bg-purple-50/50' : ''}`}>
-                {isAdmin && (
+                {canBulkEdit && (
                   <td className="px-4 py-3">
                     <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelect(p.id)} aria-label={`Seleccionar ${p.name}`} />
                   </td>
@@ -950,11 +959,13 @@ export default function Inventory() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
-                    {isAdmin && (
+                    {hasAction('INVENTORY', 'EDIT') && (
                       <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(p)}>Editar</button>
                     )}
-                    <button className="text-purple-600 hover:underline text-xs" onClick={() => openAdjust(p)}>Ajustar</button>
-                    {isAdmin && (
+                    {hasAction('INVENTORY', 'EDIT') && (
+                      <button className="text-purple-600 hover:underline text-xs" onClick={() => openAdjust(p)}>Ajustar</button>
+                    )}
+                    {hasAction('INVENTORY', 'DELETE') && (
                       <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(p)}>Desact.</button>
                     )}
                   </div>
@@ -962,7 +973,7 @@ export default function Inventory() {
               </tr>
             ))}
             {products.length === 0 && (
-              <tr><td colSpan={isAdmin ? 11 : 10} className="px-4 py-8 text-center text-gray-400">{tableLoading ? 'Cargando...' : 'Sin productos'}</td></tr>
+              <tr><td colSpan={canBulkEdit ? 11 : 10} className="px-4 py-8 text-center text-gray-400">{tableLoading ? 'Cargando...' : 'Sin productos'}</td></tr>
             )}
           </tbody>
         </table>
@@ -1143,21 +1154,25 @@ export default function Inventory() {
             <h3 className="text-lg font-bold mb-1">Producto encontrado</h3>
             <p className="text-sm text-gray-500 mb-4">{choiceModal.name} — código {choiceModal.barcode}</p>
             <div className="grid grid-cols-1 gap-2">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => { const p = choiceModal; setChoiceModal(null); openEdit(p) }}
-              >✏️ Editar producto</button>
+              {hasAction('INVENTORY', 'EDIT') && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => { const p = choiceModal; setChoiceModal(null); openEdit(p) }}
+                >✏️ Editar producto</button>
+              )}
               <button
                 type="button"
                 className="btn-primary"
                 onClick={() => { const p = choiceModal; setChoiceModal(null); openAdjust(p, '1') }}
               >➕ Ajustar stock</button>
-              <button
-                type="button"
-                className="btn-secondary text-red-600"
-                onClick={() => { const p = choiceModal; setChoiceModal(null); handleDelete(p) }}
-              >🚫 Desactivar producto</button>
+              {hasAction('INVENTORY', 'DELETE') && (
+                <button
+                  type="button"
+                  className="btn-secondary text-red-600"
+                  onClick={() => { const p = choiceModal; setChoiceModal(null); handleDelete(p) }}
+                >🚫 Desactivar producto</button>
+              )}
             </div>
             <button type="button" className="text-sm text-gray-400 hover:text-gray-600 mt-4 w-full text-center" onClick={() => setChoiceModal(null)}>Cancelar</button>
           </div>
@@ -1269,7 +1284,7 @@ export default function Inventory() {
 
       {showSiblingStock && <SiblingStockModal onClose={() => setShowSiblingStock(false)} />}
 
-      {/* Carga masiva de productos por Excel — solo SUPER_ADMIN (ver el botón que lo abre). */}
+      {/* Carga masiva de productos por Excel — requiere permiso "Agregar" de Inventario (ver el botón que lo abre). */}
       {bulkImportModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setBulkImportModal(false)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>

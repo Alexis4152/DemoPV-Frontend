@@ -31,6 +31,18 @@ export const getPublicCategories = (slug) => api.get(`/public/tiendas/${slug}/ca
 export const getPublicProducts = (slug, params) => api.get(`/public/tiendas/${slug}/products`, { params })
 
 /**
+ * Reconsulta un conjunto puntual de productos por id (sin paginar) — usado para revalidar
+ * un carrito de apartado restaurado desde `localStorage` contra el stock/precio/oferta
+ * actuales, no para navegar el catálogo normal (eso es `getPublicProducts`). Un id que ya
+ * no existe, se desactivó o dejó de ser reservable simplemente no viene en la respuesta.
+ * @param {string} slug
+ * @param {number[]} ids
+ * @returns {Promise} Respuesta de axios con la lista de productos encontrados.
+ */
+export const getPublicProductsByIds = (slug, ids) =>
+  api.get(`/public/tiendas/${slug}/products/by-ids`, { params: { ids: ids.join(',') } })
+
+/**
  * Solicita un apartado. Queda pendiente de confirmación por la tienda (no descuenta
  * stock todavía).
  * @param {string} slug

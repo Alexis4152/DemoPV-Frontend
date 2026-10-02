@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { getUsers, createUser, updateUser, deleteUser } from '../api/users'
+import { getUsers, createUser, updateUser, deleteUser, forceLogoutUser } from '../api/users'
 import { getRoles } from '../api/roles'
 import { getTiendas, getTiendasBySupervisor } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import useEscapeClose from '../hooks/useEscapeClose'
 import PasswordInput from '../components/PasswordInput'
+import { roleLabel } from '../utils/roleLabels'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
@@ -32,10 +33,13 @@ const rankOf = (roleName) => ROLE_RANK[roleName] ?? 3
  * la tabla muestra una columna de Estado en vez de que el usuario desaparezca de la lista;
  * los usuarios inactivos siguen apareciendo salvo que el filtro de Estado los excluya.
  *
- * Control de acceso (vía `isAdmin`, solo frontend — el backend es quien realmente lo hace
+ * Control de acceso (vía `hasAction`, solo frontend — el backend es quien realmente lo hace
  * cumplir): cualquiera con la sección `USERS` habilitada puede VER esta pantalla y su
- * listado, pero dar de alta, editar y desactivar usuarios están reservados a ADMIN — antes
- * cualquier rol con acceso a Usuarios (ej. un vendedor) podía hacerlo también.
+ * listado, pero dar de alta, editar, desactivar y forzar cierre de sesión requieren el
+ * permiso fino correspondiente (USERS:CREATE/EDIT/DELETE, configurable por rol desde
+ * "Roles y Permisos") — y, más allá del permiso, la jerarquía de roles del backend
+ * (`UserService#assertCanManage`) sigue sin dejar a un rol sin rango tocar cuentas
+ * ADMIN/SUPERVISOR/SUPER_ADMIN, solo otras cuentas sin rango.
  *
  * Paginación server-side (mismo patrón que Sales/CashCuts/Inventory): `page`/`size` viajan
  * como query params y el backend responde `{content, page, size, totalElements, totalPages}`.
@@ -54,7 +58,7 @@ const rankOf = (roleName) => ROLE_RANK[roleName] ?? 3
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export default function Users() {
-  const { user, isAdmin, isSuperAdmin, isPlatformActor } = useAuth()
+  const { user, isAdmin, isSuperAdmin, isPlatformActor, hasAction } = useAuth()
   const { notify, confirmDialog } = useNotify()
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [roles, setRoles] = useState([])
@@ -249,6 +253,26 @@ export default function Users() {
     load()
   }
 
+  /**
+   * Cierra a la fuerza la sesión abierta de un usuario (ej. un cajero que la dejó abierta
+   * en otro dispositivo y no puede volver a cerrarla él mismo). No es instantáneo del
+   * todo — su token actual sigue sirviendo hasta que expire solo (máx. 30 min) — así que
+   * el aviso de confirmación lo deja claro para no generar una expectativa equivocada.
+   */
+  async function handleForceLogout(u) {
+    if (!(await confirmDialog(
+      `¿Cerrar la sesión abierta de "${u.name}"? Puede tardar hasta 30 minutos en hacerse efectivo del todo.`,
+      { confirmText: 'Cerrar sesión', danger: false }
+    ))) return
+    try {
+      await forceLogoutUser(u.id)
+      notify(`Sesión de "${u.name}" cerrada`, 'success')
+      load()
+    } catch (err) {
+      notify(err.response?.data?.message || 'Error al cerrar la sesión', 'error')
+    }
+  }
+
   // Colores de la etiqueta de rol en la tabla; los roles sin color definido (roles
   // personalizados creados por el admin) caen en el gris por default.
   const ROLE_COLORS = { ADMIN: 'bg-purple-100 text-purple-700', CASHIER: 'bg-blue-100 text-blue-700', SELLER: 'bg-green-100 text-green-700' }
@@ -300,7 +324,7 @@ export default function Users() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Usuarios</h2>
-        {isAdmin && <button className="btn-primary" onClick={openNew}>+ Nuevo usuario</button>}
+        {hasAction('USERS', 'CREATE') && <button className="btn-primary" onClick={openNew}>+ Nuevo usuario</button>}
       </div>
 
       {/* flex-wrap, sin botón "Filtrar": cada campo aplica solo al cambiar (mismo patrón
@@ -327,7 +351,7 @@ export default function Users() {
           <label className="text-xs font-medium text-gray-600 block mb-1">Rol</label>
           <select className="input" value={filters.roleId} onChange={(e) => setFilter({ roleId: e.target.value })}>
             <option value="">Todos</option>
-            {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            {roles.map((r) => <option key={r.id} value={r.id}>{roleLabel(r.name)}</option>)}
           </select>
         </div>
         <div className="w-36">
@@ -348,7 +372,7 @@ export default function Users() {
         <table className="w-full text-sm min-w-[720px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              {['Nombre', 'Email', 'Rol', 'Fecha de registro', 'Estado', ''].map((h) => (
+              {['Nombre', 'Email', 'Rol', 'Fecha de registro', 'Estado', 'Sesión', ''].map((h) => (
                 <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
               ))}
             </tr>
@@ -359,7 +383,7 @@ export default function Users() {
                 <td className="px-4 py-3 font-medium text-gray-900">{u.name}</td>
                 <td className="px-4 py-3 text-gray-500">{u.email}</td>
                 <td className="px-4 py-3">
-                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${roleColor(u.role?.name)}`}>{u.role?.name}</span>
+                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${roleColor(u.role?.name)}`}>{roleLabel(u.role?.name)}</span>
                 </td>
                 <td className="px-4 py-3 text-gray-600">{fmtDate(u.createdAt)}</td>
                 <td className="px-4 py-3">
@@ -368,11 +392,23 @@ export default function Users() {
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  {isAdmin ? (
+                  {u.hasActiveSession ? (
+                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-blue-100 text-blue-700">Sesión activa</span>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {hasAction('USERS', 'EDIT') || hasAction('USERS', 'DELETE') ? (
                     <div className="flex gap-2">
-                      <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(u)}>Editar</button>
-                      {u.isActive && (
+                      {hasAction('USERS', 'EDIT') && (
+                        <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(u)}>Editar</button>
+                      )}
+                      {hasAction('USERS', 'DELETE') && u.isActive && (
                         <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(u)}>Desact.</button>
+                      )}
+                      {hasAction('USERS', 'EDIT') && u.hasActiveSession && u.id !== user.id && (
+                        <button className="text-amber-600 hover:underline text-xs" onClick={() => handleForceLogout(u)}>Cerrar sesión</button>
                       )}
                     </div>
                   ) : (
@@ -382,7 +418,7 @@ export default function Users() {
               </tr>
             ))}
             {users.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Sin usuarios</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Sin usuarios</td></tr>
             )}
           </tbody>
         </table>
@@ -452,7 +488,7 @@ export default function Users() {
                   {/* Sin tienda = rol de plataforma (SUPERVISOR); se distingue en el label
                       por si ya existe un rol personalizado con el mismo nombre en esta
                       tienda (el nombre de un rol no es único entre plataforma y tiendas). */}
-                  {assignableRoles.map((r) => <option key={r.id} value={r.id}>{r.name}{!r.tienda ? ' (plataforma)' : ''}</option>)}
+                  {assignableRoles.map((r) => <option key={r.id} value={r.id}>{roleLabel(r.name)}{!r.tienda ? ' (plataforma)' : ''}</option>)}
                 </select>
                 {fieldErrors.roleId && <p className="text-red-600 text-xs mt-1">{fieldErrors.roleId}</p>}</div>
               {showSupervisorTiendaPicker && (

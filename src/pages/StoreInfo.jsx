@@ -340,7 +340,7 @@ export default function StoreInfo() {
         <p className="text-xs text-gray-400 mt-3">PNG, JPG o WEBP, máximo {MAX_LOGO_MB} MB. Si no subes uno, se usa el logo de Nexora.</p>
       </div>
 
-      <div className="border-b border-gray-200 mb-6 flex gap-6 overflow-x-auto">
+      <div className="border-b border-gray-200 mb-6 flex gap-6 flex-wrap">
         {TABS.map((t) => (
           <button
             key={t.key}

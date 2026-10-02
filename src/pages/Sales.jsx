@@ -39,7 +39,7 @@ const EMPTY_FILTERS = { from: '', to: '', customerName: '', paymentMethod: '', s
  * sola vez al montar.
  */
 export default function Sales() {
-  const { isAdmin } = useAuth()
+  const { hasAction } = useAuth()
   const { notify, confirmDialog } = useNotify()
   const [searchParams] = useSearchParams()
   const initialFilters = () => ({
@@ -220,7 +220,7 @@ export default function Sales() {
                     >
                       {printingId === s.id ? 'Imprimiendo…' : '🖨️ Reimprimir'}
                     </button>
-                    {isAdmin && s.status === 'COMPLETED' && (
+                    {hasAction('SALES', 'DELETE') && s.status === 'COMPLETED' && (
                       <button className="text-red-500 hover:underline text-xs" onClick={() => handleCancel(s.id)}>Cancelar</button>
                     )}
                   </div>
