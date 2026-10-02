@@ -6,6 +6,8 @@ import { useNotify } from '../context/NotifyContext'
 import { printSaleTicket } from '../utils/printer'
 import useEscapeClose from '../hooks/useEscapeClose'
 import usePolling from '../hooks/usePolling'
+import IconButton from '../components/IconButton'
+import { CheckCircleIcon, CreditCardIcon, XCircleIcon, PrinterIcon } from '../components/icons'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
@@ -379,18 +381,18 @@ export default function Apartados() {
                     <td className="px-4 py-3">
                       <div className="flex gap-2 justify-end whitespace-nowrap">
                         {a.status === 'PENDING' && hasAction('APARTADOS', 'EDIT') && (
-                          <button className="text-blue-600 hover:underline text-xs" onClick={() => openConfirm(a)}>Confirmar</button>
+                          <IconButton icon={CheckCircleIcon} label="Confirmar" variant="primary" onClick={() => openConfirm(a)} />
                         )}
                         {a.status === 'ACTIVE' && hasAction('APARTADOS', 'EDIT') && (
-                          <button className="text-purple-600 hover:underline text-xs" onClick={() => openComplete(a)}>Completar</button>
+                          <IconButton icon={CreditCardIcon} label="Completar" variant="purple" onClick={() => openComplete(a)} />
                         )}
                         {(a.status === 'PENDING' || a.status === 'ACTIVE') && hasAction('APARTADOS', 'DELETE') && (
-                          <button className="text-red-500 hover:underline text-xs" onClick={() => openCancel(a)}>Cancelar</button>
+                          <IconButton icon={XCircleIcon} label="Cancelar" variant="danger" onClick={() => openCancel(a)} />
                         )}
                         {a.status === 'COMPLETED' && (
                           <>
                             <span className="text-xs text-gray-400">Venta #{a.saleId}</span>
-                            <button className="text-purple-600 hover:underline text-xs disabled:opacity-40" disabled={printing} onClick={() => printTicket(a.saleId)}>🖨️ Reimprimir</button>
+                            <IconButton icon={PrinterIcon} label={printing ? 'Imprimiendo…' : 'Reimprimir'} variant="purple" disabled={printing} onClick={() => printTicket(a.saleId)} />
                           </>
                         )}
                       </div>

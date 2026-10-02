@@ -9,6 +9,8 @@ import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
+import IconButton from '../components/IconButton'
+import { PencilIcon, SlidersIcon, ArchiveIcon } from '../components/icons'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
@@ -960,13 +962,13 @@ export default function Inventory() {
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
                     {hasAction('INVENTORY', 'EDIT') && (
-                      <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(p)}>Editar</button>
+                      <IconButton icon={PencilIcon} label="Editar" variant="primary" onClick={() => openEdit(p)} />
                     )}
                     {hasAction('INVENTORY', 'EDIT') && (
-                      <button className="text-purple-600 hover:underline text-xs" onClick={() => openAdjust(p)}>Ajustar</button>
+                      <IconButton icon={SlidersIcon} label="Ajustar stock" variant="purple" onClick={() => openAdjust(p)} />
                     )}
                     {hasAction('INVENTORY', 'DELETE') && (
-                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(p)}>Desact.</button>
+                      <IconButton icon={ArchiveIcon} label="Desactivar" variant="danger" onClick={() => handleDelete(p)} />
                     )}
                   </div>
                 </td>

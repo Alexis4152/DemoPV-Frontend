@@ -6,6 +6,8 @@ import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import useEscapeClose from '../hooks/useEscapeClose'
 import PasswordInput from '../components/PasswordInput'
+import IconButton from '../components/IconButton'
+import { PencilIcon, ArchiveIcon, LogOutIcon } from '../components/icons'
 import { roleLabel } from '../utils/roleLabels'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
@@ -402,13 +404,13 @@ export default function Users() {
                   {hasAction('USERS', 'EDIT') || hasAction('USERS', 'DELETE') ? (
                     <div className="flex gap-2">
                       {hasAction('USERS', 'EDIT') && (
-                        <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(u)}>Editar</button>
+                        <IconButton icon={PencilIcon} label="Editar" variant="primary" onClick={() => openEdit(u)} />
                       )}
                       {hasAction('USERS', 'DELETE') && u.isActive && (
-                        <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(u)}>Desact.</button>
+                        <IconButton icon={ArchiveIcon} label="Desactivar" variant="danger" onClick={() => handleDelete(u)} />
                       )}
                       {hasAction('USERS', 'EDIT') && u.hasActiveSession && u.id !== user.id && (
-                        <button className="text-amber-600 hover:underline text-xs" onClick={() => handleForceLogout(u)}>Cerrar sesión</button>
+                        <IconButton icon={LogOutIcon} label="Cerrar sesión" variant="warning" onClick={() => handleForceLogout(u)} />
                       )}
                     </div>
                   ) : (

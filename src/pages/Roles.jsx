@@ -5,6 +5,8 @@ import { useNotify } from '../context/NotifyContext'
 import { useAuth } from '../context/AuthContext'
 import useEscapeClose from '../hooks/useEscapeClose'
 import { roleLabel, MANAGEMENT_ROLE_NAMES } from '../utils/roleLabels'
+import IconButton from '../components/IconButton'
+import { TrashIcon } from '../components/icons'
 
 const emptyForm = { name: '', description: '', sections: [], actionGrants: [] }
 const PAGE_SIZES = [10, 20, 50, 100]
@@ -398,7 +400,7 @@ export default function Roles() {
                         {expandedId === r.id ? 'Cerrar' : 'Habilitar permisos'}
                       </button>
                       {!r.isSystem && (
-                        <button className="text-red-500 hover:underline text-xs" onClick={(e) => { e.stopPropagation(); handleDelete(r) }}>Eliminar</button>
+                        <IconButton icon={TrashIcon} label="Eliminar" variant="danger" onClick={(e) => { e.stopPropagation(); handleDelete(r) }} />
                       )}
                     </div>
                   </td>

@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { printSaleTicket } from '../utils/printer'
 import useEscapeClose from '../hooks/useEscapeClose'
+import IconButton from '../components/IconButton'
+import { EyeIcon, PrinterIcon, XCircleIcon } from '../components/icons'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
@@ -212,16 +214,15 @@ export default function Sales() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
-                    <button className="text-blue-600 hover:underline text-xs" onClick={() => setDetail(s)}>Ver</button>
-                    <button
-                      className="text-gray-500 hover:underline text-xs disabled:opacity-40 disabled:hover:no-underline"
+                    <IconButton icon={EyeIcon} label="Ver" variant="primary" onClick={() => setDetail(s)} />
+                    <IconButton
+                      icon={PrinterIcon}
+                      label={printingId === s.id ? 'Imprimiendo…' : 'Reimprimir'}
                       disabled={printingId === s.id}
                       onClick={() => handleReprint(s.id)}
-                    >
-                      {printingId === s.id ? 'Imprimiendo…' : '🖨️ Reimprimir'}
-                    </button>
+                    />
                     {hasAction('SALES', 'DELETE') && s.status === 'COMPLETED' && (
-                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleCancel(s.id)}>Cancelar</button>
+                      <IconButton icon={XCircleIcon} label="Cancelar" variant="danger" onClick={() => handleCancel(s.id)} />
                     )}
                   </div>
                 </td>

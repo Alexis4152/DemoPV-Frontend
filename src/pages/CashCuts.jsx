@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { getCashCuts, getOpenCashCut, getMyTodayCashCut, openCashCut, closeCashCut, getCashCutSummary, getCashCutCashiers } from '../api/cashCuts'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
+import IconButton from '../components/IconButton'
+import { EyeIcon } from '../components/icons'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 // Mismo límite que cash_cuts.opening_amount/expenses en el backend (NUMERIC(12,2), ver
@@ -392,7 +394,7 @@ export default function CashCuts() {
                   }`}>{c.status === 'OPEN' ? 'Abierto' : 'Cerrado'}</span>
                 </td>
                 <td className="px-4 py-3">
-                  <button className="text-blue-600 hover:underline text-xs" onClick={() => openDetail(c)}>Ver</button>
+                  <IconButton icon={EyeIcon} label="Ver" variant="primary" onClick={() => openDetail(c)} />
                 </td>
               </tr>
             ))}

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useNotify } from '../context/NotifyContext'
 import { updateTiendaTheme } from '../api/tiendas'
 import { generateRamp, isValidHex, NEXORA_BLUE } from '../utils/theme'
 
@@ -19,6 +20,7 @@ import { generateRamp, isValidHex, NEXORA_BLUE } from '../utils/theme'
  */
 export default function Appearance() {
   const { user, patchTienda } = useAuth()
+  const { confirmDialog } = useNotify()
   const [color, setColor] = useState(user?.tienda?.primaryColor || NEXORA_BLUE)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
@@ -32,8 +34,11 @@ export default function Appearance() {
    * Guarda el nuevo color de marca de la tienda en el backend y, si tiene éxito,
    * actualiza el `AuthContext` en memoria (vía `patchTienda`) para que el cambio se
    * vea reflejado al instante en el sidebar y demás componentes que usan el color de marca.
+   * Mismo patrón que el resto del portal: confirmación explícita antes de guardar, ya que
+   * cambia lo que ven TODOS los usuarios de la tienda, no solo quien lo está editando.
    */
   async function handleSave() {
+    if (!(await confirmDialog('¿Guardar este color de marca? Se aplicará para todos los usuarios de la tienda.', { confirmText: 'Guardar', danger: false }))) return
     setSaving(true)
     setError('')
     setMessage('')

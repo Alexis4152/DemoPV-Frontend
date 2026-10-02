@@ -11,14 +11,18 @@ import defaultLogo from '../assets/logo.png'
 const MAX_LOGO_MB = 3
 
 // Mismos límites reales de columna que TiendaInfoRequest en el backend (ver ese archivo) —
-// redesSociales/notasAdicionales son TEXT sin límite de columna, su tope de 500 es solo de
-// aplicación, igual que en ProductRequest.description.
+// horario/redesSociales/notasAdicionales son TEXT sin límite de columna, su tope de 500 es
+// solo de aplicación, igual que en ProductRequest.description. `horario` (y `telefono`,
+// `paginaWeb`, `redesSociales`, la dirección) también se muestran en la vitrina pública de
+// apartados (ver PublicApartar.jsx) — rfc/razonSocial/notasAdicionales no, son fiscales/
+// internos.
 const FIELDS = [
   { key: 'name', label: 'Nombre de la tienda', required: true, maxLength: 150 },
   { key: 'razonSocial', label: 'Razón social', maxLength: 200 },
   { key: 'rfc', label: 'RFC', maxLength: 20 },
   { key: 'telefono', label: 'Teléfono', maxLength: 30 },
   { key: 'paginaWeb', label: 'Página web', maxLength: 200 },
+  { key: 'horario', label: 'Horario de atención', textarea: true, maxLength: 500 },
   { key: 'calle', label: 'Calle', maxLength: 200 },
   { key: 'colonia', label: 'Colonia', maxLength: 150 },
   { key: 'codigoPostal', label: 'Código postal', maxLength: 10 },
@@ -103,6 +107,7 @@ export default function StoreInfo() {
         rfc: info.rfc || '',
         telefono: info.telefono || '',
         paginaWeb: info.paginaWeb || '',
+        horario: info.horario || '',
         calle: info.calle || '',
         colonia: info.colonia || '',
         codigoPostal: info.codigoPostal || '',
