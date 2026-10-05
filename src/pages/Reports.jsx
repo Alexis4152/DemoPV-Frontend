@@ -6,6 +6,8 @@ import {
 } from '../api/reports'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
+import { toLocalDateStr } from '../utils/date'
+import { openOrDownloadBlob } from '../utils/downloadBlob'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
@@ -13,7 +15,7 @@ const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'o
 const METODO_PAGO_ES = { CASH: 'Efectivo', CARD: 'Tarjeta', TRANSFER: 'Transferencia' }
 
 // Convierte un objeto Date a 'YYYY-MM-DD' para los inputs de tipo date y los query params.
-function toYYYYMMDD(d) { return d.toISOString().slice(0, 10) }
+const toYYYYMMDD = toLocalDateStr
 
 /**
  * Pantalla de "Reportes": muestra estadísticas de ventas e inventario de la tienda del
@@ -94,20 +96,20 @@ export default function Reports() {
   /**
    * Descarga el reporte PDF del rango actual y lo guarda con un nombre que incluye el
    * nombre de la tienda y las fechas, para que sea fácil de identificar entre varios
-   * descargados. El PDF llega como blob (binario), no como JSON — se arma una URL temporal
-   * para el navegador y se libera justo después de disparar la descarga.
+   * descargados. Usa `openOrDownloadBlob` (ver ese archivo) en vez del patrón directo de
+   * "blob + `<a download>`" porque ese no funciona en Safari de iOS — desde celular abre
+   * el PDF en una pestaña nueva, desde donde se guarda con el botón nativo de Compartir;
+   * en computadora dispara la descarga tal cual.
    */
   async function handleDownloadPdf() {
     setGeneratingPdf(true)
     try {
-      const res = await getReportPdf(from, to)
-      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
       const tiendaSlug = (user?.tienda?.name || 'reporte').toLowerCase().replace(/[^a-z0-9]+/g, '-')
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${tiendaSlug}-${from}-a-${to}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
+      await openOrDownloadBlob(
+        () => getReportPdf(from, to),
+        `${tiendaSlug}-${from}-a-${to}.pdf`,
+        'application/pdf'
+      )
     } catch (err) {
       notify('No se pudo generar el reporte en PDF', 'error')
     } finally {

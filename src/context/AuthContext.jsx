@@ -1,24 +1,29 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { login as apiLogin, me as apiMe } from '../api/auth'
+import { login as apiLogin, logout as apiLogout, me as apiMe } from '../api/auth'
 import { applyDefaultBrand, applyTiendaBrand } from '../utils/theme'
 
 const AuthContext = createContext(null)
 
-// SUPER_ADMIN no pertenece a ninguna tienda → siempre azul Nexora fijo.
-// El resto sigue el color que su tienda haya elegido (o Nexora si no eligió ninguno).
+// Un SUPER_ADMIN no tiene tienda propia en el backend (siempre null ahí) — pero en el
+// frontend, en cuanto elige con cuál tienda actuar (ver `selectTienda`), su `user.tienda`
+// SÍ se llena con esa tienda, exactamente como si fuera su ADMIN. Por diseño: así todo el
+// resto de la app (Layout, POS, Apartados, Appearance, StoreInfo, Reports...) que ya lee
+// `user.tienda` para pintar nombre/logo/color o resolver límites de descuento funciona
+// igual para un SUPER_ADMIN actuando, sin tener que tocar cada una de esas pantallas por
+// separado. Mientras no ha elegido ninguna, `user.tienda` sigue siendo null — es la señal
+// que usa `PrivateRoute` para mandarlo al selector (`SelectTienda.jsx`).
 /**
  * Decide y aplica el color de marca (branding/theming) que corresponde al usuario dado.
  *
- * Los usuarios `SUPER_ADMIN` (que no pertenecen a ninguna tienda) y cualquier usuario
- * sin `tienda.primaryColor` definido siempre ven el azul fijo "Nexora" por defecto.
- * El resto de usuarios ve el color elegido por el administrador de su tienda
- * (pantalla de Apariencia). Es una función interna, no se expone en el contexto.
+ * Sin `tienda` (todavía no hay sesión, o es un SUPER_ADMIN que no ha elegido ninguna) o
+ * sin `primaryColor` definido en ella, se ve el azul fijo "Nexora" por defecto. Con una
+ * tienda con color propio, se ve ese. Es una función interna, no se expone en el contexto.
  *
  * @param {object|null} userData - Usuario en sesión (o `null` si no hay ninguno).
  * @returns {void}
  */
 function applyBrandFor(userData) {
-  if (!userData || userData.role === 'SUPER_ADMIN' || !userData.tienda?.primaryColor) {
+  if (!userData?.tienda?.primaryColor) {
     applyDefaultBrand()
   } else {
     applyTiendaBrand(userData.tienda.primaryColor)
@@ -30,14 +35,26 @@ function applyBrandFor(userData) {
  *
  * Es la fuente central de verdad sobre "quién es el usuario actual": mantiene el
  * `user` en memoria (sincronizado con `localStorage`, claves `pos_user`/`pos_token`)
- * y expone `login`/`logout`, los flags derivados `isAdmin`/`hasSection` (RBAC), y
- * `patchTienda` para reflejar en caliente cambios en los datos de la tienda.
+ * y expone `login`/`logout`, los flags derivados `isAdmin`/`isSuperAdmin`/`hasSection`
+ * (RBAC), `patchTienda` para reflejar en caliente cambios en los datos de la tienda, y
+ * `selectTienda`/`clearSelectedTienda` para que un SUPER_ADMIN elija (o cambie) sobre
+ * cuál tienda está actuando.
  *
- * Al montar, si hay una sesión guardada en `localStorage` la restaura de inmediato
- * (para evitar parpadeos de UI) y en paralelo llama a `apiMe()` para refrescar
- * rol/secciones/tienda por si cambiaron desde el último login (p. ej. el admin
- * quitó un permiso o cambió el color de marca), fusionando el resultado sobre el
- * usuario ya cargado.
+ * Al montar, si hay una sesión guardada en `localStorage`, se confirma contra el backend
+ * (`apiMe()`) ANTES de exponer el `user` — a propósito, no de forma optimista: `loading`
+ * solo baja a `false` cuando esa llamada ya resolvió (o no había sesión que confirmar).
+ * `PrivateRoute` gatea el render de rutas protegidas en `loading`, así que con esto nunca
+ * llega a montar el Dashboard/Layout con una sesión todavía sin confirmar — si el access
+ * token ya venció, el interceptor de `api/axios.js` intenta un refresh transparente antes
+ * de que `apiMe()` termine de fallar; solo si ese refresh también falla se limpia la sesión
+ * de verdad. Este orden (confirmar antes de renderizar) es lo que evita la cascada de 401
+ * que antes se veía al abrir la app con un token restaurado ya vencido.
+ *
+ * Para un SUPER_ADMIN, `apiMe()` siempre trae `tienda: null` (así es en el backend) — el
+ * merge usa `??`, que solo reemplaza en `undefined`/`null` cuando el lado izquierdo también
+ * lo es... en este caso sí conserva `parsed.tienda` porque el operador se evalúa sobre el
+ * valor de `fresh.tienda`, no sobre si cambió: `null ?? x` siempre da `x`, así que la tienda
+ * elegida sobrevive al refresco sin ningún caso especial.
  *
  * @param {{ children: import('react').ReactNode }} props
  */
@@ -48,31 +65,40 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const stored = localStorage.getItem('pos_user')
     const token = localStorage.getItem('pos_token')
-    if (stored && token) {
-      try {
-        const parsed = JSON.parse(stored)
-        setUser(parsed)
-        applyBrandFor(parsed)
-        // refresca secciones/rol/tienda por si el admin cambió permisos o color desde el último login
-        apiMe()
-          .then((r) => {
-            const fresh = r.data.data
-            const merged = {
-              ...parsed,
-              role: fresh.role?.name ?? parsed.role,
-              sections: fresh.role?.sections ?? parsed.sections,
-              tienda: fresh.tienda ?? parsed.tienda,
-            }
-            localStorage.setItem('pos_user', JSON.stringify(merged))
-            setUser(merged)
-            applyBrandFor(merged)
-          })
-          .catch(() => {})
-      } catch { logout() }
-    } else {
+    if (!stored || !token) {
       applyDefaultBrand()
+      setLoading(false)
+      return
     }
-    setLoading(false)
+    let parsed
+    try {
+      parsed = JSON.parse(stored)
+    } catch {
+      logout()
+      setLoading(false)
+      return
+    }
+    // Confirma la sesión contra el backend antes de exponer `user` — ver doc de arriba.
+    apiMe()
+      .then((r) => {
+        const fresh = r.data.data
+        const merged = {
+          ...parsed,
+          role: fresh.role?.name ?? parsed.role,
+          sections: fresh.role?.sections ?? parsed.sections,
+          tienda: fresh.tienda ?? parsed.tienda,
+        }
+        localStorage.setItem('pos_user', JSON.stringify(merged))
+        setUser(merged)
+        applyBrandFor(merged)
+      })
+      .catch(() => {
+        // El interceptor de axios ya intentó un refresh transparente y, si también
+        // falló, ya limpió localStorage y está redirigiendo a /login — esto es solo
+        // la red de seguridad para que `user` no quede desincronizado mientras tanto.
+        setUser(null)
+      })
+      .finally(() => setLoading(false))
   }, [])
 
   /**
@@ -95,18 +121,50 @@ export function AuthProvider({ children }) {
   }
 
   /**
-   * Cierra la sesión actual: limpia `localStorage` (token y usuario), resetea el
-   * estado `user` y vuelve a aplicar el color de marca por defecto ("Nexora").
+   * Cierra la sesión actual: revoca el refresh token del lado servidor (para que la
+   * cookie httpOnly no sirva ni siquiera si alguien la conservara), limpia `localStorage`
+   * (token y usuario), resetea el estado `user` y vuelve a aplicar el color de marca por
+   * defecto ("Nexora"). La limpieza local ocurre siempre, aunque la llamada al backend
+   * falle (p. ej. sin red) — cerrar sesión localmente no debe depender de esa respuesta.
    */
-  function logout() {
-    localStorage.removeItem('pos_token')
-    localStorage.removeItem('pos_user')
-    setUser(null)
-    applyDefaultBrand()
+  async function logout() {
+    try {
+      await apiLogout()
+    } catch {
+      // sin red o backend caído: igual se cierra la sesión local, ver comentario de arriba
+    } finally {
+      localStorage.removeItem('pos_token')
+      localStorage.removeItem('pos_user')
+      setUser(null)
+      applyDefaultBrand()
+    }
   }
 
-  /** `true` si el usuario en sesión tiene el rol `ADMIN` (administrador de su tienda). */
-  const isAdmin = user?.role === 'ADMIN'
+  /** `true` si el usuario en sesión es `SUPER_ADMIN` (usuario de plataforma, sin tienda
+   *  propia — ve/administra todas, de una en una, vía `selectTienda`). */
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  /** `true` si el usuario en sesión es `SUPERVISOR` ("Supervisor de tiendas": usuario de
+   *  plataforma sin tienda propia, con visibilidad total sobre el SUBCONJUNTO de tiendas
+   *  que tenga asignadas — mismo mecanismo de `selectTienda` que SUPER_ADMIN, pero el
+   *  backend solo le deja elegir entre las suyas). */
+  const isSupervisor = user?.role === 'SUPERVISOR'
+  /** `true` si el usuario en sesión es SUPER_ADMIN o SUPERVISOR — los dos roles "de
+   *  plataforma" sin tienda propia que necesitan pasar por `SelectTienda.jsx` antes de
+   *  usar el resto de la app (ver `PrivateRoute`) y que pueden "cambiar de tienda" desde
+   *  el sidebar (ver `Layout`). */
+  const isPlatformActor = isSuperAdmin || isSupervisor
+  // Incluye a SUPER_ADMIN/SUPERVISOR a propósito: mientras están actuando sobre una tienda
+  // (ver selectTienda), deben poder hacer TODO lo que su ADMIN podría — dar de alta/editar/
+  // dar de baja productos y usuarios, ver el historial de cortes, cancelar ventas, entrar a
+  // Apariencia/Datos de la tienda, etc. Son "un ADMIN con la posibilidad de pararse en
+  // una o varias tiendas", no roles aparte con permisos propios — así que en todo el
+  // frontend basta con revisar `isAdmin`, sin tener que acordarse de sumar estos flags en
+  // cada pantalla una por una (el backend hace el cumplimiento real de todas formas, incluyendo
+  // la jerarquía de quién puede crear/editar a quién).
+  /** `true` si el usuario en sesión tiene el rol `ADMIN`, o es SUPER_ADMIN/SUPERVISOR
+   *  actuando como tal sobre la tienda elegida — para efectos de qué puede hacer en la UI,
+   *  cuentan igual. */
+  const isAdmin = user?.role === 'ADMIN' || isPlatformActor
   /** Indica si el usuario en sesión tiene habilitada la `AppSection` con el código dado (RBAC). */
   const hasSection = (code) => !!user?.sections?.includes(code)
 
@@ -119,7 +177,8 @@ export function AuthProvider({ children }) {
    * `primaryColor`, también reaplica el color de marca para reflejar el cambio
    * de inmediato (p. ej. en el logo/sidebar).
    *
-   * No hace nada si el usuario actual no tiene `tienda` asociada (caso `SUPER_ADMIN`).
+   * No hace nada si el usuario actual no tiene `tienda` asociada (SUPER_ADMIN sin
+   * ninguna elegida todavía).
    *
    * @param {object} partial - Campos parciales de `tienda` a fusionar (p. ej. `{ primaryColor }` o `{ name, logoPath }`).
    * @returns {void}
@@ -132,12 +191,64 @@ export function AuthProvider({ children }) {
     if ('primaryColor' in partial) applyBrandFor(merged)
   }
 
+  // Apaga `mustChangePassword` en memoria + localStorage al instante, justo después de que
+  // ChangePasswordRequired.jsx confirma el cambio en el backend — sin esto, PrivateRoute
+  // seguiría rebotando al usuario a /change-password hasta el siguiente login.
+  /** Marca en el usuario en sesión que ya no debe forzarse el cambio de contraseña. */
+  function clearMustChangePassword() {
+    if (!user) return
+    const merged = { ...user, mustChangePassword: false }
+    localStorage.setItem('pos_user', JSON.stringify(merged))
+    setUser(merged)
+  }
+
+  // Reemplaza `user.tienda` por completo (no fusiona campos como `patchTienda`, que es
+  // para editar la tienda ACTUAL) — usado únicamente por SelectTienda.jsx cuando un
+  // SUPER_ADMIN elige con cuál tienda actuar. A partir de aquí el resto de la app ve esa
+  // tienda como si fuera la suya (nombre/logo/color en el sidebar, límites de descuento en
+  // POS/Apartados, etc.) — y `api/axios.js` manda su id en cada petición al backend
+  // (header `X-Acting-Tienda-Id`) para que el aislamiento por tienda del lado del servidor
+  // también sepa cuál es.
+  /**
+   * Establece la tienda sobre la que un SUPER_ADMIN va a actuar, en memoria y en
+   * `localStorage`, y reaplica el color de marca de inmediato.
+   *
+   * @param {object} tienda - Tienda completa (id, name, logoPath, primaryColor, ...) elegida.
+   * @returns {void}
+   */
+  function selectTienda(tienda) {
+    if (!user) return
+    const merged = { ...user, tienda }
+    localStorage.setItem('pos_user', JSON.stringify(merged))
+    setUser(merged)
+    applyBrandFor(merged)
+  }
+
+  /**
+   * Quita la tienda elegida (vuelve a `null`) — usado por el botón "Cambiar tienda" del
+   * sidebar antes de mandar al SUPER_ADMIN/SUPERVISOR de vuelta al selector. Sin efecto
+   * para cualquier otro rol (siempre tienen su propia tienda, no "eligen" ninguna).
+   * @returns {void}
+   */
+  function clearSelectedTienda() {
+    if (!user || !isPlatformActor) return
+    const merged = { ...user, tienda: null }
+    localStorage.setItem('pos_user', JSON.stringify(merged))
+    setUser(merged)
+    applyBrandFor(merged)
+  }
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAdmin, hasSection, loading, patchTienda }}>
+    <AuthContext.Provider value={{
+      user, login, logout, isAdmin, isSuperAdmin, isSupervisor, isPlatformActor, hasSection, loading,
+      patchTienda, clearMustChangePassword, selectTienda, clearSelectedTienda,
+    }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
-/** Hook de acceso al contexto de autenticación (`user`, `login`, `logout`, `isAdmin`, `hasSection`, `patchTienda`, `loading`). */
+/** Hook de acceso al contexto de autenticación (`user`, `login`, `logout`, `isAdmin`,
+ *  `isSuperAdmin`, `isSupervisor`, `isPlatformActor`, `hasSection`, `patchTienda`,
+ *  `clearMustChangePassword`, `selectTienda`, `clearSelectedTienda`, `loading`). */
 export const useAuth = () => useContext(AuthContext)

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useState } from 'react'
+import useEscapeClose from '../hooks/useEscapeClose'
 
 const NotifyContext = createContext(null)
 
@@ -82,6 +83,9 @@ export function NotifyProvider({ children }) {
     setConfirmState(null)
   }
 
+  // ESC y clic afuera equivalen a Cancelar (resuelve `false`, igual que el botón).
+  useEscapeClose(!!confirmState, () => handleConfirm(false))
+
   return (
     <NotifyContext.Provider value={{ notify, confirmDialog }}>
       {children}
@@ -103,8 +107,8 @@ export function NotifyProvider({ children }) {
       </div>
 
       {confirmState && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[101] p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[101] p-4" onClick={() => handleConfirm(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
             {confirmState.opts.title && <h3 className="text-lg font-bold text-gray-900 mb-2">{confirmState.opts.title}</h3>}
             <p className="text-sm text-gray-700 mb-6">{confirmState.message}</p>
             <div className="flex gap-2 justify-end">

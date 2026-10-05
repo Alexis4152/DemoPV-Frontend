@@ -1,8 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { SECTIONS } from '../config/sections'
+import { getApartadosPendingCount } from '../api/apartados'
+import { resolveMediaUrl } from '../utils/media'
 import defaultLogo from '../assets/logo.png'
+import useEscapeClose from '../hooks/useEscapeClose'
 
 /**
  * Fábrica de la función `className` que consume `NavLink` de react-router para
@@ -22,7 +25,7 @@ const navLinkClass = (collapsed) => ({ isActive }) =>
   }`
 
 // Rutas agrupadas bajo el submenú colapsable "Configuración" del sidebar.
-const CONFIG_ROUTES = ['/roles', '/appearance', '/store-info']
+const CONFIG_ROUTES = ['/roles', '/categories', '/appearance', '/store-info', '/mail-config']
 
 /**
  * Shell visual de toda la app autenticada: arma el sidebar de navegación (logo de
@@ -33,13 +36,13 @@ const CONFIG_ROUTES = ['/roles', '/appearance', '/store-info']
  * El menú principal se arma filtrando `SECTIONS` por las secciones que el usuario
  * tiene habilitadas (excluyendo `ROLES`, que se agrupa aparte). El submenú
  * "Configuración" agrupa Roles y Permisos (si tiene la sección `ROLES`) y, solo si
- * `isAdmin`, Apariencia y Datos de la tienda. El estado de colapsado del sidebar y
+ * `isAdmin`, Categorías, Apariencia y Datos de la tienda. El estado de colapsado del sidebar y
  * de expandido de "Configuración" persiste en `localStorage` entre sesiones.
  *
  * @param {{ children: import('react').ReactNode }} props
  */
 export default function Layout({ children }) {
-  const { user, logout, hasSection, isAdmin } = useAuth()
+  const { user, logout, hasSection, isAdmin, isSuperAdmin, isPlatformActor } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('pos_sidebar_collapsed') === '1')
@@ -49,6 +52,23 @@ export default function Layout({ children }) {
   // Drawer del sidebar en mobile/tablet (< lg) — independiente de `collapsed`, que solo
   // aplica al modo solo-íconos del sidebar fijo de escritorio.
   const [mobileOpen, setMobileOpen] = useState(false)
+  // Cierra el drawer móvil con ESC (mismo efecto que el clic en el fondo).
+  useEscapeClose(mobileOpen, () => setMobileOpen(false))
+
+  // Badge de apartados PENDING (por revisar) junto al link "Apartados" del sidebar — se
+  // revisa cada 60s mientras haya sesión con esa sección habilitada; no hay websockets en
+  // este proyecto, así que un poll ligero es la forma de "notificar" sin nueva infra.
+  const [pendingApartados, setPendingApartados] = useState(0)
+  const canSeeApartados = hasSection('APARTADOS')
+  useEffect(() => {
+    if (!canSeeApartados) return
+    function poll() {
+      getApartadosPendingCount().then((r) => setPendingApartados(r.data.data ?? 0)).catch(() => {})
+    }
+    poll()
+    const id = setInterval(poll, 60_000)
+    return () => clearInterval(id)
+  }, [canSeeApartados])
 
   /** Cierra la sesión del usuario actual y lo redirige a la pantalla de login. */
   function handleLogout() {
@@ -86,11 +106,13 @@ export default function Layout({ children }) {
   const canSeeRoles = hasSection('ROLES')
   const configItems = [
     canSeeRoles && { to: '/roles', icon: '🔑', label: 'Roles y Permisos' },
+    isAdmin && { to: '/categories', icon: '🏷️', label: 'Categorías' },
     isAdmin && { to: '/appearance', icon: '🎨', label: 'Apariencia' },
     isAdmin && { to: '/store-info', icon: '🏬', label: 'Datos de la tienda' },
+    isSuperAdmin && { to: '/mail-config', icon: '✉️', label: 'Correo del sistema' },
   ].filter(Boolean)
   const configActive = CONFIG_ROUTES.includes(location.pathname)
-  const sidebarLogo = user?.tienda?.logoPath || defaultLogo
+  const sidebarLogo = resolveMediaUrl(user?.tienda?.logoPath) || defaultLogo
 
   /**
    * Contenido interno del sidebar (logo, nav, pie con rol/logout), compartido entre el
@@ -111,6 +133,18 @@ export default function Layout({ children }) {
                 <h1 className="text-base font-bold text-white leading-tight">{user?.tienda?.name || 'Punto de Venta Demo'}</h1>
               </div>
               <p className="text-xs text-purple-300/70 mt-2 whitespace-nowrap">{user?.name}</p>
+              {/* Solo SUPER_ADMIN/SUPERVISOR: recuerda que "su" tienda de arriba es la que
+                  eligió actuar (ver AuthContext#selectTienda), no una propia, y da acceso
+                  directo a cambiarla sin tener que cerrar sesión. */}
+              {isPlatformActor && (
+                <button
+                  type="button"
+                  onClick={() => { navigate('/select-tienda'); onNavigate?.() }}
+                  className="mt-2 text-xs text-purple-300 hover:text-white underline underline-offset-2 whitespace-nowrap"
+                >
+                  🔁 Cambiar tienda
+                </button>
+              )}
             </>
           )}
         </div>
@@ -118,8 +152,24 @@ export default function Layout({ children }) {
         <nav className="sidebar-scroll flex-1 p-4 space-y-1 overflow-y-auto overflow-x-hidden">
           {links.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === '/'} title={isCollapsed ? n.label : undefined} className={navLinkClass(isCollapsed)} onClick={onNavigate}>
-              <span>{n.icon}</span>
-              {!isCollapsed && <span className="whitespace-nowrap">{n.label}</span>}
+              <span className="relative">
+                {n.icon}
+                {n.code === 'APARTADOS' && pendingApartados > 0 && (
+                  <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[10px] leading-none rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-0.5">
+                    {pendingApartados > 9 ? '9+' : pendingApartados}
+                  </span>
+                )}
+              </span>
+              {!isCollapsed && (
+                <span className="whitespace-nowrap flex items-center gap-1.5">
+                  {n.label}
+                  {n.code === 'APARTADOS' && pendingApartados > 0 && (
+                    <span className="bg-red-500 text-white text-[10px] leading-none rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1">
+                      {pendingApartados > 99 ? '99+' : pendingApartados}
+                    </span>
+                  )}
+                </span>
+              )}
             </NavLink>
           ))}
 
@@ -181,7 +231,10 @@ export default function Layout({ children }) {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    // bg-purple-50/40: mismo tinte de marca (--brand-50, ver utils/theme.js) que ya se usa
+    // en la vitrina pública de apartados (PublicApartar.jsx) — antes era gris liso
+    // (bg-gray-50) sin relación con el color que la tienda elige en "Apariencia".
+    <div className="flex h-screen bg-purple-50/40">
       {/* Sidebar fijo — solo visible desde `lg:` en adelante */}
       <aside className={`hidden lg:flex ${collapsed ? 'w-20' : 'w-64'} bg-[var(--brand-sidebar)] border-r border-[var(--brand-sidebar-border)] flex-col transition-all duration-200 relative shrink-0`}>
         <button

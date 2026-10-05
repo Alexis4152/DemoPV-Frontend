@@ -7,6 +7,16 @@ import api from './axios'
 export const getCategories = () => api.get('/categories')
 
 /**
+ * Búsqueda paginada de categorías para la pantalla de administración de Categorías, con
+ * filtros opcionales por nombre, estado y rango de fecha de alta — a diferencia de
+ * `getCategories` (catálogo activo completo sin paginar, usado por los selectores de
+ * Inventario/POS). Reservado a ADMIN/SUPER_ADMIN/SUPERVISOR.
+ * @param {Object} [params] Query params: `name`, `isActive`, `from`, `to`, `page`, `size`.
+ * @returns {Promise} Respuesta de axios con `{content, page, size, totalElements, totalPages}`.
+ */
+export const getCategoriesPage = (params) => api.get('/categories/page', { params })
+
+/**
  * Crea una nueva categoría de producto.
  * @param {Object} data Datos de la categoría (ej. nombre).
  * @returns {Promise} Respuesta de axios con la categoría creada.
