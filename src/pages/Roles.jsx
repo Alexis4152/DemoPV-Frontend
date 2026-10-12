@@ -133,12 +133,17 @@ export default function Roles() {
 
   /**
    * Activa/desactiva una sección (`AppSection`) dentro del formulario de rol.
-   * Regla de negocio: si el rol que se está editando es `isSystem`, no se le puede quitar
-   * la sección `ROLES` (checkbox deshabilitado en el JSX), para no dejar a la tienda sin
-   * forma de administrar roles/permisos.
+   * Regla de negocio sobre `ROLES` en particular (checkbox deshabilitado en el JSX, ver
+   * también `RoleService#sanitizeSections` en el backend, que es quien de verdad la
+   * impone, en ambos sentidos): nunca se puede tocar a mano. Un rol de gestión
+   * (ADMIN/SUPERVISOR/SUPER_ADMIN) la tiene siempre, aunque no se marque, para que el
+   * administrador nunca se quede sin forma de administrar roles/permisos. Cualquier otro
+   * rol (CASHIER o uno personalizado) nunca la puede tener, aunque se marque — "Roles y
+   * Permisos" controla qué módulos ve cada rol, así que dejárselo a un rol sin rango sería
+   * dejarle una puerta para habilitarse a sí mismo cualquier otro módulo.
    */
   function toggleSection(code) {
-    if (editRole?.isSystem && code === 'ROLES') return // no se puede quitar a un rol del sistema
+    if (code === 'ROLES') return // su valor lo decide isManagementRole, nunca el checkbox
     setForm((f) => ({
       ...f,
       sections: f.sections.includes(code)
@@ -293,7 +298,9 @@ export default function Roles() {
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
                 {SECTIONS.map((s) => {
-                  const sectionChecked = form.sections.includes(s.code)
+                  // ROLES no se decide con el checkbox: la tiene siempre un rol de
+                  // gestión y nunca cualquier otro (ver toggleSection).
+                  const sectionChecked = s.code === 'ROLES' ? isManagementRole : form.sections.includes(s.code)
                   const allowedActions = !isManagementRole ? CRUD_SECTIONS[s.code] : null
                   return (
                     <tr key={s.code}>
@@ -302,7 +309,7 @@ export default function Roles() {
                         <input
                           type="checkbox"
                           checked={sectionChecked}
-                          disabled={editRole?.isSystem && s.code === 'ROLES'}
+                          disabled={s.code === 'ROLES'}
                           onChange={() => toggleSection(s.code)}
                         />
                       </td>
