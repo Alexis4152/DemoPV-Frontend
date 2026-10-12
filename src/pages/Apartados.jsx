@@ -310,7 +310,18 @@ export default function Apartados() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Apartados</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">Apartados</h2>
+        {tienda?.apartadosEnabled && tienda?.publicSlug && (
+          <a
+            href={`/apartar/${tienda.publicSlug}`} target="_blank" rel="noopener noreferrer"
+            className="btn-secondary text-sm whitespace-nowrap"
+            title="Abrir la tienda pública de apartados en otra pestaña"
+          >
+            Abrir tienda ↗
+          </a>
+        )}
+      </div>
 
       <div className="flex flex-wrap gap-3 items-end mb-4">
         <div>

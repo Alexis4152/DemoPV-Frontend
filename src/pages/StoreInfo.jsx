@@ -499,6 +499,16 @@ export default function StoreInfo() {
                   >
                     Copiar link
                   </button>
+                  {/* Abre el slug YA GUARDADO (user.tienda), no el del campo: un slug escrito y
+                      sin guardar todavía no existe en el backend y la página pública daría 404. */}
+                  <button
+                    type="button" className="btn-secondary text-sm whitespace-nowrap"
+                    onClick={() => window.open(`/apartar/${user.tienda.publicSlug}`, '_blank', 'noopener')}
+                    disabled={!user?.tienda?.apartadosEnabled || !user?.tienda?.publicSlug}
+                    title={user?.tienda?.apartadosEnabled && user?.tienda?.publicSlug ? 'Abrir la tienda pública en otra pestaña' : 'Guarda los cambios primero'}
+                  >
+                    Abrir tienda ↗
+                  </button>
                 </div>
                 {fieldErrors.publicSlug && <p className="text-red-600 text-xs mt-1">{fieldErrors.publicSlug}</p>}
                 {form.publicSlug && (

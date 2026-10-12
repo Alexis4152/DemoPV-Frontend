@@ -149,7 +149,7 @@ export default function Sales() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Ventas</h2>
+      <h2 className="text-2xl font-bold text-gray-900 mb-6">Historial de ventas</h2>
 
       {/* flex-wrap, sin botón "Filtrar": cada campo aplica solo al cambiar (mismo patrón
           que Apartados.jsx/Inventory.jsx) — "Limpiar filtros" solo aparece si hay algo que limpiar. */}

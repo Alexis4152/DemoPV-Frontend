@@ -3,12 +3,13 @@ import { useSearchParams } from 'react-router-dom'
 import {
   getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductReservedStats,
   getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage, getSiblingStock,
-  getBulkImportTemplate, bulkImportProducts,
+  getBulkImportTemplate, bulkImportProducts, getInventoryCountSheetExcel, getInventoryCountSheetPdf,
 } from '../api/products'
 import { getCategories, createCategory } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
+import { openOrDownloadBlob } from '../utils/downloadBlob'
 import IconButton from '../components/IconButton'
 import { PencilIcon, SlidersIcon, ArchiveIcon } from '../components/icons'
 
@@ -72,6 +73,7 @@ export default function Inventory() {
   const [searchParams] = useSearchParams()
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [categories, setCategories] = useState([])
+  const [countSheetLoading, setCountSheetLoading] = useState(null)
   const [search, setSearch] = useState('')
   const [filterCat, setFilterCat] = useState('')
   // Único filtro de disponibilidad: stock bajo, como botón de encendido/apagado (no un
@@ -753,6 +755,26 @@ export default function Inventory() {
     }
   }
 
+  // Hoja de conteo físico (producto, cantidad actual, "Cantidad real" en blanco). Libre
+  // para cualquiera con acceso a Inventario — no depende de ninguna acción (ver
+  // ProductController#countSheetExcel). `countSheetLoading` = formato en curso.
+  async function handleDownloadCountSheet(format) {
+    setCountSheetLoading(format)
+    const filename = `inventario-${new Date().toISOString().slice(0, 10)}.${format}`
+    try {
+      if (format === 'pdf') {
+        await openOrDownloadBlob(getInventoryCountSheetPdf, filename, 'application/pdf')
+      } else {
+        const res = await getInventoryCountSheetExcel()
+        downloadBlob(res.data, filename)
+      }
+    } catch (err) {
+      notify('No se pudo generar el inventario', 'error')
+    } finally {
+      setCountSheetLoading(null)
+    }
+  }
+
   function openBulkImport() {
     setBulkImportModal(true)
     setBulkImportFile(null)
@@ -797,6 +819,12 @@ export default function Inventory() {
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Inventario</h2>
         <div className="flex flex-wrap gap-2">
+          <button className="btn-secondary text-sm" onClick={() => handleDownloadCountSheet('xlsx')} disabled={countSheetLoading !== null}>
+            {countSheetLoading === 'xlsx' ? 'Generando…' : '📊 Inventario Excel'}
+          </button>
+          <button className="btn-secondary text-sm" onClick={() => handleDownloadCountSheet('pdf')} disabled={countSheetLoading !== null}>
+            {countSheetLoading === 'pdf' ? 'Generando…' : '📄 Inventario PDF'}
+          </button>
           {canBulkImport && <button className="btn-secondary text-sm" onClick={handleDownloadTemplate}>⬇️ Plantilla de carga masiva</button>}
           {canBulkImport && <button className="btn-secondary text-sm" onClick={openBulkImport}>📤 Carga masiva</button>}
           {hasAction('INVENTORY', 'CREATE') && <button className="btn-primary" onClick={() => openNew()}>+ Nuevo producto</button>}
@@ -1075,7 +1103,8 @@ export default function Inventory() {
 
               {form.isReservable && (
                 <div>
-                  <label className="text-xs font-medium text-gray-600">Descuento de oferta (%) — se le muestra al cliente</label>
+                  <label className="text-xs font-medium text-gray-600 block">Descuento en apartados (%)</label>
+                  <p className="text-xs text-gray-400 mb-1">Oferta que se le muestra al cliente en la tienda pública. Déjalo vacío si no hay oferta.</p>
                   {/* Sin min/max nativos a propósito: el navegador los valida con su propio
                       globo emergente ANTES de que este formulario alcance a correr — con
                       eso, el rango 0-100 lo reporta el backend (@DecimalMin/@DecimalMax en

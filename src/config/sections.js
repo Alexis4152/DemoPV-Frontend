@@ -21,10 +21,10 @@
  * actualizarse en conjunto para mantener el RBAC del frontend sincronizado.
  */
 export const SECTIONS = [
-  { code: 'DASHBOARD', label: 'Dashboard', icon: '📊', to: '/' },
+  { code: 'DASHBOARD', label: 'Inicio', icon: '📊', to: '/' },
   { code: 'POS', label: 'Punto de Venta', icon: '🛒', to: '/pos' },
   { code: 'INVENTORY', label: 'Inventario', icon: '📦', to: '/inventory' },
-  { code: 'SALES', label: 'Ventas', icon: '📋', to: '/sales' },
+  { code: 'SALES', label: 'Historial de ventas', icon: '📋', to: '/sales' },
   { code: 'CASH_CUTS', label: 'Cortes de Caja', icon: '💰', to: '/cash-cuts' },
   { code: 'APARTADOS', label: 'Apartados', icon: '🛍️', to: '/apartados' },
   { code: 'REPORTS', label: 'Reportes', icon: '📈', to: '/reports' },
