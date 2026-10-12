@@ -5,7 +5,7 @@ import {
   getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage, getSiblingStock,
   getBulkImportTemplate, bulkImportProducts, getInventoryCountSheetExcel, getInventoryCountSheetPdf,
 } from '../api/products'
-import { getCategories, createCategory } from '../api/categories'
+import { getCategories } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
@@ -31,10 +31,6 @@ function availabilityParams(lowStockOnly) {
   return lowStockOnly ? { lowStock: true } : {}
 }
 
-// Valor centinela para la opción "Otra..." del selector de categoría: no puede colisionar
-// con un id real (los ids de categoría son numéricos), así que sirve para distinguir
-// "el usuario quiere crear una categoría nueva" de una categoría existente seleccionada.
-const NEW_CATEGORY_VALUE = '__new__'
 
 /**
  * Página "Inventario": administración del catálogo de productos de la tienda del usuario
@@ -128,7 +124,6 @@ export default function Inventory() {
   const [adjustNotice, setAdjustNotice] = useState('')
   const [scanCode, setScanCode] = useState('')
   const [choiceModal, setChoiceModal] = useState(null)
-  const [newCategoryName, setNewCategoryName] = useState('')
   // Modal "Buscar en tiendas asociadas" (ver SiblingStockModal más abajo) — visible para
   // cualquier rol, no solo ADMIN: es una consulta de solo lectura entre sucursales del
   // mismo Supervisor, útil para cualquiera que atienda al cliente en el mostrador.
@@ -209,7 +204,6 @@ export default function Inventory() {
   function openNew(prefillBarcode) {
     setEditProduct(null)
     setForm({ ...emptyForm, barcode: prefillBarcode ?? '' })
-    setNewCategoryName('')
     setProductImages([])
     pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPendingImages([])
@@ -233,7 +227,6 @@ export default function Inventory() {
       isReservable: !!p.isReservable,
       apartadoDiscountPercent: p.apartadoDiscountPercent ?? '',
     })
-    setNewCategoryName('')
     setProductImages([])
     getProductImages(p.id).then((r) => setProductImages(r.data.data ?? [])).catch(() => {})
     setError('')
@@ -462,7 +455,6 @@ export default function Inventory() {
     if (form.stock !== '' && Number(form.stock) > 2147483647) errors.stock = 'El stock no puede ser mayor a 2,147,483,647'
     if (form.minStock !== '' && Number(form.minStock) > 2147483647) errors.minStock = 'El stock mínimo no puede ser mayor a 2,147,483,647'
     if (!form.categoryId) errors.categoryId = 'Selecciona una categoría'
-    else if (form.categoryId === NEW_CATEGORY_VALUE && !newCategoryName.trim()) errors.newCategoryName = 'Escribe el nombre de la nueva categoría'
     if (form.apartadoDiscountPercent !== '') {
       const pct = Number(form.apartadoDiscountPercent)
       if (pct < 0) errors.apartadoDiscountPercent = 'El descuento de apartado no puede ser negativo'
@@ -480,12 +472,8 @@ export default function Inventory() {
    * y recarga el catálogo completo (para reflejar el nuevo/actualizado producto y, si
    * cambió el stock inicial, el aviso de stock mínimo).
    *
-   * Categoría nueva ("Otra..."): si el selector quedó en `NEW_CATEGORY_VALUE`, primero
-   * crea la categoría con el nombre capturado en `newCategoryName` y usa el id que
-   * devuelve el backend para el producto — todo en un solo Guardar, sin que el usuario
-   * tenga que ir a otra pantalla a darla de alta antes. Si la creación de la categoría
-   * falla (nombre repetido, etc.), el producto tampoco se guarda: se corta ahí y se
-   * muestra el error, para no dejar a medias un producto sin categoría real.
+   * La categoría solo se elige de las existentes: desde aquí ya no se pueden crear
+   * categorías nuevas (se dan de alta en la pantalla de Categorías).
    *
    * Pide confirmación explícita antes de tocar el backend (crear o editar), para evitar
    * altas/ediciones accidentales por un clic de más — pero solo si el formulario ya pasó
@@ -511,14 +499,7 @@ export default function Inventory() {
     setError('')
     setFieldErrors({})
     try {
-      let categoryId = form.categoryId
-      if (categoryId === NEW_CATEGORY_VALUE) {
-        const name = newCategoryName.trim()
-        if (!name) { setError('Escribe el nombre de la nueva categoría'); setLoading(false); return }
-        const newCategory = (await createCategory({ name })).data.data
-        setCategories((prev) => [...prev, newCategory])
-        categoryId = newCategory.id
-      }
+      const categoryId = form.categoryId
       const payload = { ...form, price: Number(form.price), cost: form.cost ? Number(form.cost) : null,
         stock: Number(form.stock), minStock: Number(form.minStock), categoryId: Number(categoryId),
         apartadoDiscountPercent: form.apartadoDiscountPercent === '' ? null : Number(form.apartadoDiscountPercent) }
@@ -1077,16 +1058,9 @@ export default function Inventory() {
                   <select className="input" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
                     <option value="">Seleccionar...</option>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    <option value={NEW_CATEGORY_VALUE}>Otra...</option>
                   </select>
                   {fieldErrors.categoryId && <p className="text-red-600 text-xs mt-1">{fieldErrors.categoryId}</p>}
                 </div>
-                {form.categoryId === NEW_CATEGORY_VALUE && (
-                  <div><label className="text-xs font-medium text-gray-600">Nombre de la nueva categoría <span className={fieldErrors.newCategoryName ? 'text-red-600' : ''}>*</span></label>
-                    <input className="input" autoFocus value={newCategoryName}
-                      onChange={(e) => setNewCategoryName(e.target.value)} placeholder="Ej. Electrónica" />
-                    {fieldErrors.newCategoryName && <p className="text-red-600 text-xs mt-1">{fieldErrors.newCategoryName}</p>}</div>
-                )}
               </div>
               <div><label className="text-xs font-medium text-gray-600">Descripción</label>
                 <textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />

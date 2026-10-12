@@ -80,6 +80,12 @@ function DailySalesCard({ total, goal, to }) {
  * (`?from=...&to=...`, que `Sales.jsx` lee al montar) y "Corte de caja" enlaza directo a
  * Cortes de Caja (sin filtro — solo lleva a la pantalla, sin importar si hay uno abierto).
  *
+ * Cada tarjeta y acceso rápido depende del "Ver" de su módulo en Roles y Permisos
+ * (`hasSection`): si el rol no ve Historial de ventas, no salen Ventas del mes / Venta
+ * diaria / Ticket promedio; sin Cortes de Caja no sale "Corte de caja"; sin Inventario no
+ * salen "Stock bajo" ni su acceso rápido; y lo mismo para Punto de Venta, Apartados y
+ * Reportes. Tampoco se consulta el dato de una tarjeta oculta.
+ *
  * Cada indicador se obtiene de un endpoint distinto y se cargan en paralelo (no bloqueante
  * entre sí); si alguno falla, simplemente no se muestra su valor (los `.catch(() => {})`
  * evitan que un error en un indicador tumbe a los demás).
@@ -94,7 +100,14 @@ function currentMonthRange() {
 }
 
 export default function Dashboard() {
-  const { user } = useAuth()
+  const { user, hasSection } = useAuth()
+  const canSales = hasSection('SALES')
+  const canCashCuts = hasSection('CASH_CUTS')
+  const canInventory = hasSection('INVENTORY')
+  const canPos = hasSection('POS')
+  const canApartados = hasSection('APARTADOS')
+  const canReports = hasSection('REPORTS')
+  const hasStats = canSales || canCashCuts || canInventory
   const [summary, setSummary] = useState(null)
   const [todaySummary, setTodaySummary] = useState(null)
   const [cashCut, setCashCut] = useState(null)
@@ -107,31 +120,38 @@ export default function Dashboard() {
   // (ver `usePolling` abajo): el resto de los indicadores solo se consulta al entrar al
   // módulo, montado aparte para no arrastrarlos al polling de este.
   function loadPendingApartados() {
+    if (!canApartados) return
     getApartadosPendingCount()
       .then((r) => setPendingApartados(r.data.data ?? 0))
       .catch(() => {})
   }
 
   useEffect(() => {
-    getSalesSummary(firstOfMonth, today)
-      .then((r) => setSummary(r.data.data))
-      .catch(() => {})
+    if (canSales) {
+      getSalesSummary(firstOfMonth, today)
+        .then((r) => setSummary(r.data.data))
+        .catch(() => {})
 
-    // Venta del día en curso, para la tarjeta "Venta diaria" (venta vs. meta configurada).
-    getSalesSummary(today, today)
-      .then((r) => setTodaySummary(r.data.data))
-      .catch(() => {})
+      // Venta del día en curso, para la tarjeta "Venta diaria" (venta vs. meta configurada).
+      getSalesSummary(today, today)
+        .then((r) => setTodaySummary(r.data.data))
+        .catch(() => {})
+    }
 
     // Corte de caja abierto (si existe) en este momento, para el indicador "Corte de caja".
-    getOpenCashCut()
-      .then((r) => setCashCut(r.data.data))
-      .catch(() => {})
+    if (canCashCuts) {
+      getOpenCashCut()
+        .then((r) => setCashCut(r.data.data))
+        .catch(() => {})
+    }
 
     // Solo se usa el conteo de resultados (no la lista completa) para el indicador de
     // stock bajo; el size:200 es un límite práctico para no traer más de lo necesario.
-    searchProducts({ lowStock: true, size: 200 })
-      .then((r) => setLowStock(r.data.data?.length ?? 0))
-      .catch(() => {})
+    if (canInventory) {
+      searchProducts({ lowStock: true, size: 200 })
+        .then((r) => setLowStock(r.data.data?.length ?? 0))
+        .catch(() => {})
+    }
 
     loadPendingApartados()
   }, [])
@@ -144,7 +164,9 @@ export default function Dashboard() {
     <div>
       <h2 className="text-2xl font-bold text-gray-900 mb-6">Inicio</h2>
 
+      {hasStats && (
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-8">
+        {canSales && (<>
         <StatCard
           label="Ventas del mes"
           value={fmt(summary?.totalSales)}
@@ -162,6 +184,8 @@ export default function Dashboard() {
           value={fmt(summary?.averageTicket)}
           color="text-blue-600"
         />
+        </>)}
+        {canCashCuts && (
         <StatCard
           label="Corte de caja"
           value={cashCut ? 'Abierto' : 'Cerrado'}
@@ -169,6 +193,8 @@ export default function Dashboard() {
           color={cashCut ? 'text-green-600' : 'text-gray-400'}
           to="/cash-cuts"
         />
+        )}
+        {canInventory && (
         <StatCard
           label="Stock bajo"
           value={lowStock}
@@ -176,9 +202,12 @@ export default function Dashboard() {
           color={lowStock > 0 ? 'text-red-600' : 'text-green-600'}
           to={lowStock > 0 ? '/inventory?availability=lowStock' : undefined}
         />
+        )}
       </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+        {canPos && (
         <Link to="/pos" className="card hover:shadow-md transition-shadow flex items-center gap-4 cursor-pointer">
           <span className="text-3xl">🛒</span>
           <div>
@@ -186,6 +215,8 @@ export default function Dashboard() {
             <p className="text-sm text-gray-500">Ir al punto de venta</p>
           </div>
         </Link>
+        )}
+        {canInventory && (
         <Link to="/inventory" className="card hover:shadow-md transition-shadow flex items-center gap-4 cursor-pointer">
           <span className="text-3xl">📦</span>
           <div>
@@ -193,6 +224,8 @@ export default function Dashboard() {
             <p className="text-sm text-gray-500">Gestionar productos</p>
           </div>
         </Link>
+        )}
+        {canApartados && (
         <Link to="/apartados?status=PENDING" className="card hover:shadow-md transition-shadow flex items-center gap-4 cursor-pointer">
           <span className="relative text-3xl">
             🛍️
@@ -209,6 +242,8 @@ export default function Dashboard() {
             </p>
           </div>
         </Link>
+        )}
+        {canReports && (
         <Link to="/reports" className="card hover:shadow-md transition-shadow flex items-center gap-4 cursor-pointer">
           <span className="text-3xl">📈</span>
           <div>
@@ -216,6 +251,7 @@ export default function Dashboard() {
             <p className="text-sm text-gray-500">Ver estadísticas</p>
           </div>
         </Link>
+        )}
       </div>
     </div>
   )
