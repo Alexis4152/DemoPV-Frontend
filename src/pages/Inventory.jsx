@@ -61,7 +61,12 @@ function availabilityParams(lowStockOnly) {
  * producto" con el código ya precargado, para dar de alta sin volver a teclearlo.
  */
 export default function Inventory() {
-  const { isAdmin, hasAction } = useAuth()
+  const { user, isAdmin, hasAction } = useAuth()
+  // Sin ningún límite de descuento de apartados en "Datos de la tienda", el backend
+  // rechaza cualquier oferta pública (ProductService#validateApartadoDiscountPercent) —
+  // se deshabilita el campo desde aquí en vez de dejar capturar algo que va a fallar.
+  const apartadoDiscountsDisabled = user?.tienda?.maxApartadoDiscountAmount == null
+    && user?.tienda?.maxApartadoDiscountPercent == null
   const { notify, confirmDialog } = useNotify()
   // Permite llegar con el filtro ya aplicado desde afuera (ej. la tarjeta "Stock bajo" del
   // Dashboard enlaza a `/inventory?availability=lowStock`). Solo se lee al montar — un
@@ -502,7 +507,11 @@ export default function Inventory() {
       const categoryId = form.categoryId
       const payload = { ...form, price: Number(form.price), cost: form.cost ? Number(form.cost) : null,
         stock: Number(form.stock), minStock: Number(form.minStock), categoryId: Number(categoryId),
-        apartadoDiscountPercent: form.apartadoDiscountPercent === '' ? null : Number(form.apartadoDiscountPercent) }
+        // La oferta solo aplica si el producto sale en la tienda pública y la tienda
+        // permite descuentos de apartado; si no, se manda vacía (el campo solo se oculta
+        // o deshabilita, no se borra, y un valor viejo se seguiría enviando).
+        apartadoDiscountPercent: !form.isReservable || apartadoDiscountsDisabled || form.apartadoDiscountPercent === ''
+          ? null : Number(form.apartadoDiscountPercent) }
       if (editProduct) {
         await updateProduct(editProduct.id, payload)
       } else {
@@ -1087,9 +1096,13 @@ export default function Inventory() {
                   <input
                     className="input sm:max-w-[160px]" type="number" step="1"
                     placeholder="Sin oferta"
-                    value={form.apartadoDiscountPercent}
+                    value={apartadoDiscountsDisabled ? '' : form.apartadoDiscountPercent}
                     onChange={(e) => setForm({ ...form, apartadoDiscountPercent: e.target.value })}
+                    disabled={apartadoDiscountsDisabled}
                   />
+                  {apartadoDiscountsDisabled && (
+                    <p className="text-xs text-amber-600 mt-1">Para ofrecer descuento, primero configura un límite de descuento de apartados en "Datos de la tienda".</p>
+                  )}
                   {fieldErrors.apartadoDiscountPercent && <p className="text-red-600 text-xs mt-1">{fieldErrors.apartadoDiscountPercent}</p>}
                 </div>
               )}
