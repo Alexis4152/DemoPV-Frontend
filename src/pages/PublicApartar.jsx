@@ -969,11 +969,30 @@ export default function PublicApartar() {
               <button type="button" className="text-gray-400 hover:text-gray-600 text-xl leading-none shrink-0" onClick={() => setDetailProduct(null)}>✕</button>
             </div>
 
-            <div className="w-full aspect-square bg-purple-50 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
+            <div className="relative w-full aspect-square bg-purple-50 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
               {detailProduct.images?.[detailImageIndex] ? (
                 <img src={resolveMediaUrl(detailProduct.images[detailImageIndex])} alt={detailProduct.name} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-5xl">📦</span>
+              )}
+              {/* Flechas para recorrer la galería; dan la vuelta (de la última a la primera y
+                  viceversa). Solo si hay más de una foto. */}
+              {detailProduct.images?.length > 1 && (
+                <>
+                  <button
+                    type="button" aria-label="Foto anterior"
+                    className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 hover:bg-black/60 text-white text-2xl leading-none flex items-center justify-center transition-colors"
+                    onClick={() => setDetailImageIndex((i) => (i - 1 + detailProduct.images.length) % detailProduct.images.length)}
+                  >‹</button>
+                  <button
+                    type="button" aria-label="Foto siguiente"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 hover:bg-black/60 text-white text-2xl leading-none flex items-center justify-center transition-colors"
+                    onClick={() => setDetailImageIndex((i) => (i + 1) % detailProduct.images.length)}
+                  >›</button>
+                  <span className="absolute bottom-2 right-2 bg-black/50 text-white text-xs rounded-full px-2 py-0.5">
+                    {detailImageIndex + 1} / {detailProduct.images.length}
+                  </span>
+                </>
               )}
             </div>
 

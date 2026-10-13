@@ -22,6 +22,8 @@ const PAGE_SIZES = [10, 20, 50, 100]
 // también evita el viaje redondo al servidor solo para enterarse de que pesa de más, y dice
 // el motivo exacto en vez de un error genérico de red al fallar la subida.
 const MAX_IMAGE_MB = 5
+// Tope de fotos por producto — mismo valor que ProductImageService.MAX_IMAGES_PER_PRODUCT.
+const MAX_IMAGES = 3
 
 // -> los params que espera GET /products/page. Único filtro de disponibilidad que queda
 // (ver `lowStockOnly`) es "stock bajo", como un botón de encendido/apagado — los que
@@ -275,7 +277,7 @@ export default function Inventory() {
       e.target.value = ''
       return
     }
-    setPendingImages((prev) => [...prev, { file, previewUrl: URL.createObjectURL(file) }])
+    setPendingImages((prev) => prev.length >= MAX_IMAGES ? prev : [...prev, { file, previewUrl: URL.createObjectURL(file) }])
     e.target.value = ''
   }
 
@@ -1126,10 +1128,12 @@ export default function Inventory() {
                           </div>
                         </div>
                       ))}
+                      {productImages.length < MAX_IMAGES && (
                       <label className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer text-gray-400 hover:border-purple-400 hover:text-purple-500 text-xs text-center">
                         {uploadingImage ? '...' : '+ Foto'}
                         <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleUploadImage} disabled={uploadingImage} />
                       </label>
+                      )}
                     </>
                   ) : (
                     <>
@@ -1144,15 +1148,17 @@ export default function Inventory() {
                           </div>
                         </div>
                       ))}
+                      {pendingImages.length < MAX_IMAGES && (
                       <label className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer text-gray-400 hover:border-purple-400 hover:text-purple-500 text-xs text-center">
                         + Foto
                         <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleStageImage} />
                       </label>
+                      )}
                     </>
                   )}
                 </div>
                 <p className="text-xs text-gray-400">La primera foto (borde morado) es la portada del catálogo público.</p>
-                <p className="text-xs text-gray-400">PNG, JPG o WEBP, máximo {MAX_IMAGE_MB} MB por foto.</p>
+                <p className="text-xs text-gray-400">Hasta {MAX_IMAGES} fotos. PNG, JPG o WEBP, máximo {MAX_IMAGE_MB} MB por foto.</p>
               </div>
 
               {error && <p className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</p>}
