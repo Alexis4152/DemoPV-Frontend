@@ -232,13 +232,15 @@ export default function Reports() {
                       (no junto a los botones de arriba): así siempre queda al mismo nivel que
                       el resto de los filtros, en vez de competir por espacio con los presets. */}
                   <div className="mt-3 grid gap-2 border-t border-gray-100 pt-3 sm:grid-cols-2 xl:grid-cols-4">
-                    <label className="block">
+                    {/* Trae dos inputs de fecha (no uno solo, como ESTADO/MÉTODO DE PAGO) —
+                        necesita el doble de ancho o se encima con la celda de al lado. */}
+                    <label className="block sm:col-span-2">
                       <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Periodo</span>
                       <div className="flex items-center gap-2">
-                        <input type="date" aria-label="Desde" className="input h-9 py-1 text-sm w-full" value={from} max={to}
+                        <input type="date" aria-label="Desde" className="input h-9 min-w-0 flex-1 py-1 text-sm" value={from} max={to}
                           onChange={(e) => e.target.value && update({ from: e.target.value })} />
-                        <span className="text-gray-400">–</span>
-                        <input type="date" aria-label="Hasta" className="input h-9 py-1 text-sm w-full" value={to} min={from}
+                        <span className="shrink-0 text-gray-400">–</span>
+                        <input type="date" aria-label="Hasta" className="input h-9 min-w-0 flex-1 py-1 text-sm" value={to} min={from}
                           onChange={(e) => e.target.value && update({ to: e.target.value })} />
                       </div>
                     </label>
