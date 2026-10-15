@@ -216,8 +216,8 @@ export default function Reports() {
                   <ClockHistoryIcon className="h-4 w-4 text-purple-500" /> Muestra la situación en este momento; no depende de un periodo.
                 </p>
               ) : (
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-                  <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 xl:pb-0">
+                <>
+                  <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
                     {presets(today).map(([label, f, t]) => {
                       const active = f === from && t === to
                       return (
@@ -228,21 +228,25 @@ export default function Reports() {
                       )
                     })}
                   </div>
-                  <div className="flex w-full items-center gap-2 xl:ml-auto xl:w-auto">
-                    <input type="date" aria-label="Desde" className="input h-9 py-1 text-sm xl:w-40" value={from} max={to}
-                      onChange={(e) => e.target.value && update({ from: e.target.value })} />
-                    <span className="text-gray-400">–</span>
-                    <input type="date" aria-label="Hasta" className="input h-9 py-1 text-sm xl:w-40" value={to} min={from}
-                      onChange={(e) => e.target.value && update({ to: e.target.value })} />
+                  {/* El rango de fechas vive en esta misma grilla que ESTADO/MÉTODO DE PAGO
+                      (no junto a los botones de arriba): así siempre queda al mismo nivel que
+                      el resto de los filtros, en vez de competir por espacio con los presets. */}
+                  <div className="mt-3 grid gap-2 border-t border-gray-100 pt-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <label className="block">
+                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Periodo</span>
+                      <div className="flex items-center gap-2">
+                        <input type="date" aria-label="Desde" className="input h-9 py-1 text-sm w-full" value={from} max={to}
+                          onChange={(e) => e.target.value && update({ from: e.target.value })} />
+                        <span className="text-gray-400">–</span>
+                        <input type="date" aria-label="Hasta" className="input h-9 py-1 text-sm w-full" value={to} min={from}
+                          onChange={(e) => e.target.value && update({ to: e.target.value })} />
+                      </div>
+                    </label>
+                    {info.filters?.map((k) => (
+                      <FilterSelect key={k} name={k} type={info.type} value={filters[k]} onChange={(v) => update({ [k]: v })} />
+                    ))}
                   </div>
-                </div>
-              )}
-              {info.filters?.length > 0 && (
-                <div className="mt-3 grid gap-2 border-t border-gray-100 pt-3 sm:grid-cols-2 xl:grid-cols-4">
-                  {info.filters.map((k) => (
-                    <FilterSelect key={k} name={k} type={info.type} value={filters[k]} onChange={(v) => update({ [k]: v })} />
-                  ))}
-                </div>
+                </>
               )}
             </div>
           )}
