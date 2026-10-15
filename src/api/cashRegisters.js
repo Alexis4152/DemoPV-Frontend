@@ -24,6 +24,9 @@ export const addClosedRegisterMovement = (id, data) => api.post(`/cash-registers
 /** Personal de la tienda para los selects de quién puso/retiró/pagó dinero. */
 export const getCashPeople = () => api.get('/cash-registers/people')
 
+/** Reabre una caja que ya hizo su corte de fin de día (solo admin/supervisor). */
+export const reopenCashRegisterDay = (id) => api.post(`/cash-registers/${id}/reopen-day`)
+
 /** Destinatarios del reporte de fin de día de la tienda (y la lista efectiva). */
 export const getReportRecipients = () => api.get('/cash-registers/report-recipients')
 

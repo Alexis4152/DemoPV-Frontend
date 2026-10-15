@@ -62,6 +62,11 @@ export default function CloseCutModal({ cut, summary, blind = false, endOfDay = 
       ? `¿Hacer el corte de fin de día${base} Se enviará el reporte del día de ${registerName} y la caja no se podrá volver a abrir hasta mañana.`
       : `¿Hacer el traspaso de caja${base}`
     if (!(await confirmDialog(msg, { confirmText: actionLabel }))) return
+    // Fin de día: segunda confirmación, porque bloquea la caja hasta mañana y manda el reporte.
+    if (endOfDay && !(await confirmDialog(
+      `Confirma de nuevo: ${registerName} quedará CERRADA hasta mañana y se enviará el reporte del día. Esta acción no se puede deshacer.`,
+      { confirmText: 'Sí, cerrar el día' },
+    ))) return
     setLoading(true)
     try {
       const payload = { countedAmount: countedNum, notes: notes.trim() || null, largeDifferenceConfirmed: large && confirmed }
@@ -121,6 +126,9 @@ export default function CloseCutModal({ cut, summary, blind = false, endOfDay = 
             <SummaryRow label="Retiros"><span className="text-red-700">−{fmt(summary?.withdrawalsTotal)}</span></SummaryRow>
             {Number(summary?.reimbursementsTotal) > 0 && (
               <SummaryRow label="Reembolsos pagados"><span className="text-red-700">−{fmt(summary?.reimbursementsTotal)}</span></SummaryRow>
+            )}
+            {Number(summary?.loansOutTotal) > 0 && (
+              <SummaryRow label="Préstamos a otras cajas (no es gasto)"><span className="text-red-700">−{fmt(summary?.loansOutTotal)}</span></SummaryRow>
             )}
             <div className="border-t border-gray-200 pt-1.5"><SummaryRow label="Efectivo esperado" strong>{fmt(expected)}</SummaryRow></div>
             <p className="text-xs text-gray-500 pt-1">

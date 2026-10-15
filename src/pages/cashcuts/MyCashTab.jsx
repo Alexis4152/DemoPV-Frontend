@@ -94,6 +94,7 @@ export default function MyCashTab({ onChanged }) {
   const safeMovPage = Math.min(movPage, Math.max(movTotalPages - 1, 0))
   const pagedMovements = [...movements].reverse().slice(safeMovPage * movSize, (safeMovPage + 1) * movSize)
   const outflows = Number(summary?.expensesTotal ?? 0) + Number(summary?.withdrawalsTotal ?? 0) + Number(summary?.reimbursementsTotal ?? 0)
+    + Number(summary?.loansOutTotal ?? 0)
 
   return (
     <div className="space-y-6">
@@ -126,9 +127,9 @@ export default function MyCashTab({ onChanged }) {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button className="btn-secondary text-green-700" onClick={() => { setEntryPreset(null); setModal('entry') }}>↑ Registrar entrada</button>
+              <button className="btn-secondary text-green-700" onClick={() => { setEntryPreset(null); setModal('entry') }}>↑ Entrada de efectivo</button>
               <button className="btn-secondary text-red-700 flex items-center gap-2" onClick={() => setModal('exit')}>
-                ↓ Registrar salida
+                ↓ Salida de efectivo
                 {pendingReimbursements.length > 0 && (
                   <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
                     {pendingReimbursements.length} reembolso{pendingReimbursements.length === 1 ? '' : 's'}
@@ -159,7 +160,10 @@ export default function MyCashTab({ onChanged }) {
             <div className="card !p-4">
               <p className="text-sm text-gray-500">Salidas</p>
               <p className="text-2xl font-bold text-red-700">−{fmt(outflows)}</p>
-              <p className="text-xs text-gray-500">Gastos {fmt(summary?.expensesTotal)} · Retiros {fmt(summary?.withdrawalsTotal)}</p>
+              <p className="text-xs text-gray-500">
+                Gastos {fmt(summary?.expensesTotal)} · Retiros {fmt(summary?.withdrawalsTotal)}
+                {Number(summary?.loansOutTotal) > 0 && ` · Préstamos a otras cajas ${fmt(summary.loansOutTotal)}`}
+              </p>
             </div>
             <div className="rounded-xl p-4 bg-purple-600 text-white">
               <p className="text-sm font-semibold">Efectivo esperado en caja</p>
@@ -221,7 +225,7 @@ export default function MyCashTab({ onChanged }) {
 
       {modal === 'choose' && registers && (
         <ChooseRegisterModal
-          registers={registers}
+          registers={registers} isAdmin={isAdmin}
           onClose={() => setModal(null)}
           onContinue={(r) => { setReceiveRegister(r); setModal('receive') }}
         />

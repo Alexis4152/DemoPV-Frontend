@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getCashPeople, getCashRegisters, getHandovers } from '../../api/cashRegisters'
+import { getCashPeople, getCashRegisters, getHandovers, reopenCashRegisterDay } from '../../api/cashRegisters'
 import { useNotify } from '../../context/NotifyContext'
 import { ClosedMovementModal, ForceCloseModal, RegisterFormModal, ResolveHandoverModal } from './RegisterModals'
 import { CountBadge, Pagination, PendingBreakdown, fmt, fmtDate, fmtTime } from './common'
@@ -19,7 +19,7 @@ const RESOLUTION_LABELS = { UNREGISTERED_WITHDRAWAL: 'Retiro no registrado', SHO
  * turnos, con "Resolver" para las que tienen diferencia.
  */
 export default function RegistersTab({ onChanged }) {
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const [registers, setRegisters] = useState([])
   const [people, setPeople] = useState([])
   const [handovers, setHandovers] = useState({ content: [], totalPages: 0 })
@@ -42,6 +42,17 @@ export default function RegistersTab({ onChanged }) {
   useEffect(() => { loadRegisters() }, [])
   useEffect(() => { loadHandovers() }, [page, size])
   useEffect(() => { getCashPeople().then((r) => setPeople(r.data.data ?? [])).catch(() => setPeople([])) }, [])
+
+  async function reopenDay(r) {
+    if (!(await confirmDialog(`¿Reabrir ${r.name}? Ya hizo su corte de fin de día; al reabrirla, cualquiera podrá volver a abrir corte en ella hoy.`, { confirmText: 'Reabrir caja', danger: false }))) return
+    try {
+      await reopenCashRegisterDay(r.id)
+      notify(`${r.name} reabierta`, 'success')
+      afterSave()
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudo reabrir la caja', 'error')
+    }
+  }
 
   function afterSave() {
     setModal(null)
@@ -95,6 +106,11 @@ export default function RegistersTab({ onChanged }) {
                     </div>
                   ) : (
                     <p className="text-sm text-gray-500">Sin entrega pendiente.</p>
+                  )}
+                  {r.isActive && r.dayClosed && (
+                    <button className="w-full min-h-[44px] rounded-lg border border-purple-600 text-purple-700 font-semibold hover:bg-purple-50" onClick={() => reopenDay(r)}>
+                      Reabrir caja
+                    </button>
                   )}
                   {r.isActive && (
                     <div className="grid grid-cols-2 gap-2">

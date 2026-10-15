@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { uploadCashReceipt } from '../../api/cashCuts'
+import { getCashRegisters } from '../../api/cashRegisters'
 import { useNotify } from '../../context/NotifyContext'
 import { resolveMediaUrl } from '../../utils/media'
 
@@ -62,8 +63,36 @@ export const MOVEMENT_LABELS = {
   CONTRIBUTION: 'Aporte',
   FLOAT: 'Entrada de cambio',
   SHORTAGE_PAYMENT: 'Pago de faltante',
+  LOAN_OUT: 'Préstamo a otra caja',
+  LOAN_IN: 'Préstamo de otra caja',
 }
-export const isOutflow = (type) => type === 'EXPENSE' || type === 'WITHDRAWAL' || type === 'REIMBURSEMENT'
+export const isOutflow = (type) => type === 'EXPENSE' || type === 'WITHDRAWAL' || type === 'REIMBURSEMENT' || type === 'LOAN_OUT'
+
+/** Las demás cajas activas de la tienda (para préstamos entre cajas); se cargan solo si `enabled`. */
+export function useOtherRegisters(cut, enabled) {
+  const [list, setList] = useState(null)
+  useEffect(() => {
+    if (!enabled || list) return
+    getCashRegisters()
+      .then((r) => setList((r.data.data ?? []).filter((x) => x.isActive && x.id !== cut?.cashRegister?.id)))
+      .catch(() => setList([]))
+  }, [enabled, list, cut?.cashRegister?.id])
+  return list
+}
+
+/** Selector de la otra caja en un préstamo entre cajas. */
+export function RegisterSelect({ id, label, registers, value, onChange, error }) {
+  return (
+    <div>
+      <label htmlFor={id} className="text-xs font-medium text-gray-600 block mb-1">{label} <span className="text-red-500">*</span></label>
+      <select id={id} className="input" value={value ?? ''} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} disabled={registers == null}>
+        <option value="">{registers == null ? 'Cargando cajas…' : registers.length === 0 ? 'No hay otras cajas' : 'Elige la caja'}</option>
+        {(registers ?? []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+      </select>
+      {error && <p className="text-red-600 text-xs mt-1">{error}</p>}
+    </div>
+  )
+}
 
 export const DESTINATION_LABELS = { OWNER: 'Entregado al dueño', BANK: 'Depósito bancario', SAFE: 'Caja fuerte' }
 

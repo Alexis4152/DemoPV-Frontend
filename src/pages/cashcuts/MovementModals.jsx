@@ -3,8 +3,14 @@ import { addCashCutMovement } from '../../api/cashCuts'
 import { useAuth } from '../../context/AuthContext'
 import { useNotify } from '../../context/NotifyContext'
 import {
-  AmountField, DestinationSelect, Modal, PersonSelect, ReceiptInput, fmt, fmtDate, toAmount, MAX_AMOUNT,
+  AmountField, DestinationSelect, Modal, PersonSelect, ReceiptInput, RegisterSelect, fmt, fmtDate, toAmount, useOtherRegisters, MAX_AMOUNT,
 } from './common'
+
+// Nota que se prellena al elegir la otra caja en un préstamo; si el usuario la cambió, se respeta.
+const loanNote = (prefix, current, registers, id) => {
+  const name = registers?.find((r) => r.id === id)?.name
+  return name && (!current.trim() || current.startsWith(prefix)) ? `${prefix}${name}` : current
+}
 
 /**
  * Registrar entrada de efectivo en el corte: un aporte de una persona (que la tienda le
@@ -18,10 +24,13 @@ export function EntryModal({ cut, people, preset, onClose, onSaved }) {
   const [amount, setAmount] = useState(preset?.amount != null ? String(preset.amount) : '')
   const [personId, setPersonId] = useState(user?.id ?? null)
   const [concept, setConcept] = useState(preset?.concept ?? '')
+  const [counterpartId, setCounterpartId] = useState(null)
   const [errors, setErrors] = useState({})
   const [loading, setLoading] = useState(false)
   const amountNum = toAmount(amount)
   const personName = people.find((p) => p.id === personId)?.name
+  const otherRegisters = useOtherRegisters(cut, type === 'LOAN_IN')
+  const counterpartName = otherRegisters?.find((r) => r.id === counterpartId)?.name
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -30,18 +39,22 @@ export function EntryModal({ cut, people, preset, onClose, onSaved }) {
     if (amountNum != null && amountNum > MAX_AMOUNT) errs.amount = ''
     if (type === 'CONTRIBUTION' && !personId) errs.person = 'Indica quién puso el dinero'
     if (type === 'CONTRIBUTION' && !concept.trim()) errs.concept = 'Escribe el motivo'
+    if (type === 'LOAN_IN' && !counterpartId) errs.counterpart = 'Elige la caja que te prestó'
     if (concept.length > 150) errs.concept = 'El motivo no puede tener más de 150 caracteres'
     setErrors(errs)
     if (Object.keys(errs).length > 0) return
     const msg = type === 'CONTRIBUTION'
       ? `¿Registrar el aporte de ${fmt(amountNum)}${personName ? ` de ${personName}` : ''}? Quedará como reembolso pendiente.`
-      : `¿Registrar una entrada de ${fmt(amountNum)} a la caja?`
-    if (!(await confirmDialog(msg, { confirmText: 'Registrar entrada', danger: false }))) return
+      : type === 'LOAN_IN'
+        ? `¿Registrar el préstamo de ${fmt(amountNum)} recibido de ${counterpartName}?`
+        : `¿Registrar una entrada de ${fmt(amountNum)} a la caja?`
+    if (!(await confirmDialog(msg, { confirmText: 'Entrada de efectivo', danger: false }))) return
     setLoading(true)
     try {
       await addCashCutMovement(cut.id, {
         type, amount: amountNum, concept: concept.trim() || null,
         personId: type === 'CONTRIBUTION' ? personId : null,
+        counterpartRegisterId: type === 'LOAN_IN' ? counterpartId : null,
       })
       notify('Entrada registrada', 'success')
       onSaved()
@@ -53,13 +66,14 @@ export function EntryModal({ cut, people, preset, onClose, onSaved }) {
   }
 
   return (
-    <Modal title="Registrar entrada de efectivo" onClose={onClose} wide>
+    <Modal title="Entrada de efectivo" onClose={onClose} wide>
       <form onSubmit={handleSubmit} className="space-y-4">
         <fieldset className="space-y-2">
           <legend className="text-xs font-medium text-gray-600 mb-1">Tipo de entrada</legend>
           {[
             { value: 'CONTRIBUTION', title: 'Aporte de una persona', desc: 'Alguien puso dinero de su bolsa; la tienda se lo debe regresar.' },
             { value: 'FLOAT', title: 'Cambio o fondo extra', desc: 'Dinero que se agrega a la caja y no se reembolsa.' },
+            { value: 'LOAN_IN', title: 'De otra caja', desc: 'Préstamo de efectivo que te pasa otra caja de la tienda.' },
           ].map((o) => (
             <label key={o.value} className={`flex gap-3 items-start p-3 rounded-xl cursor-pointer ${type === o.value ? 'border-2 border-purple-600 bg-purple-50' : 'border border-gray-200'}`}>
               <input type="radio" name="entry-type" className="mt-1 w-4 h-4" checked={type === o.value} onChange={() => setType(o.value)} />
@@ -76,11 +90,17 @@ export function EntryModal({ cut, people, preset, onClose, onSaved }) {
               {errors.person && <p className="text-red-600 text-xs mt-1">{errors.person}</p>}
             </div>
           )}
+          {type === 'LOAN_IN' && (
+            <RegisterSelect
+              id="entry-counterpart" label="¿De qué caja?" registers={otherRegisters} value={counterpartId} error={errors.counterpart}
+              onChange={(id) => { setCounterpartId(id); setConcept((c) => loanNote('Préstamo de ', c, otherRegisters, id)) }}
+            />
+          )}
         </div>
 
         <div>
           <label htmlFor="entry-concept" className="text-xs font-medium text-gray-600 block mb-1">
-            Motivo {type === 'CONTRIBUTION' ? <span className="text-red-500">*</span> : '(opcional)'}
+            {type === 'LOAN_IN' ? 'Nota' : 'Motivo'} {type === 'CONTRIBUTION' ? <span className="text-red-500">*</span> : '(opcional)'}
           </label>
           <input id="entry-concept" className="input" value={concept} onChange={(e) => setConcept(e.target.value)} />
           {errors.concept && <p className="text-red-600 text-xs mt-1">{errors.concept}</p>}
@@ -91,11 +111,16 @@ export function EntryModal({ cut, people, preset, onClose, onSaved }) {
             Quedará como <strong>reembolso pendiente</strong>{personName ? ` a nombre de ${personName}` : ''} hasta que se le pague.
           </p>
         )}
+        {type === 'LOAN_IN' && (
+          <p className="text-sm text-blue-900 bg-blue-50 rounded-lg p-3">
+            Suma al efectivo de tu caja. La caja que te prestó registra su parte en <strong>Salida de efectivo → A otra caja</strong>.
+          </p>
+        )}
 
         <div className="flex gap-2 justify-end pt-1">
           <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
           <button type="submit" className="bg-green-700 hover:bg-green-800 text-white font-medium px-4 py-2 rounded-lg disabled:opacity-50" disabled={loading}>
-            {loading ? '...' : 'Registrar entrada'}
+            {loading ? '...' : 'Entrada de efectivo'}
           </button>
         </div>
       </form>
@@ -115,6 +140,7 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
   const tabs = [
     { key: 'EXPENSE', label: 'Gasto' },
     ...(isAdmin ? [{ key: 'WITHDRAWAL', label: 'Retiro' }] : []),
+    { key: 'LOAN_OUT', label: 'A otra caja' },
     ...(reimbursements.length > 0 ? [{ key: 'REIMBURSEMENT', label: 'Reembolso', count: reimbursements.length }] : []),
   ]
   const [tab, setTab] = useState('EXPENSE')
@@ -125,8 +151,11 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
   const [reference, setReference] = useState('')
   const [receiptPath, setReceiptPath] = useState('')
   const [reimbursementId, setReimbursementId] = useState(reimbursements[0]?.id ?? null)
+  const [counterpartId, setCounterpartId] = useState(null)
   const [errors, setErrors] = useState({})
   const [loading, setLoading] = useState(false)
+  const otherRegisters = useOtherRegisters(cut, tab === 'LOAN_OUT')
+  const counterpartName = otherRegisters?.find((r) => r.id === counterpartId)?.name
 
   const selectedReimbursement = reimbursements.find((r) => r.id === reimbursementId)
   const amountNum = tab === 'REIMBURSEMENT' ? Number(selectedReimbursement?.amount ?? 0) : toAmount(amount)
@@ -136,6 +165,8 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
   const shortfall = exceeds ? Math.round((amountNum - availableNum) * 100) / 100 : 0
 
   function switchTab(key) {
+    // El concepto de un gasto y la nota de un préstamo no se mezclan.
+    if (key === 'LOAN_OUT' || tab === 'LOAN_OUT') setConcept('')
     setTab(key)
     setErrors({})
   }
@@ -148,6 +179,7 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
     if (tab === 'EXPENSE' && !concept.trim()) errs.concept = 'Escribe el concepto del gasto'
     if (concept.length > 150) errs.concept = 'El concepto no puede tener más de 150 caracteres'
     if (tab === 'WITHDRAWAL' && !destination) errs.destination = 'Indica el destino del dinero'
+    if (tab === 'LOAN_OUT' && !counterpartId) errs.counterpart = 'Elige la caja a la que prestas'
     if (tab === 'REIMBURSEMENT' && !selectedReimbursement) errs.reimbursement = 'Elige el reembolso a pagar'
     if (reference.length > 100) errs.reference = 'La referencia no puede tener más de 100 caracteres'
     setErrors(errs)
@@ -156,8 +188,10 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
       ? `¿Pagar el reembolso de ${fmt(amountNum)} a ${selectedReimbursement?.person?.name} con efectivo de la caja?`
       : tab === 'WITHDRAWAL'
         ? `¿Registrar un retiro de ${fmt(amountNum)}?`
-        : `¿Registrar el gasto «${concept.trim()}» por ${fmt(amountNum)}?`
-    if (!(await confirmDialog(msg, { confirmText: tab === 'REIMBURSEMENT' ? 'Pagar reembolso' : 'Registrar salida' }))) return
+        : tab === 'LOAN_OUT'
+          ? `¿Prestar ${fmt(amountNum)} a ${counterpartName}? Sale de esta caja, pero no cuenta como gasto.`
+          : `¿Registrar el gasto «${concept.trim()}» por ${fmt(amountNum)}?`
+    if (!(await confirmDialog(msg, { confirmText: tab === 'REIMBURSEMENT' ? 'Pagar reembolso' : 'Salida de efectivo' }))) return
     setLoading(true)
     try {
       const payload = tab === 'REIMBURSEMENT'
@@ -166,10 +200,11 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
             type: tab, amount: amountNum, concept: concept.trim() || null,
             personId: tab === 'WITHDRAWAL' ? personId : null,
             destination: tab === 'WITHDRAWAL' ? destination : null,
-            reference: reference.trim() || null, receiptPath: receiptPath || null,
+            counterpartRegisterId: tab === 'LOAN_OUT' ? counterpartId : null,
+            reference: reference.trim() || null, receiptPath: tab === 'LOAN_OUT' ? null : receiptPath || null,
           }
       await addCashCutMovement(cut.id, payload)
-      notify(tab === 'REIMBURSEMENT' ? 'Reembolso pagado' : 'Salida registrada', 'success')
+      notify(tab === 'REIMBURSEMENT' ? 'Reembolso pagado' : tab === 'LOAN_OUT' ? 'Préstamo registrado' : 'Salida registrada', 'success')
       onSaved()
     } catch (err) {
       notify(err.response?.data?.message ?? 'No se pudo registrar la salida', 'error')
@@ -179,7 +214,7 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
   }
 
   return (
-    <Modal title="Registrar salida de efectivo" onClose={onClose} wide>
+    <Modal title="Salida de efectivo" onClose={onClose} wide>
       <form onSubmit={handleSubmit} className="space-y-4">
         {tabs.length > 1 && (
           <div role="tablist" aria-label="Tipo de salida" className="grid gap-1 p-1 bg-gray-100 rounded-xl" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
@@ -239,11 +274,24 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
               </div>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <AmountField id="exit-amount" label={tab === 'WITHDRAWAL' ? 'Monto a retirar ($)' : 'Monto ($)'} value={amount} onChange={setAmount} error={errors.amount} />
+              <AmountField id="exit-amount" label={tab === 'WITHDRAWAL' ? 'Monto a retirar ($)' : tab === 'LOAN_OUT' ? 'Monto a prestar ($)' : 'Monto ($)'} value={amount} onChange={setAmount} error={errors.amount} />
               {tab === 'WITHDRAWAL' && (
                 <PersonSelect id="exit-person" label="¿Quién retira?" people={people} value={personId} onChange={setPersonId} />
               )}
+              {tab === 'LOAN_OUT' && (
+                <RegisterSelect
+                  id="exit-counterpart" label="¿A qué caja?" registers={otherRegisters} value={counterpartId} error={errors.counterpart}
+                  onChange={(id) => { setCounterpartId(id); setConcept((c) => loanNote('Préstamo a ', c, otherRegisters, id)) }}
+                />
+              )}
             </div>
+            {tab === 'LOAN_OUT' && (
+              <div>
+                <label htmlFor="exit-note" className="text-xs font-medium text-gray-600 block mb-1">Nota (opcional)</label>
+                <input id="exit-note" className="input" value={concept} onChange={(e) => setConcept(e.target.value)} placeholder="Préstamo a Caja 2" />
+                {errors.concept && <p className="text-red-600 text-xs mt-1">{errors.concept}</p>}
+              </div>
+            )}
             {tab === 'WITHDRAWAL' && (
               <div>
                 <DestinationSelect id="exit-destination" value={destination} onChange={setDestination} />
@@ -271,7 +319,7 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
                   type="button" className="btn-secondary text-sm"
                   onClick={() => onNeedEntry({ amount: shortfall, concept: concept.trim() ? `Para ${concept.trim()}` : '' })}
                 >
-                  Registrar entrada de {fmt(shortfall)}
+                  Entrada de efectivo de {fmt(shortfall)}
                 </button>
               </div>
             )}
@@ -284,12 +332,20 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
           </p>
         )}
 
-        {tab !== 'WITHDRAWAL' && <ReceiptInput value={receiptPath} onChange={setReceiptPath} />}
+        {tab === 'LOAN_OUT' && !exceeds && (
+          <p className="text-sm text-blue-900 bg-blue-50 rounded-lg p-3">
+            <strong>Un préstamo no es un gasto:</strong> sale de esta caja pero el dinero sigue en la tienda.
+            {!blind && amountNum > 0 && ` Quedarán ${fmt(availableNum - amountNum)} en caja.`}
+            {' '}La otra caja registra su parte en <strong>Entrada de efectivo → De otra caja</strong>.
+          </p>
+        )}
+
+        {tab !== 'WITHDRAWAL' && tab !== 'LOAN_OUT' && <ReceiptInput value={receiptPath} onChange={setReceiptPath} />}
 
         <div className="flex gap-2 justify-end pt-1">
           <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
           <button type="submit" className="btn-danger disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || exceeds}>
-            {loading ? '...' : tab === 'REIMBURSEMENT' ? `Pagar reembolso ${fmt(amountNum)}` : tab === 'WITHDRAWAL' ? 'Registrar retiro' : 'Registrar salida'}
+            {loading ? '...' : tab === 'REIMBURSEMENT' ? `Pagar reembolso ${fmt(amountNum)}` : tab === 'WITHDRAWAL' ? 'Registrar retiro' : tab === 'LOAN_OUT' ? 'Prestar' : 'Salida de efectivo'}
           </button>
         </div>
       </form>

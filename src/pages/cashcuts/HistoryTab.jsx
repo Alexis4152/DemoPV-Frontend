@@ -218,6 +218,9 @@ export function CutDetailModal({ cut, onClose }) {
           <SummaryRow label="Gastos">−{fmt(summary?.expensesTotal ?? cut.expenses)}</SummaryRow>
           <SummaryRow label="Retiros">−{fmt(summary?.withdrawalsTotal ?? cut.withdrawalsTotal)}</SummaryRow>
           <SummaryRow label="Reembolsos pagados">−{fmt(summary?.reimbursementsTotal ?? cut.reimbursementsTotal)}</SummaryRow>
+          {Number(summary?.loansOutTotal ?? cut.loansOutTotal) > 0 && (
+            <SummaryRow label="Préstamos a otras cajas">−{fmt(summary?.loansOutTotal ?? cut.loansOutTotal)}</SummaryRow>
+          )}
           <div className="border-t border-gray-100 pt-1.5">
             <SummaryRow label="Efectivo esperado" strong>{fmt(closed ? cut.closingAmount : summary?.expectedCash)}</SummaryRow>
           </div>

@@ -10,7 +10,8 @@ import {
  * que están en uso salen deshabilitadas con quién las tiene. Cada caja libre muestra cuánto
  * se recibe y por qué (desglose de la entrega pendiente).
  */
-export function ChooseRegisterModal({ registers, onClose, onContinue }) {
+export function ChooseRegisterModal({ registers, isAdmin = false, onClose, onContinue }) {
+  const { confirmDialog } = useNotify()
   const active = registers.filter((r) => r.isActive)
   const firstFree = active.find((r) => !r.openCut && !r.dayClosed)
   const [selectedId, setSelectedId] = useState(firstFree?.id ?? null)
@@ -23,7 +24,8 @@ export function ChooseRegisterModal({ registers, onClose, onContinue }) {
         {active.length === 0 && <p className="text-sm text-gray-500">No hay cajas activas. Pide a un administrador que dé de alta una.</p>}
         {active.map((r) => {
           // En uso, o ya hizo su corte de fin de día (se reabre con el cierre programado o mañana).
-          const busy = !!r.openCut || r.dayClosed
+          // Tras su fin de día, solo admin/supervisor la puede volver a abrir hoy.
+          const busy = !!r.openCut || (r.dayClosed && !isAdmin)
           const checked = r.id === selectedId
           const p = r.pending
           return (
@@ -39,7 +41,11 @@ export function ChooseRegisterModal({ registers, onClose, onContinue }) {
                   {!busy && p?.amount != null && <span className="font-semibold">{fmt(p.amount)}</span>}
                 </span>
                 {r.dayClosed && !r.openCut ? (
-                  <span className="block text-sm text-gray-500">Ya hizo su corte de fin de día. Se vuelve a abrir mañana.</span>
+                  <span className={`block text-sm ${isAdmin ? 'text-amber-800' : 'text-gray-500'}`}>
+                    {isAdmin
+                      ? 'Ya hizo su corte de fin de día. Como administrador puedes volver a abrirla.'
+                      : 'Ya hizo su corte de fin de día. Solo un administrador o supervisor puede volver a abrirla hoy.'}
+                  </span>
                 ) : busy ? (
                   <span className="block text-sm text-gray-500">En uso por {r.openCut.userName} desde las {fmtTime(r.openCut.openedAt)}</span>
                 ) : p?.amount != null ? (
@@ -60,7 +66,16 @@ export function ChooseRegisterModal({ registers, onClose, onContinue }) {
       </p>
       <div className="flex gap-2 justify-end pt-4">
         <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
-        <button type="button" className="btn-primary" disabled={!selected || !!selected.openCut || selected.dayClosed} onClick={() => onContinue(selected)}>Continuar</button>
+        <button
+          type="button" className="btn-primary"
+          disabled={!selected || !!selected.openCut || (selected.dayClosed && !isAdmin)}
+          onClick={async () => {
+            if (selected.dayClosed && !(await confirmDialog(
+              `${selected.name} ya hizo su corte de fin de día. ¿Volver a abrirla hoy?`, { confirmText: 'Sí, abrirla', danger: false },
+            ))) return
+            onContinue(selected)
+          }}
+        >Continuar</button>
       </div>
     </Modal>
   )
