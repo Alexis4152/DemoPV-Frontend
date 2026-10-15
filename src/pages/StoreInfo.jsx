@@ -124,6 +124,7 @@ export default function StoreInfo() {
         defaultApartadoHours: info.tienda?.defaultApartadoHours ?? 24,
         dailySalesGoal: info.tienda?.dailySalesGoal ?? '',
         pollingIntervalSeconds: info.tienda?.pollingIntervalSeconds ?? 20,
+        blindCashCount: info.tienda?.blindCashCount ?? false,
       })
     }).finally(() => setLoading(false))
   }, [tiendaId])
@@ -212,7 +213,7 @@ export default function StoreInfo() {
         name: form.name, maxDiscountAmount, maxDiscountPercent,
         apartadosEnabled: form.apartadosEnabled, publicSlug: savedSlug,
         maxApartadoDiscountAmount, maxApartadoDiscountPercent, defaultApartadoHours: Number(form.defaultApartadoHours) || 24,
-        dailySalesGoal, pollingIntervalSeconds,
+        dailySalesGoal, pollingIntervalSeconds, blindCashCount: form.blindCashCount,
       })
       setMessage('Datos guardados')
     } catch (err) {
@@ -411,6 +412,22 @@ export default function StoreInfo() {
         {activeTab === 'ventas' && (
         <>
         <div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.blindCashCount}
+              onChange={(e) => setForm({ ...form, blindCashCount: e.target.checked })}
+            />
+            <span className="text-sm font-semibold text-gray-800">Conteo ciego al cerrar corte</span>
+          </label>
+          <p className="text-xs text-gray-500 mt-1 mb-1">
+            El cajero no ve el efectivo esperado ni sus ventas en efectivo mientras su corte está abierto: cuenta
+            el efectivo, cierra y solo entonces ve si cuadró. Así no puede ajustar su conteo para que coincida.
+            Los administradores y supervisores siempre ven todo.
+          </p>
+        </div>
+
+        <div className="border-t border-gray-100 pt-4">
           <p className="text-sm font-semibold text-gray-800">Meta de venta diaria</p>
           <p className="text-xs text-gray-500 mb-3">
             El Dashboard muestra la venta del día contra esta meta, con el % de avance. Déjala en blanco

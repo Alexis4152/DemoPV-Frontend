@@ -77,6 +77,9 @@ export default function Inventory() {
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [categories, setCategories] = useState([])
   const [countSheetLoading, setCountSheetLoading] = useState(null)
+  // Menú "Más opciones" del encabezado (descargas de inventario y carga masiva).
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreMenuRef = useRef(null)
   const [search, setSearch] = useState('')
   const [filterCat, setFilterCat] = useState('')
   // Único filtro de disponibilidad: stock bajo, como botón de encendido/apagado (no un
@@ -747,6 +750,19 @@ export default function Inventory() {
     }
   }
 
+  // Cierra "Más opciones" al hacer clic fuera del menú o con Escape.
+  useEffect(() => {
+    if (!moreOpen) return
+    const onDown = (e) => { if (!moreMenuRef.current?.contains(e.target)) setMoreOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setMoreOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [moreOpen])
+
   // Hoja de conteo físico (producto, cantidad actual, "Cantidad real" en blanco). Libre
   // para cualquiera con acceso a Inventario — no depende de ninguna acción (ver
   // ProductController#countSheetExcel). `countSheetLoading` = formato en curso.
@@ -811,15 +827,35 @@ export default function Inventory() {
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Inventario</h2>
         <div className="flex flex-wrap gap-2">
-          <button className="btn-secondary text-sm" onClick={() => handleDownloadCountSheet('xlsx')} disabled={countSheetLoading !== null}>
-            {countSheetLoading === 'xlsx' ? 'Generando…' : '📊 Inventario Excel'}
-          </button>
-          <button className="btn-secondary text-sm" onClick={() => handleDownloadCountSheet('pdf')} disabled={countSheetLoading !== null}>
-            {countSheetLoading === 'pdf' ? 'Generando…' : '📄 Inventario PDF'}
-          </button>
-          {canBulkImport && <button className="btn-secondary text-sm" onClick={handleDownloadTemplate}>⬇️ Plantilla de carga masiva</button>}
-          {canBulkImport && <button className="btn-secondary text-sm" onClick={openBulkImport}>📤 Carga masiva</button>}
           {hasAction('INVENTORY', 'CREATE') && <button className="btn-primary" onClick={() => openNew()}>+ Nuevo producto</button>}
+          <div className="relative" ref={moreMenuRef}>
+            <button
+              type="button" className="btn-secondary text-sm h-full"
+              aria-haspopup="menu" aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((o) => !o)}
+            >
+              {countSheetLoading ? 'Generando…' : 'Más opciones ▾'}
+            </button>
+            {moreOpen && (
+              <div role="menu" className="absolute right-0 mt-1 w-60 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-30">
+                {[
+                  { label: '📊 Inventario Excel', onClick: () => handleDownloadCountSheet('xlsx'), show: true, disabled: countSheetLoading !== null },
+                  { label: '📄 Inventario PDF', onClick: () => handleDownloadCountSheet('pdf'), show: true, disabled: countSheetLoading !== null },
+                  { label: '⬇️ Plantilla de carga masiva', onClick: handleDownloadTemplate, show: canBulkImport },
+                  { label: '📤 Carga masiva', onClick: openBulkImport, show: canBulkImport },
+                ].filter((o) => o.show).map((o) => (
+                  <button
+                    key={o.label} type="button" role="menuitem"
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                    disabled={o.disabled}
+                    onClick={() => { setMoreOpen(false); o.onClick() }}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
