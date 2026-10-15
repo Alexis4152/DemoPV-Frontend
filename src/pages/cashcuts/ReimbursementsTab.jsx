@@ -4,9 +4,8 @@ import { getPendingReimbursementTotal, getReimbursements, payReimbursement } fro
 import { useAuth } from '../../context/AuthContext'
 import { useNotify } from '../../context/NotifyContext'
 import { resolveMediaUrl } from '../../utils/media'
-import { Modal, PersonSelect, ReceiptInput, fmt, fmtDate } from './common'
+import { Modal, Pagination, PersonSelect, ReceiptInput, fmt, fmtDate } from './common'
 
-const PAGE_SIZE = 20
 const METHOD_LABELS = { TRANSFER: 'Transferencia', EXTERNAL_CASH: 'Efectivo externo' }
 
 /**
@@ -16,17 +15,18 @@ const METHOD_LABELS = { TRANSFER: 'Transferencia', EXTERNAL_CASH: 'Efectivo exte
 export default function ReimbursementsTab({ onChanged }) {
   const [status, setStatus] = useState('PENDING')
   const [page, setPage] = useState(0)
+  const [size, setSize] = useState(20)
   const [data, setData] = useState({ content: [], totalPages: 0, totalElements: 0 })
   const [pendingTotal, setPendingTotal] = useState(0)
   const [paying, setPaying] = useState(null)
 
   function load() {
-    getReimbursements({ status, page, size: PAGE_SIZE })
+    getReimbursements({ status, page, size })
       .then((r) => setData(r.data.data ?? { content: [], totalPages: 0, totalElements: 0 }))
       .catch(() => setData({ content: [], totalPages: 0, totalElements: 0 }))
     getPendingReimbursementTotal().then((r) => setPendingTotal(r.data.data ?? 0)).catch(() => {})
   }
-  useEffect(() => { load() }, [status, page])
+  useEffect(() => { load() }, [status, page, size])
 
   const rows = data.content ?? []
 
@@ -88,13 +88,10 @@ export default function ReimbursementsTab({ onChanged }) {
             </tbody>
           </table>
         </div>
-        {data.totalPages > 1 && (
-          <div className="flex justify-end items-center gap-2 px-4 py-3 border-t border-gray-100 text-xs">
-            <button className="btn-secondary py-1 px-3 text-xs disabled:opacity-40" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>‹ Anterior</button>
-            <span className="text-gray-500">Página {page + 1} de {data.totalPages}</span>
-            <button className="btn-secondary py-1 px-3 text-xs disabled:opacity-40" disabled={page + 1 >= data.totalPages} onClick={() => setPage((p) => p + 1)}>Siguiente ›</button>
-          </div>
-        )}
+        <Pagination
+          page={page} size={size} totalElements={data.totalElements ?? 0} totalPages={data.totalPages ?? 0}
+          count={rows.length} onPageChange={setPage} onSizeChange={(n) => { setSize(n); setPage(0) }}
+        />
       </div>
       <p className="text-sm text-gray-500">
         Al marcarlo como pagado se pregunta de dónde sale el dinero: de una caja abierta (se registra como salida en ese corte) o por fuera de la caja (solo queda la constancia de quién lo pagó y cuándo).
@@ -117,7 +114,7 @@ export default function ReimbursementsTab({ onChanged }) {
  */
 function PayReimbursementModal({ reimbursement, onClose, onPaid }) {
   const { user } = useAuth()
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const amount = Number(reimbursement.amount)
   const [openCuts, setOpenCuts] = useState(null)
   const [people, setPeople] = useState([])
@@ -150,6 +147,10 @@ function PayReimbursementModal({ reimbursement, onClose, onPaid }) {
     e.preventDefault()
     if (source === 'CASH_CUT' && !selectedCut) { notify('Elige la caja de la que sale el dinero', 'error'); return }
     if (reference.length > 100) { notify('La referencia no puede tener más de 100 caracteres', 'error'); return }
+    const msg = source === 'CASH_CUT'
+      ? `¿Pagar ${fmt(amount)} a ${reimbursement.person?.name} con efectivo de ${selectedCut.registerName} (corte #${selectedCut.id})?`
+      : `¿Registrar que se le pagaron ${fmt(amount)} a ${reimbursement.person?.name} por fuera de la caja?`
+    if (!(await confirmDialog(msg, { confirmText: 'Confirmar pago', danger: false }))) return
     setLoading(true)
     try {
       await payReimbursement(reimbursement.id, source === 'CASH_CUT'

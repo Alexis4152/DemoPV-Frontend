@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react'
 import { getCashPeople, getCashRegisters, getHandovers } from '../../api/cashRegisters'
 import { useNotify } from '../../context/NotifyContext'
 import { ClosedMovementModal, ForceCloseModal, RegisterFormModal, ResolveHandoverModal } from './RegisterModals'
-import { CountBadge, PendingBreakdown, fmt, fmtDate, fmtTime } from './common'
+import { CountBadge, Pagination, PendingBreakdown, fmt, fmtDate, fmtTime } from './common'
 
-const HANDOVER_PAGE_SIZE = 10
 
 const STATUS_BADGE = {
   OK: ['De acuerdo', 'bg-green-100 text-green-800'],
@@ -25,6 +24,7 @@ export default function RegistersTab({ onChanged }) {
   const [people, setPeople] = useState([])
   const [handovers, setHandovers] = useState({ content: [], totalPages: 0 })
   const [page, setPage] = useState(0)
+  const [size, setSize] = useState(10)
   // { kind: 'form'|'closed'|'force'|'resolve', register?, handover?, type? }
   const [modal, setModal] = useState(null)
 
@@ -34,13 +34,13 @@ export default function RegistersTab({ onChanged }) {
       .catch((err) => notify(err.response?.data?.message ?? 'No se pudieron cargar las cajas', 'error'))
   }
   function loadHandovers() {
-    getHandovers({ page, size: HANDOVER_PAGE_SIZE })
+    getHandovers({ page, size })
       .then((r) => setHandovers(r.data.data ?? { content: [], totalPages: 0 }))
       .catch(() => setHandovers({ content: [], totalPages: 0 }))
   }
 
   useEffect(() => { loadRegisters() }, [])
-  useEffect(() => { loadHandovers() }, [page])
+  useEffect(() => { loadHandovers() }, [page, size])
   useEffect(() => { getCashPeople().then((r) => setPeople(r.data.data ?? [])).catch(() => setPeople([])) }, [])
 
   function afterSave() {
@@ -68,7 +68,7 @@ export default function RegistersTab({ onChanged }) {
                 <span className="text-lg font-bold text-gray-900">{r.name}</span>
                 <span className="flex items-center gap-2">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${!r.isActive ? 'bg-gray-200 text-gray-700' : r.openCut ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'}`}>
-                    {!r.isActive ? 'Desactivada' : r.openCut ? 'En uso' : 'Cerrada'}
+                    {!r.isActive ? 'Desactivada' : r.openCut ? 'En uso' : r.dayClosed ? 'Fin de día' : 'Cerrada'}
                   </span>
                   <button type="button" className="text-xs text-purple-700 hover:underline" onClick={() => setModal({ kind: 'form', register: r })}>Editar</button>
                 </span>
@@ -141,7 +141,10 @@ export default function RegistersTab({ onChanged }) {
                         )}
                       </div>
                       {h.status === 'RESOLVED' && (
-                        <div className="text-xs text-gray-500 mt-1">{RESOLUTION_LABELS[h.resolution]} · {h.resolvedByName}{h.resolutionNote ? ` · «${h.resolutionNote}»` : ''}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {RESOLUTION_LABELS[h.resolution]} · {h.resolvedByName}{h.resolutionNote ? ` · «${h.resolutionNote}»` : ''}
+                          {h.shortageId && <span className="block font-semibold text-red-700">Faltante a cargo de {h.shortagePersonName}</span>}
+                        </div>
                       )}
                       {h.receiveNote && h.status !== 'RESOLVED' && <div className="text-xs text-gray-500 mt-1">«{h.receiveNote}»</div>}
                     </td>
@@ -154,13 +157,10 @@ export default function RegistersTab({ onChanged }) {
             </tbody>
           </table>
         </div>
-        {handovers.totalPages > 1 && (
-          <div className="flex justify-end items-center gap-2 px-4 py-3 border-t border-gray-100 text-xs">
-            <button className="btn-secondary py-1 px-3 text-xs disabled:opacity-40" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>‹ Anterior</button>
-            <span className="text-gray-500">Página {page + 1} de {handovers.totalPages}</span>
-            <button className="btn-secondary py-1 px-3 text-xs disabled:opacity-40" disabled={page + 1 >= handovers.totalPages} onClick={() => setPage((p) => p + 1)}>Siguiente ›</button>
-          </div>
-        )}
+        <Pagination
+          page={page} size={size} totalElements={handovers.totalElements ?? 0} totalPages={handovers.totalPages ?? 0}
+          count={handovers.content.length} onPageChange={setPage} onSizeChange={(n) => { setSize(n); setPage(0) }}
+        />
       </div>
 
       {modal?.kind === 'form' && <RegisterFormModal register={modal.register} onClose={() => setModal(null)} onSaved={afterSave} />}

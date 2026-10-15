@@ -12,7 +12,7 @@ import {
  */
 export function ChooseRegisterModal({ registers, onClose, onContinue }) {
   const active = registers.filter((r) => r.isActive)
-  const firstFree = active.find((r) => !r.openCut)
+  const firstFree = active.find((r) => !r.openCut && !r.dayClosed)
   const [selectedId, setSelectedId] = useState(firstFree?.id ?? null)
   const selected = active.find((r) => r.id === selectedId)
 
@@ -22,7 +22,8 @@ export function ChooseRegisterModal({ registers, onClose, onContinue }) {
         <legend className="sr-only">Caja</legend>
         {active.length === 0 && <p className="text-sm text-gray-500">No hay cajas activas. Pide a un administrador que dé de alta una.</p>}
         {active.map((r) => {
-          const busy = !!r.openCut
+          // En uso, o ya hizo su corte de fin de día (se reabre con el cierre programado o mañana).
+          const busy = !!r.openCut || r.dayClosed
           const checked = r.id === selectedId
           const p = r.pending
           return (
@@ -37,7 +38,9 @@ export function ChooseRegisterModal({ registers, onClose, onContinue }) {
                   <span className={`font-semibold ${busy ? 'text-gray-500' : 'text-gray-900'}`}>{r.name}</span>
                   {!busy && p?.amount != null && <span className="font-semibold">{fmt(p.amount)}</span>}
                 </span>
-                {busy ? (
+                {r.dayClosed && !r.openCut ? (
+                  <span className="block text-sm text-gray-500">Ya hizo su corte de fin de día. Se vuelve a abrir mañana.</span>
+                ) : busy ? (
                   <span className="block text-sm text-gray-500">En uso por {r.openCut.userName} desde las {fmtTime(r.openCut.openedAt)}</span>
                 ) : p?.amount != null ? (
                   <>
@@ -57,7 +60,7 @@ export function ChooseRegisterModal({ registers, onClose, onContinue }) {
       </p>
       <div className="flex gap-2 justify-end pt-4">
         <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
-        <button type="button" className="btn-primary" disabled={!selected || !!selected.openCut} onClick={() => onContinue(selected)}>Continuar</button>
+        <button type="button" className="btn-primary" disabled={!selected || !!selected.openCut || selected.dayClosed} onClick={() => onContinue(selected)}>Continuar</button>
       </div>
     </Modal>
   )
@@ -69,7 +72,7 @@ export function ChooseRegisterModal({ registers, onClose, onContinue }) {
  * El fondo inicial es siempre lo que contó (lo que de verdad hay en la caja).
  */
 export function ReceiveModal({ register, onBack, onClose, onOpened }) {
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const pending = register.pending
   const expected = pending?.amount ?? null
   const [counted, setCounted] = useState('')
@@ -105,6 +108,7 @@ export function ReceiveModal({ register, onBack, onClose, onOpened }) {
     if (!agreed) errs.agreed = 'Confirma que contaste el efectivo y estás de acuerdo'
     setErrors(errs)
     if (Object.keys(errs).length > 0) return
+    if (!(await confirmDialog(`¿Recibir ${register.name} con ${fmt(countedNum)} y abrir tu corte?`, { confirmText: 'Abrir corte', danger: false }))) return
     setLoading(true)
     try {
       await openCashCut({ cashRegisterId: register.id, countedAmount: countedNum, note: note.trim() || null, agreed, largeDifferenceConfirmed: large && confirmed })

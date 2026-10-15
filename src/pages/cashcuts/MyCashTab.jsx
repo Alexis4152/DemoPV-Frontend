@@ -8,7 +8,7 @@ import { resolveMediaUrl } from '../../utils/media'
 import CloseCutModal from './CloseCutModal'
 import { EntryModal, ExitModal } from './MovementModals'
 import { ChooseRegisterModal, ReceiveModal } from './OpenCutModals'
-import { MovementBadge, SignedAmount, fmt, fmtDate, fmtTime } from './common'
+import { MovementBadge, Pagination, SignedAmount, fmt, fmtDate, fmtTime } from './common'
 
 /**
  * Pestaña "Mi caja": el corte del usuario en sesión. Sin corte abierto, ofrece abrir uno
@@ -26,6 +26,10 @@ export default function MyCashTab({ onChanged }) {
   const [myToday, setMyToday] = useState(null)
   const [summary, setSummary] = useState(null)
   const [movements, setMovements] = useState([])
+  // Paginación de los movimientos del turno: vienen todos juntos (un turno tiene pocos),
+  // así que se pagina aquí mismo, con los más recientes primero.
+  const [movPage, setMovPage] = useState(0)
+  const [movSize, setMovSize] = useState(10)
   const [pendingReimbursements, setPendingReimbursements] = useState([])
   const [people, setPeople] = useState([])
   const [registers, setRegisters] = useState(null)
@@ -86,6 +90,9 @@ export default function MyCashTab({ onChanged }) {
   if (!loaded) return <p className="text-sm text-gray-400">Cargando…</p>
 
   const pendingIds = new Set(pendingReimbursements.map((r) => r.id))
+  const movTotalPages = Math.ceil(movements.length / movSize)
+  const safeMovPage = Math.min(movPage, Math.max(movTotalPages - 1, 0))
+  const pagedMovements = [...movements].reverse().slice(safeMovPage * movSize, (safeMovPage + 1) * movSize)
   const outflows = Number(summary?.expensesTotal ?? 0) + Number(summary?.withdrawalsTotal ?? 0) + Number(summary?.reimbursementsTotal ?? 0)
 
   return (
@@ -128,7 +135,8 @@ export default function MyCashTab({ onChanged }) {
                   </span>
                 )}
               </button>
-              <button className="btn-danger" onClick={() => setModal('close')}>Cerrar corte</button>
+              <button className="btn-secondary text-red-700" onClick={() => setModal('close')}>Traspaso de caja</button>
+              <button className="btn-danger" onClick={() => setModal('endofday')}>Corte de fin de día</button>
             </div>
           </div>
 
@@ -177,7 +185,7 @@ export default function MyCashTab({ onChanged }) {
                   ))}</tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {movements.map((m) => (
+                  {pagedMovements.map((m) => (
                     <tr key={m.id}>
                       <td className="px-4 py-2 text-gray-500">{fmtTime(m.createdAt)}</td>
                       <td className="px-4 py-2"><MovementBadge type={m.type} /></td>
@@ -203,6 +211,10 @@ export default function MyCashTab({ onChanged }) {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              page={safeMovPage} size={movSize} totalElements={movements.length} totalPages={movTotalPages}
+              count={pagedMovements.length} onPageChange={setMovPage} onSizeChange={(n) => { setMovSize(n); setMovPage(0) }}
+            />
           </div>
         </>
       )}
@@ -227,8 +239,11 @@ export default function MyCashTab({ onChanged }) {
           onNeedEntry={(preset) => { setEntryPreset(preset); setModal('entry') }}
         />
       )}
-      {modal === 'close' && openCut && (
-        <CloseCutModal cut={openCut} summary={summary} blind={blind} onClose={() => setModal(null)} onClosed={reloadAll} />
+      {(modal === 'close' || modal === 'endofday') && openCut && (
+        <CloseCutModal
+          cut={openCut} summary={summary} blind={blind} endOfDay={modal === 'endofday'}
+          onClose={() => setModal(null)} onClosed={reloadAll}
+        />
       )}
     </div>
   )

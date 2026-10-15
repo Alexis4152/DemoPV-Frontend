@@ -24,6 +24,15 @@ export const addClosedRegisterMovement = (id, data) => api.post(`/cash-registers
 /** Personal de la tienda para los selects de quién puso/retiró/pagó dinero. */
 export const getCashPeople = () => api.get('/cash-registers/people')
 
+/** Destinatarios del reporte de fin de día de la tienda (y la lista efectiva). */
+export const getReportRecipients = () => api.get('/cash-registers/report-recipients')
+
+/**
+ * Configura los destinatarios del reporte de fin de día (solo SUPERVISOR o SUPER_ADMIN).
+ * @param {{reportToSupervisor: boolean, userIds: number[], emails: string[]}} data
+ */
+export const updateReportRecipients = (data) => api.put('/cash-registers/report-recipients', data)
+
 /** "Últimas entregas de caja" (admin), paginadas. */
 export const getHandovers = (params) => api.get('/cash-registers/handovers', { params })
 

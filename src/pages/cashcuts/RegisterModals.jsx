@@ -9,7 +9,7 @@ import {
 
 /** Alta o edición (nombre, activa) de una caja. */
 export function RegisterFormModal({ register, onClose, onSaved }) {
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const [name, setName] = useState(register?.name ?? '')
   const [isActive, setIsActive] = useState(register?.isActive ?? true)
   const [error, setError] = useState('')
@@ -19,6 +19,10 @@ export function RegisterFormModal({ register, onClose, onSaved }) {
     e.preventDefault()
     if (!name.trim()) { setError('Escribe el nombre de la caja'); return }
     if (name.length > 60) { setError('El nombre no puede tener más de 60 caracteres'); return }
+    const msg = register
+      ? (register.isActive && !isActive ? `¿Guardar los cambios y desactivar «${register.name}»? Los cajeros ya no podrán abrirla.` : `¿Guardar los cambios de «${register.name}»?`)
+      : `¿Crear la caja «${name.trim()}»?`
+    if (!(await confirmDialog(msg, { confirmText: register ? 'Guardar' : 'Crear caja', danger: false }))) return
     setLoading(true)
     try {
       if (register) await updateCashRegister(register.id, { name: name.trim(), isActive })
@@ -61,7 +65,7 @@ export function RegisterFormModal({ register, onClose, onSaved }) {
  */
 export function ClosedMovementModal({ register, initialType, people, onClose, onSaved }) {
   const { user } = useAuth()
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const current = Number(register.pending?.amount ?? 0)
   const [type, setType] = useState(initialType ?? 'WITHDRAWAL')
   const [amount, setAmount] = useState('')
@@ -90,6 +94,10 @@ export function ClosedMovementModal({ register, initialType, people, onClose, on
     if (didCount && remainingNum == null) errs.remaining = 'Captura cuánto queda'
     setErrors(errs)
     if (Object.keys(errs).length > 0 || exceeds) return
+    const msg = isWithdrawal
+      ? `¿Retirar ${fmt(amountNum)} de ${register.name}? Quien abra la caja recibirá ${fmt(finalAmount)}.`
+      : `¿Agregar ${fmt(amountNum)} a ${register.name}? Quien abra la caja recibirá ${fmt(finalAmount)}.`
+    if (!(await confirmDialog(msg, { confirmText: isWithdrawal ? 'Registrar retiro' : 'Agregar efectivo', danger: isWithdrawal }))) return
     setLoading(true)
     try {
       await addClosedRegisterMovement(register.id, {
@@ -296,21 +304,27 @@ export function ForceCloseModal({ register, people, onClose, onSaved }) {
  */
 export function ResolveHandoverModal({ handover, people, onClose, onSaved }) {
   const { user } = useAuth()
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const diff = Number(handover.difference ?? 0)
   const [resolution, setResolution] = useState(diff < 0 ? 'UNREGISTERED_WITHDRAWAL' : 'COUNT_ERROR')
   const [amount, setAmount] = useState(diff < 0 ? String(Math.abs(diff)) : '')
   const [occurredAt, setOccurredAt] = useState('')
   const [personId, setPersonId] = useState(user?.id ?? null)
   const [destination, setDestination] = useState(null)
+  // Responsable del faltante: por default quien entregó, salvo que el último conteo lo haya
+  // hecho un admin (entonces no es seguro que la diferencia sea suya y se elige a mano).
+  const [responsibleId, setResponsibleId] = useState(handover.receivedCountMethod === 'ADMIN_IN_PERSON' ? null : (handover.fromUserId ?? null))
   const [note, setNote] = useState('')
   const [errors, setErrors] = useState({})
   const [loading, setLoading] = useState(false)
+  const isShortage = resolution === 'SHORTAGE' && diff < 0
+  const responsibleName = people.find((p) => p.id === responsibleId)?.name
 
   async function handleSubmit(e) {
     e.preventDefault()
     const errs = {}
     const amountNum = toAmount(amount)
+    if (isShortage && !responsibleId) errs.responsible = 'Indica quién es responsable del faltante'
     if (resolution === 'UNREGISTERED_WITHDRAWAL') {
       if (amountNum == null || amountNum <= 0) errs.amount = 'Captura el monto retirado'
       if (!destination) errs.destination = 'Indica el destino del dinero'
@@ -319,10 +333,17 @@ export function ResolveHandoverModal({ handover, people, onClose, onSaved }) {
     if (note.length > 200) errs.note = 'La nota no puede tener más de 200 caracteres'
     setErrors(errs)
     if (Object.keys(errs).length > 0) return
+    const label = resolution === 'UNREGISTERED_WITHDRAWAL' ? 'retiro no registrado'
+      : resolution === 'COUNT_ERROR' ? 'error de conteo' : (diff < 0 ? 'faltante confirmado' : 'sobrante confirmado')
+    const msg = isShortage
+      ? `¿Resolver como faltante confirmado? Se generará un faltante de ${fmt(Math.abs(diff))} a cargo de ${responsibleName ?? 'la persona elegida'}.`
+      : `¿Resolver la diferencia como «${label}»? Quedará registrada y no se puede deshacer.`
+    if (!(await confirmDialog(msg, { confirmText: 'Resolver', danger: false }))) return
     setLoading(true)
     try {
       await resolveHandover(handover.cutId, {
         resolution, note: note.trim(),
+        ...(isShortage && { responsibleId }),
         ...(resolution === 'UNREGISTERED_WITHDRAWAL' && {
           amount: amountNum, personId, destination,
           occurredAt: occurredAt ? `${occurredAt}:00` : null,
@@ -360,7 +381,7 @@ export function ResolveHandoverModal({ handover, people, onClose, onSaved }) {
           <legend className="text-xs font-medium text-gray-600 mb-1">¿Qué pasó?</legend>
           {[
             ...(diff < 0 ? [{ value: 'UNREGISTERED_WITHDRAWAL', title: 'Fue un retiro que no se registró', desc: 'Se registra el retiro con su fecha real, marcado como «registrado después».' }] : []),
-            { value: 'SHORTAGE', title: diff < 0 ? 'Faltante confirmado' : 'Sobrante confirmado', desc: 'La diferencia queda registrada en esta entrega.' },
+            { value: 'SHORTAGE', title: diff < 0 ? 'Faltante confirmado' : 'Sobrante confirmado', desc: diff < 0 ? 'El dinero no apareció: se genera un faltante a cargo de una persona, que podrá pagarlo o abonarlo.' : 'La diferencia queda registrada en esta entrega.' },
             { value: 'COUNT_ERROR', title: 'Error de conteo', desc: 'Se volvió a contar y el dinero sí coincide; si el corte sigue abierto, su fondo se corrige.' },
           ].map((o) => (
             <label key={o.value} className={`flex gap-3 items-start p-3 rounded-xl cursor-pointer ${resolution === o.value ? 'border-2 border-purple-600 bg-purple-50' : 'border border-gray-200'}`}>
@@ -369,6 +390,16 @@ export function ResolveHandoverModal({ handover, people, onClose, onSaved }) {
             </label>
           ))}
         </fieldset>
+
+        {isShortage && (
+          <div className="space-y-2">
+            <PersonSelect id="resolve-responsible" label="¿Quién es responsable del faltante?" people={people} value={responsibleId} onChange={setResponsibleId} />
+            {errors.responsible && <p className="text-red-600 text-xs">{errors.responsible}</p>}
+            <p className="text-sm text-red-900 bg-red-50 rounded-lg p-3">
+              Se generará un faltante de <strong>{fmt(Math.abs(diff))}</strong>{responsibleName ? <> a cargo de <strong>{responsibleName}</strong></> : ''}. Se cobra desde la pestaña <strong>Faltantes</strong> (pago completo o abonos).
+            </p>
+          </div>
+        )}
 
         {resolution === 'UNREGISTERED_WITHDRAWAL' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
