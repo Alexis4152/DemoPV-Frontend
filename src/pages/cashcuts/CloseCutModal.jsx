@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { closeCashCut } from '../../api/cashCuts'
+import { closeCashCut, endOfDayCashCut } from '../../api/cashCuts'
 import { useNotify } from '../../context/NotifyContext'
 import {
   AmountField, LargeDifferenceConfirm, Modal, SummaryRow, fmt, isLargeDifference, isUnreasonableCount, toAmount, MAX_AMOUNT,
 } from './common'
 
 /**
- * Cerrar corte con arqueo: el cajero cuenta el efectivo y se compara contra el esperado
+ * Traspaso de caja (o, con `endOfDay`, Corte de fin de día) con arqueo: el cajero cuenta
+ * el efectivo y se compara contra el esperado
  * (fondo + ventas en efectivo + entradas − gastos − retiros − reembolsos). Lo contado queda
  * en la caja para quien la abra después.
  *
@@ -15,7 +16,11 @@ import {
  * ve el esperado: captura lo que contó, cierra, y solo entonces ve la diferencia — la
  * confirmación reforzada la pide el backend (`data.largeDifference`), sin revelar cifras.
  */
-export default function CloseCutModal({ cut, summary, blind = false, onClose, onClosed }) {
+export default function CloseCutModal({ cut, summary, blind = false, endOfDay = false, onClose, onClosed }) {
+  // Traspaso: el efectivo pasa al siguiente turno. Fin de día: además se manda el reporte
+  // del día de esa caja y la caja queda cerrada hasta el día siguiente.
+  const actionLabel = endOfDay ? 'Corte de fin de día' : 'Traspaso de caja'
+  const registerName = cut.cashRegister?.name ?? 'la caja'
   const { notify, confirmDialog } = useNotify()
   const [counted, setCounted] = useState('')
   const [confirmValue, setConfirmValue] = useState('')
@@ -50,14 +55,18 @@ export default function CloseCutModal({ cut, summary, blind = false, onClose, on
     if (notes.length > 200) errs.notes = 'Las notas no pueden tener más de 200 caracteres'
     setErrors(errs)
     if (Object.keys(errs).length > 0) return
-    const msg = blind
-      ? `¿Deseas cerrar el corte con ${fmt(countedNum)} contados? Después de cerrar verás la diferencia.`
-      : `¿Deseas cerrar el corte? Quedarán ${fmt(countedNum)} en ${cut.cashRegister?.name ?? 'la caja'} para el siguiente turno.`
-    if (!(await confirmDialog(msg, { confirmText: 'Cerrar y entregar' }))) return
+    const base = blind
+      ? ` con ${fmt(countedNum)} contados? Después verás la diferencia.`
+      : `? Quedarán ${fmt(countedNum)} en ${registerName}${endOfDay ? ' para el día siguiente' : ' para el siguiente turno'}.`
+    const msg = endOfDay
+      ? `¿Hacer el corte de fin de día${base} Se enviará el reporte del día de ${registerName} y la caja no se podrá volver a abrir hasta mañana.`
+      : `¿Hacer el traspaso de caja${base}`
+    if (!(await confirmDialog(msg, { confirmText: actionLabel }))) return
     setLoading(true)
     try {
-      const r = await closeCashCut(cut.id, { countedAmount: countedNum, notes: notes.trim() || null, largeDifferenceConfirmed: large && confirmed })
-      notify('Corte de caja cerrado correctamente', 'success')
+      const payload = { countedAmount: countedNum, notes: notes.trim() || null, largeDifferenceConfirmed: large && confirmed }
+      const r = endOfDay ? await endOfDayCashCut(cut.id, payload) : await closeCashCut(cut.id, payload)
+      notify(endOfDay ? 'Corte de fin de día realizado; se envió el reporte del día' : 'Traspaso de caja realizado', 'success')
       if (blind) setResult(r.data.data)
       else onClosed()
     } catch (err) {
@@ -76,7 +85,7 @@ export default function CloseCutModal({ cut, summary, blind = false, onClose, on
   if (result) {
     const d = Number(result.cashDifference ?? 0)
     return (
-      <Modal title="Corte cerrado" subtitle={`Corte #${result.id}${result.cashRegister ? ` · ${result.cashRegister.name}` : ''}`} onClose={onClosed}>
+      <Modal title={endOfDay ? 'Corte de fin de día realizado' : 'Traspaso realizado'} subtitle={`Corte #${result.id}${result.cashRegister ? ` · ${result.cashRegister.name}` : ''}`} onClose={onClosed}>
         <div className="space-y-3 text-sm">
           <div className="bg-gray-50 rounded-lg p-3 space-y-1.5">
             <SummaryRow label="Contaste">{fmt(result.countedAmount)}</SummaryRow>
@@ -97,7 +106,7 @@ export default function CloseCutModal({ cut, summary, blind = false, onClose, on
   }
 
   return (
-    <Modal title={`Cerrar corte${cut.cashRegister ? ` · ${cut.cashRegister.name}` : ''}`} subtitle={`Corte #${cut.id}`} onClose={onClose} wide>
+    <Modal title={`${actionLabel}${cut.cashRegister ? ` · ${cut.cashRegister.name}` : ''}`} subtitle={`Corte #${cut.id}`} onClose={onClose} wide>
       <form onSubmit={handleSubmit} className="space-y-4">
         {blind ? (
           <p className="text-sm text-gray-700 bg-gray-50 rounded-lg p-3">
@@ -162,14 +171,21 @@ export default function CloseCutModal({ cut, summary, blind = false, onClose, on
 
         {cut.cashRegister && countedNum != null && !unreasonable && (
           <div className="border-2 border-purple-600 bg-purple-50 rounded-xl p-3 text-sm text-purple-900">
-            <div className="flex justify-between font-bold"><span>Queda en la caja para el siguiente turno</span><span>{fmt(countedNum)}</span></div>
+            <div className="flex justify-between font-bold"><span>{endOfDay ? 'Queda en la caja para mañana' : 'Queda en la caja para el siguiente turno'}</span><span>{fmt(countedNum)}</span></div>
             <p className="mt-1">Lo recibe quien abra {cut.cashRegister.name} después de ti; tendrá que contarlo y dar su de acuerdo.</p>
+          </div>
+        )}
+
+        {endOfDay && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-900 space-y-1">
+            <p className="font-semibold">Este es el último corte del día de {registerName}.</p>
+            <p>Se enviará un correo con el Excel de los cortes de hoy de esta caja (traspasos y este corte) a los destinatarios configurados, y {registerName} no se podrá volver a abrir hasta mañana. Las demás cajas siguen operando.</p>
           </div>
         )}
 
         <div className="flex gap-2 justify-end pt-1">
           <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="btn-danger disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || unreasonable}>{loading ? '...' : 'Cerrar y entregar'}</button>
+          <button type="submit" className="btn-danger disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || unreasonable}>{loading ? '...' : actionLabel}</button>
         </div>
       </form>
     </Modal>

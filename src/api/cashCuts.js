@@ -59,12 +59,32 @@ export const openCashCut = (data) => api.post('/cash-cuts/open', data)
 export const closeCashCut = (id, data) => api.post(`/cash-cuts/${id}/close`, data)
 
 /**
+ * Corte de fin de día: el mismo cierre con arqueo que un traspaso, pero además envía el
+ * reporte del día de esa caja a los destinatarios de la tienda y bloquea la caja hasta el
+ * cierre programado (o el día siguiente).
+ * @param {number|string} id Id del corte.
+ * @param {{countedAmount: number, notes?: string, largeDifferenceConfirmed?: boolean}} data
+ */
+export const endOfDayCashCut = (id, data) => api.post(`/cash-cuts/${id}/end-of-day`, data)
+
+/**
  * Cierre forzado por un administrador (ADMIN/SUPERVISOR/SUPER_ADMIN).
  * @param {number|string} id Id del corte.
  * @param {{countMethod: 'ADMIN_IN_PERSON'|'REMOTE_REPORTED'|'NOT_COUNTED', countedAmount?: number,
  *          reportedById?: number, evidencePath?: string, reason: string}} data
  */
 export const forceCloseCashCut = (id, data) => api.post(`/cash-cuts/${id}/force-close`, data)
+
+/**
+ * Resuelve la diferencia del arqueo de cierre de un corte (admin).
+ * @param {number|string} id Id del corte.
+ * @param {{resolution: 'SHORTAGE'|'SURPLUS'|'COUNT_ERROR', note: string, responsibleId?: number}} data
+ *        `responsibleId` (quien cubre el faltante) solo para `SHORTAGE`.
+ */
+export const resolveCountDifference = (id, data) => api.post(`/cash-cuts/${id}/resolve-count`, data)
+
+/** Cuántos cortes tienen una diferencia de arqueo sin resolver (admin). */
+export const getUnresolvedCountDifferenceCount = () => api.get('/cash-cuts/count-differences/unresolved-count')
 
 /** Movimientos de efectivo (gastos, retiros, aportes...) de un corte. */
 export const getCashCutMovements = (id) => api.get(`/cash-cuts/${id}/movements`)

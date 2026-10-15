@@ -13,7 +13,7 @@ import {
  */
 export function EntryModal({ cut, people, preset, onClose, onSaved }) {
   const { user } = useAuth()
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const [type, setType] = useState('CONTRIBUTION')
   const [amount, setAmount] = useState(preset?.amount != null ? String(preset.amount) : '')
   const [personId, setPersonId] = useState(user?.id ?? null)
@@ -33,6 +33,10 @@ export function EntryModal({ cut, people, preset, onClose, onSaved }) {
     if (concept.length > 150) errs.concept = 'El motivo no puede tener más de 150 caracteres'
     setErrors(errs)
     if (Object.keys(errs).length > 0) return
+    const msg = type === 'CONTRIBUTION'
+      ? `¿Registrar el aporte de ${fmt(amountNum)}${personName ? ` de ${personName}` : ''}? Quedará como reembolso pendiente.`
+      : `¿Registrar una entrada de ${fmt(amountNum)} a la caja?`
+    if (!(await confirmDialog(msg, { confirmText: 'Registrar entrada', danger: false }))) return
     setLoading(true)
     try {
       await addCashCutMovement(cut.id, {
@@ -107,7 +111,7 @@ export function EntryModal({ cut, people, preset, onClose, onSaved }) {
  */
 export function ExitModal({ cut, available, blind = false, reimbursements, people, isAdmin, onClose, onSaved, onNeedEntry }) {
   const { user } = useAuth()
-  const { notify } = useNotify()
+  const { notify, confirmDialog } = useNotify()
   const tabs = [
     { key: 'EXPENSE', label: 'Gasto' },
     ...(isAdmin ? [{ key: 'WITHDRAWAL', label: 'Retiro' }] : []),
@@ -148,6 +152,12 @@ export function ExitModal({ cut, available, blind = false, reimbursements, peopl
     if (reference.length > 100) errs.reference = 'La referencia no puede tener más de 100 caracteres'
     setErrors(errs)
     if (Object.keys(errs).length > 0 || exceeds) return
+    const msg = tab === 'REIMBURSEMENT'
+      ? `¿Pagar el reembolso de ${fmt(amountNum)} a ${selectedReimbursement?.person?.name} con efectivo de la caja?`
+      : tab === 'WITHDRAWAL'
+        ? `¿Registrar un retiro de ${fmt(amountNum)}?`
+        : `¿Registrar el gasto «${concept.trim()}» por ${fmt(amountNum)}?`
+    if (!(await confirmDialog(msg, { confirmText: tab === 'REIMBURSEMENT' ? 'Pagar reembolso' : 'Registrar salida' }))) return
     setLoading(true)
     try {
       const payload = tab === 'REIMBURSEMENT'

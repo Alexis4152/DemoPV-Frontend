@@ -6,6 +6,10 @@ import HistoryTab from './cashcuts/HistoryTab'
 import MyCashTab from './cashcuts/MyCashTab'
 import RegistersTab from './cashcuts/RegistersTab'
 import ReimbursementsTab from './cashcuts/ReimbursementsTab'
+import ShortagesTab from './cashcuts/ShortagesTab'
+import ReportRecipientsCard from './cashcuts/ReportRecipientsCard'
+import { getPendingShortageTotal } from '../api/shortages'
+import { getUnresolvedCountDifferenceCount } from '../api/cashCuts'
 
 /**
  * Página "Cortes de Caja", en pestañas:
@@ -24,11 +28,15 @@ export default function CashCuts() {
   const [tab, setTab] = useState('mine')
   const [unresolved, setUnresolved] = useState(0)
   const [pendingTotal, setPendingTotal] = useState(0)
+  const [shortageTotal, setShortageTotal] = useState(0)
+  const [unresolvedArqueos, setUnresolvedArqueos] = useState(0)
 
   function loadBadges() {
     if (!isAdmin) return
     getUnresolvedHandoverCount().then((r) => setUnresolved(r.data.data ?? 0)).catch(() => {})
     getPendingReimbursementTotal().then((r) => setPendingTotal(Number(r.data.data ?? 0))).catch(() => {})
+    getPendingShortageTotal().then((r) => setShortageTotal(Number(r.data.data ?? 0))).catch(() => {})
+    getUnresolvedCountDifferenceCount().then((r) => setUnresolvedArqueos(r.data.data ?? 0)).catch(() => {})
   }
   useEffect(() => { loadBadges() }, [isAdmin])
 
@@ -36,8 +44,10 @@ export default function CashCuts() {
     { key: 'mine', label: 'Mi caja' },
     ...(isAdmin ? [
       { key: 'registers', label: 'Cajas', badge: unresolved > 0 ? unresolved : null },
-      { key: 'history', label: 'Historial' },
+      { key: 'shortages', label: 'Faltantes', badge: shortageTotal > 0 ? '•' : null },
+      { key: 'history', label: 'Historial', badge: unresolvedArqueos > 0 ? unresolvedArqueos : null },
       { key: 'reimbursements', label: 'Reembolsos', badge: pendingTotal > 0 ? '•' : null },
+      { key: 'settings', label: 'Configuración' },
     ] : []),
   ]
 
@@ -62,8 +72,10 @@ export default function CashCuts() {
 
       {tab === 'mine' && <MyCashTab onChanged={loadBadges} />}
       {tab === 'registers' && isAdmin && <RegistersTab onChanged={loadBadges} />}
-      {tab === 'history' && isAdmin && <HistoryTab />}
+      {tab === 'shortages' && isAdmin && <ShortagesTab onChanged={loadBadges} />}
+      {tab === 'history' && isAdmin && <HistoryTab onChanged={loadBadges} />}
       {tab === 'reimbursements' && isAdmin && <ReimbursementsTab onChanged={loadBadges} />}
+      {tab === 'settings' && isAdmin && <ReportRecipientsCard />}
     </div>
   )
 }

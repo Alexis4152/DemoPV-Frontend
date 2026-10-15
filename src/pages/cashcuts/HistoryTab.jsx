@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { getCashCutCashiers, getCashCutMovements, getCashCutSummary, getCashCuts } from '../../api/cashCuts'
+import { getCashPeople } from '../../api/cashRegisters'
+import ResolveArqueoModal, { ARQUEO_RESOLUTION_LABELS } from './ResolveArqueoModal'
 import IconButton from '../../components/IconButton'
 import { EyeIcon } from '../../components/icons'
 import { resolveMediaUrl } from '../../utils/media'
-import { CountBadge, Modal, MovementBadge, SignedAmount, SummaryRow, fmt, fmtDate, fmtTime } from './common'
+import { CountBadge, Modal, MovementBadge, Pagination, SignedAmount, SummaryRow, fmt, fmtDate, fmtTime } from './common'
 
-const PAGE_SIZES = [10, 20, 50, 100]
-const EMPTY_FILTERS = { from: '', to: '', status: '', userId: '' }
+const EMPTY_FILTERS = { from: '', to: '', status: '', userId: '', arqueoStatus: '' }
 
 // Un corte cerrado sin `closedBy` lo cerró el job automático del backend: "Sistema".
 const closedByLabel = (c) => c.status !== 'CLOSED' ? '—' : (c.closedBy?.name ?? 'Sistema')
@@ -17,42 +18,45 @@ const closedByLabel = (c) => c.status !== 'CLOSED' ? '—' : (c.closedBy?.name ?
  * debounce). El filtro "Cajero" sale de `GET /cash-cuts/cashiers` para no depender de que
  * el admin tenga la sección Usuarios.
  */
-export default function HistoryTab() {
+export default function HistoryTab({ onChanged }) {
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [cashiers, setCashiers] = useState([])
   const [detail, setDetail] = useState(null)
+  const [resolving, setResolving] = useState(null)
+  const [people, setPeople] = useState([])
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     const params = {
       page, size,
       status: filters.status || undefined,
       userId: filters.userId || undefined,
+      arqueoStatus: filters.arqueoStatus || undefined,
       from: filters.from ? `${filters.from}T00:00:00` : undefined,
       to: filters.to ? `${filters.to}T23:59:59` : undefined,
     }
     getCashCuts(params)
       .then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
       .catch(() => setPageData({ content: [], totalElements: 0, totalPages: 0 }))
-  }, [page, size, filters])
+  }, [page, size, filters, reloadKey])
 
   useEffect(() => {
     getCashCutCashiers().then((r) => setCashiers(r.data.data ?? [])).catch(() => setCashiers([]))
+    getCashPeople().then((r) => setPeople(r.data.data ?? [])).catch(() => setPeople([]))
   }, [])
 
   function setFilter(patch) {
     setFilters((prev) => ({ ...prev, ...patch }))
     setPage(0)
   }
-  const hasFilters = filters.from || filters.to || filters.status || filters.userId
+  const hasFilters = filters.from || filters.to || filters.status || filters.userId || filters.arqueoStatus
 
   const cuts = pageData.content ?? []
   const totalPages = pageData.totalPages ?? 0
   const totalElements = pageData.totalElements ?? 0
-  const from = totalElements === 0 ? 0 : page * size + 1
-  const to = Math.min(totalElements, page * size + cuts.length)
 
   return (
     <>
@@ -78,6 +82,14 @@ export default function HistoryTab() {
           <select className="input" value={filters.userId} onChange={(e) => setFilter({ userId: e.target.value })}>
             <option value="">Todos</option>
             {cashiers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div className="w-48">
+          <label className="text-xs font-medium text-gray-600 block mb-1">Diferencia de arqueo</label>
+          <select className="input" value={filters.arqueoStatus} onChange={(e) => setFilter({ arqueoStatus: e.target.value })}>
+            <option value="">Todas</option>
+            <option value="DIFFERENCE">Pendiente de resolver</option>
+            <option value="RESOLVED">Resuelta</option>
           </select>
         </div>
         {hasFilters && (
@@ -112,6 +124,12 @@ export default function HistoryTab() {
                         : diff == null ? <span className="text-xs text-amber-800">No contado</span>
                         : diff === 0 ? <span className="text-xs text-green-700 font-semibold">Cuadra</span>
                         : <span className={`text-xs font-semibold ${diff < 0 ? 'text-red-700' : 'text-amber-800'}`}>{diff < 0 ? 'Faltante' : 'Sobrante'} {fmt(Math.abs(diff))}</span>}
+                      {c.arqueoStatus === 'DIFFERENCE' && (
+                        <button type="button" className="block mt-1 btn-secondary !py-0.5 !px-2 text-xs" onClick={() => setResolving(c)}>Resolver</button>
+                      )}
+                      {c.arqueoStatus === 'RESOLVED' && (
+                        <span className="block mt-0.5 text-xs text-gray-500">Resuelta · {ARQUEO_RESOLUTION_LABELS[c.arqueoResolution]}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-medium px-2 py-1 rounded-full ${c.status === 'OPEN' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
@@ -131,23 +149,19 @@ export default function HistoryTab() {
           </table>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-sm">
-          <div className="flex items-center gap-2 text-gray-500">
-            <span>Mostrar</span>
-            <select className="input !w-auto py-1" value={size} onChange={(e) => { setSize(Number(e.target.value)); setPage(0) }}>
-              {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-            <span>por página · {totalElements === 0 ? 'sin resultados' : `${from}–${to} de ${totalElements}`}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button className="btn-secondary py-1 px-3 text-xs disabled:opacity-40" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹ Anterior</button>
-            <span className="text-gray-500 text-xs">Página {totalPages === 0 ? 0 : page + 1} de {totalPages}</span>
-            <button className="btn-secondary py-1 px-3 text-xs disabled:opacity-40" disabled={page + 1 >= totalPages} onClick={() => setPage((p) => p + 1)}>Siguiente ›</button>
-          </div>
-        </div>
+        <Pagination
+          page={page} size={size} totalElements={totalElements} totalPages={totalPages} count={cuts.length}
+          onPageChange={setPage} onSizeChange={(n) => { setSize(n); setPage(0) }}
+        />
       </div>
 
       {detail && <CutDetailModal cut={detail} onClose={() => setDetail(null)} />}
+      {resolving && (
+        <ResolveArqueoModal
+          cut={resolving} people={people} onClose={() => setResolving(null)}
+          onSaved={() => { setResolving(null); setReloadKey((k) => k + 1); onChanged?.() }}
+        />
+      )}
     </>
   )
 }
@@ -227,6 +241,13 @@ export function CutDetailModal({ cut, onClose }) {
               <a className="block text-purple-700 hover:underline" href={resolveMediaUrl(cut.countEvidencePath)} target="_blank" rel="noopener noreferrer">Ver evidencia del conteo</a>
             )}
             {cut.handoverAmount != null && <SummaryRow label="Dejó en caja">{fmt(cut.handoverAmount)}</SummaryRow>}
+            {cut.arqueoStatus === 'RESOLVED' && (
+              <p className="text-gray-600">
+                Resuelta como <strong>{ARQUEO_RESOLUTION_LABELS[cut.arqueoResolution]}</strong> por {cut.arqueoResolvedBy?.name ?? '—'}
+                {cut.arqueoResolutionNote ? ` · «${cut.arqueoResolutionNote}»` : ''}
+              </p>
+            )}
+            {cut.arqueoStatus === 'DIFFERENCE' && <p className="text-red-700 font-semibold">Diferencia pendiente de resolver</p>}
           </div>
         )}
 
