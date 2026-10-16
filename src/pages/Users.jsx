@@ -12,7 +12,7 @@ import { roleLabel } from '../utils/roleLabels'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
-const emptyForm = { name: '', email: '', password: '', roleId: '', supervisedTiendaIds: [], tiendaId: '' }
+const emptyForm = { name: '', email: '', phone: '', password: '', roleId: '', supervisedTiendaIds: [], tiendaId: '' }
 const EMPTY_FILTERS = { from: '', to: '', name: '', email: '', roleId: '', isActive: '' }
 const PAGE_SIZES = [10, 20, 50, 100]
 
@@ -155,7 +155,7 @@ export default function Users() {
   // para uno de plataforma, que no tiene) — ver showMoveTiendaPicker más abajo.
   function openEdit(u) {
     setEditUser(u)
-    setForm({ name: u.name, email: u.email, password: '', roleId: u.role?.id ?? '', supervisedTiendaIds: [], tiendaId: u.tienda?.id ?? '' })
+    setForm({ name: u.name, email: u.email, phone: u.phone ?? '', password: '', roleId: u.role?.id ?? '', supervisedTiendaIds: [], tiendaId: u.tienda?.id ?? '' })
     setError('')
     setFieldErrors({})
     setShowModal(true)
@@ -182,6 +182,8 @@ export default function Users() {
     if (!form.email.trim()) errors.email = 'El correo es obligatorio'
     else if (!EMAIL_RE.test(form.email)) errors.email = 'El correo no tiene un formato válido'
     else if (form.email.length > 150) errors.email = 'El correo no puede tener más de 150 caracteres'
+    // Opcional; si se captura, 10 dígitos (se aceptan espacios/guiones, el backend guarda solo números).
+    if (form.phone.trim() && form.phone.replace(/\D/g, '').length !== 10) errors.phone = 'El teléfono debe tener 10 dígitos'
     // La contraseña solo se valida si de verdad se va a cambiar (al crear, este campo ni
     // siquiera se muestra — ver el JSX; al editar, vacío significa "no cambiarla").
     if (editUser && form.password && (form.password.length < 6 || form.password.length > 72)) {
@@ -219,7 +221,11 @@ export default function Users() {
       // tiendaId viaja como número solo cuando de verdad hay un selector visible para
       // elegirla (showMoveTiendaPicker) — de lo contrario se manda `undefined` (axios lo
       // omite del JSON) en vez de '' cruda, que el backend rechazaría al no ser un Long válido.
-      const payload = { ...form, tiendaId: showMoveTiendaPicker && form.tiendaId ? Number(form.tiendaId) : undefined }
+      const payload = {
+        ...form,
+        phone: form.phone.replace(/\D/g, '') || null,
+        tiendaId: showMoveTiendaPicker && form.tiendaId ? Number(form.tiendaId) : undefined,
+      }
       if (editUser) await updateUser(editUser.id, payload)
       else await createUser(payload)
       setShowModal(false)
@@ -473,6 +479,14 @@ export default function Users() {
               <div><label className="text-xs font-medium text-gray-600">Email <span className={fieldErrors.email ? 'text-red-600' : ''}>*</span></label>
                 <input className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
                 {fieldErrors.email && <p className="text-red-600 text-xs mt-1">{fieldErrors.email}</p>}</div>
+              <div><label htmlFor="user-phone" className="text-xs font-medium text-gray-600">Teléfono (opcional)</label>
+                <input
+                  id="user-phone" className="input" type="tel" inputMode="numeric" autoComplete="off" placeholder="10 dígitos"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/[^\d\s-]/g, '').slice(0, 14) })}
+                />
+                {fieldErrors.phone && <p className="text-red-600 text-xs mt-1">{fieldErrors.phone}</p>}
+                <p className="text-xs text-gray-400 mt-1">Sirve para iniciar sesión con el teléfono en lugar del correo, con la misma contraseña.</p></div>
               {editUser ? (
                 <div><label className="text-xs font-medium text-gray-600">Contraseña (dejar vacío para no cambiar)</label>
                   <PasswordInput className="input" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />

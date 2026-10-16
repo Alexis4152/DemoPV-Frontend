@@ -42,7 +42,7 @@ export default function Login() {
     // cualquiera de los dos campos vacío. Sin validar formato ni mostrar alerta aparte:
     // solo que estén llenos.
     const errors = {}
-    if (!form.email.trim()) errors.email = 'El correo es obligatorio'
+    if (!form.email.trim()) errors.email = 'Escribe tu correo o teléfono'
     if (!form.password) errors.password = 'La contraseña es obligatoria'
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors)
@@ -53,8 +53,8 @@ export default function Login() {
     setError('')
     setLoading(true)
     try {
-      // Se manda recortado (mismo valor que se validó arriba) para que un espacio de más
-      // al final no lo rechace el @Email del backend con su mensaje genérico.
+      // Se manda recortado (mismo valor que se validó arriba). Puede ser correo o
+      // teléfono: el backend decide cuál es (AuthService#resolveLoginEmail).
       await login(form.email.trim(), form.password)
       navigate('/')
     } catch (err) {
@@ -83,15 +83,17 @@ export default function Login() {
             del navegador se disparaba antes de que este formulario alcanzara a correr. */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Correo electrónico</label>
+            <label htmlFor="login-id" className="block text-sm font-medium text-gray-700 mb-1">Correo o teléfono</label>
             <input
+              id="login-id"
               type="text"
               className="input"
-              placeholder="admin@boutique.com"
+              placeholder="admin@boutique.com o 5512345678"
+              autoComplete="username"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
             />
-            <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, cliente@outlook.com</p>
+            <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, o tu teléfono de 10 dígitos</p>
             {fieldErrors.email && <p className="text-red-600 text-xs mt-1">{fieldErrors.email}</p>}
           </div>
           <div>
