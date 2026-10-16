@@ -397,6 +397,11 @@ export default function Users() {
                 <td className="px-4 py-3 text-gray-500">{u.email}</td>
                 <td className="px-4 py-3">
                   <span className={`text-xs font-medium px-2 py-1 rounded-full ${roleColor(u.role?.name)}`}>{roleLabel(u.role?.name)}</span>
+                  {u.role?.name === 'SUPERVISOR' && !u.tienda && (
+                    <span className="block text-xs text-gray-500 mt-1">
+                      Plataforma · {u.maxTiendas != null ? `plan de ${u.maxTiendas} tienda${u.maxTiendas === 1 ? '' : 's'}` : 'sin límite de tiendas'}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-gray-600">{fmtDate(u.createdAt)}</td>
                 <td className="px-4 py-3">
