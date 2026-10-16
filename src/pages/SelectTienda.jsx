@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getTiendas, createTienda, updateTiendaName, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
+import { getTiendas, getTiendaPlan, createTienda, updateTiendaName, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
@@ -40,8 +40,16 @@ export default function SelectTienda() {
 
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState(null) // tienda siendo editada, o null
+  // Plan del SUPERVISOR (máximo de tiendas que puede tener); null para SUPER_ADMIN.
+  const [plan, setPlan] = useState(null)
+
+  function loadPlan() {
+    if (isSuperAdmin) return
+    getTiendaPlan().then((r) => setPlan(r.data.data ?? null)).catch(() => setPlan(null))
+  }
 
   function load() {
+    loadPlan()
     setLoading(true)
     getTiendas()
       .then((r) => setTiendas(r.data.data ?? []))
@@ -71,6 +79,9 @@ export default function SelectTienda() {
   }
 
   const hasCurrentTienda = !!user?.tienda
+  const maxTiendas = plan?.maxTiendas ?? null
+  const usedTiendas = plan?.usedTiendas ?? 0
+  const planFull = maxTiendas != null && usedTiendas >= maxTiendas
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#03050c] via-[#050b18] to-[#0d1b3d] flex items-center justify-center p-4 relative overflow-hidden">
@@ -93,6 +104,14 @@ export default function SelectTienda() {
 
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>
+        )}
+
+        {maxTiendas != null && (
+          <div className={`text-sm rounded-lg px-4 py-3 mb-4 border ${planFull ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>
+            De acuerdo con tu plan contratado, solo puedes capturar <strong>{maxTiendas} tienda{maxTiendas === 1 ? '' : 's'}</strong>.
+            {' '}Tienes {usedTiendas} activa{usedTiendas === 1 ? '' : 's'}.
+            {planFull && ' Ya llegaste al límite: para agregar más, pide que amplíen tu plan.'}
+          </div>
         )}
 
         {loading ? (
@@ -136,10 +155,12 @@ export default function SelectTienda() {
             <button
               type="button"
               onClick={() => setShowCreate(true)}
-              className="flex items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed border-gray-300 text-gray-500 hover:border-purple-400 hover:text-purple-600 hover:bg-purple-50/40 transition-colors"
+              disabled={planFull}
+              title={planFull ? 'Llegaste al máximo de tiendas de tu plan' : undefined}
+              className="flex items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed border-gray-300 text-gray-500 hover:border-purple-400 hover:text-purple-600 hover:bg-purple-50/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-gray-300 disabled:hover:text-gray-500 disabled:hover:bg-transparent"
             >
               <span className="text-lg">➕</span>
-              <span className="font-medium">Nueva tienda</span>
+              <span className="font-medium">{planFull ? `Nueva tienda (límite de ${maxTiendas})` : 'Nueva tienda'}</span>
             </button>
           </div>
         )}
@@ -152,7 +173,7 @@ export default function SelectTienda() {
         </div>
       </div>
 
-      {showCreate && <CreateTiendaModal onClose={() => setShowCreate(false)} onCreated={(t) => { upsertLocal(t); setShowCreate(false) }} />}
+      {showCreate && <CreateTiendaModal onClose={() => setShowCreate(false)} onCreated={(t) => { upsertLocal(t); setShowCreate(false); loadPlan() }} />}
       {editing && <EditTiendaModal tienda={editing} onClose={() => setEditing(null)} onSaved={(t) => { upsertLocal(t); setEditing(null) }} />}
     </div>
   )
