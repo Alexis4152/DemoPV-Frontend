@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
 import { openOrDownloadBlob } from '../utils/downloadBlob'
+import { resizeImage } from '../utils/resizeImage'
 import IconButton from '../components/IconButton'
 import { PencilIcon, SlidersIcon, ArchiveIcon } from '../components/icons'
 
@@ -24,6 +25,14 @@ const PAGE_SIZES = [10, 20, 50, 100]
 const MAX_IMAGE_MB = 5
 // Tope de fotos por producto — mismo valor que ProductImageService.MAX_IMAGES_PER_PRODUCT.
 const MAX_IMAGES = 3
+
+// Mensaje de error al subir una foto. Un 413 lo contesta el proxy (no el backend) cuando el
+// cuerpo excede su límite, así que no trae `message` — se explica aquí en vez de dar el
+// error genérico.
+function imageUploadError(err, fallback) {
+  if (err.response?.status === 413) return 'La imagen es demasiado pesada para el servidor'
+  return err.response?.data?.message ?? fallback
+}
 
 // -> los params que espera GET /products/page. Único filtro de disponibilidad que queda
 // (ver `lowStockOnly`) es "stock bajo", como un botón de encendido/apagado — los que
@@ -246,20 +255,20 @@ export default function Inventory() {
 
   /** Sube una foto nueva para el producto en edición y refresca la galería del modal. */
   async function handleUploadImage(e) {
-    const file = e.target.files?.[0]
-    if (!file || !editProduct) return
-    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
-      notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
-      e.target.value = ''
-      return
-    }
+    const original = e.target.files?.[0]
+    if (!original || !editProduct) return
     setUploadingImage(true)
     try {
+      const file = await resizeImage(original)
+      if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+        notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
+        return
+      }
       await uploadProductImage(editProduct.id, file)
       const r = await getProductImages(editProduct.id)
       setProductImages(r.data.data ?? [])
     } catch (err) {
-      notify(err.response?.data?.message ?? 'No se pudo subir la foto', 'error')
+      notify(imageUploadError(err, 'No se pudo subir la foto'), 'error')
     } finally {
       setUploadingImage(false)
       e.target.value = ''
@@ -272,9 +281,10 @@ export default function Inventory() {
    * (`URL.createObjectURL`) — la subida real ocurre en `handleSave`, justo después de que
    * la creación del producto responde con su id.
    */
-  function handleStageImage(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
+  async function handleStageImage(e) {
+    const original = e.target.files?.[0]
+    if (!original) return
+    const file = await resizeImage(original)
     if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
       notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
       e.target.value = ''
@@ -528,7 +538,7 @@ export default function Inventory() {
           // debe tumbar todo el flujo ni fingir que no pasó nada: se avisa aparte y se
           // sigue con las demás, en vez del `.catch(() => {})` de antes que lo escondía.
           await uploadProductImage(created.id, file)
-            .catch((err) => notify(err.response?.data?.message ?? `No se pudo subir "${file.name}"`, 'error'))
+            .catch((err) => notify(imageUploadError(err, `No se pudo subir "${file.name}"`), 'error'))
         }
       }
       pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
