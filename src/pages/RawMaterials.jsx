@@ -237,7 +237,7 @@ function FormModal({ item, categories, onClose, onSaved }) {
     const errs = {}
     if (!form.name.trim()) errs.name = 'El nombre es obligatorio'
     else if (form.name.length > 200) errs.name = 'El nombre no puede tener más de 200 caracteres'
-    if (form.barcode.length > 100) errs.barcode = 'El código de barras no puede tener más de 100 caracteres'
+    if (form.barcode.length > 100) errs.barcode = 'El código de producto no puede tener más de 100 caracteres'
     if (form.description.length > 500) errs.description = 'La descripción no puede tener más de 500 caracteres'
     if (form.cost !== '' && (Number.isNaN(Number(form.cost)) || Number(form.cost) < 0)) errs.cost = 'Captura un costo válido'
     else if (form.cost !== '' && Number(form.cost) > 9999999999.99) errs.cost = 'El costo no puede ser mayor a 9,999,999,999.99'
@@ -277,7 +277,7 @@ function FormModal({ item, categories, onClose, onSaved }) {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-medium text-gray-600">Código de barras</label>
+            <label className="text-xs font-medium text-gray-600">Código de producto</label>
             <input className="input" value={form.barcode} onChange={set('barcode')} />
             <FieldError msg={errors.barcode} />
           </div>
@@ -496,7 +496,7 @@ function TransferModal({ item, categories, onClose, onSaved }) {
       if (newProduct.price === '' || Number.isNaN(Number(newProduct.price))) errs.newProductPrice = 'Captura el precio de venta'
       else if (Number(newProduct.price) > 9999999999.99) errs.newProductPrice = 'El precio no puede ser mayor a 9,999,999,999.99'
       if (!newProduct.categoryId) errs.newProductCategoryId = 'Elige la categoría'
-      if (newProduct.barcode.length > 100) errs.barcode = 'El código de barras no puede tener más de 100 caracteres'
+      if (newProduct.barcode.length > 100) errs.barcode = 'El código de producto no puede tener más de 100 caracteres'
     }
     if (note.length > 255) errs.reason = 'La nota no puede tener más de 255 caracteres'
     setErrors(errs)
@@ -591,7 +591,7 @@ function TransferModal({ item, categories, onClose, onSaved }) {
               <FieldError msg={errors.newProductCategoryId} />
             </div>
             <div className="sm:col-span-2">
-              <label className="text-xs font-medium text-gray-600">Código de barras del producto</label>
+              <label className="text-xs font-medium text-gray-600">Código del producto</label>
               <input className="input" value={newProduct.barcode} onChange={(e) => setNewProduct({ ...newProduct, barcode: e.target.value })} />
               <FieldError msg={errors.barcode} />
               <p className="text-xs text-gray-500 mt-1">Costo: {fmt(item.cost)} por pieza (el de la materia prima).</p>

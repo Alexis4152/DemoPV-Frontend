@@ -587,31 +587,39 @@ export default function PublicApartar() {
                 <h3 className="font-bold text-purple-800 mb-4 text-lg">🛍️ Tu apartado</h3>
                 <div className="space-y-3">
                   {cart.map((i) => (
-                    <div key={i.productId} className="flex items-center gap-4 pb-3 border-b border-gray-100 last:border-b-0 last:pb-0">
-                      <div className="w-20 h-20 shrink-0 bg-purple-50 rounded-lg flex items-center justify-center overflow-hidden">
+                    // En celular no caben foto + texto + cantidad + subtotal en una sola fila
+                    // (el texto quedaba aplastado y encimado por los botones): ahí cantidad y
+                    // subtotal bajan a su propia línea debajo del texto. Desde `sm` el
+                    // contenedor de abajo usa `sm:contents` y vuelve a ser una sola fila.
+                    <div key={i.productId} className="flex items-start sm:items-center gap-3 sm:gap-4 pb-3 border-b border-gray-100 last:border-b-0 last:pb-0">
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 shrink-0 bg-purple-50 rounded-lg flex items-center justify-center overflow-hidden">
                         {i.image ? (
                           <img src={resolveMediaUrl(i.image)} alt={i.name} className="w-full h-full object-cover" />
                         ) : (
                           <span className="text-2xl">📦</span>
                         )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-gray-900">{i.name}</p>
-                        {i.description && (
-                          <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{i.description}</p>
-                        )}
-                        <p className="text-sm text-gray-400 mt-0.5">
-                          {i.originalPrice > i.price && <span className="line-through mr-1">{fmt(i.originalPrice)}</span>}
-                          {fmt(i.price)} c/u
-                        </p>
-                        <button type="button" className="text-xs text-red-500 hover:underline mt-1" onClick={() => updateQty(i.productId, 0)}>Quitar</button>
+                      <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                        <div className="sm:flex-1 min-w-0">
+                          <p className="font-medium text-gray-900 break-words">{i.name}</p>
+                          {i.description && (
+                            <p className="text-xs text-gray-400 mt-0.5 line-clamp-2 break-words">{i.description}</p>
+                          )}
+                          <p className="text-sm text-gray-400 mt-0.5">
+                            {i.originalPrice > i.price && <span className="line-through mr-1">{fmt(i.originalPrice)}</span>}
+                            <span className="whitespace-nowrap">{fmt(i.price)} c/u</span>
+                          </p>
+                          <button type="button" className="text-xs text-red-500 hover:underline mt-1" onClick={() => updateQty(i.productId, 0)}>Quitar</button>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 sm:contents">
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button className="w-8 h-8 rounded border border-purple-200 text-purple-700 hover:bg-purple-50" onClick={() => updateQty(i.productId, i.quantity - 1)}>−</button>
+                            <span className="w-8 text-center font-medium">{i.quantity}</span>
+                            <button className="w-8 h-8 rounded border border-purple-200 text-purple-700 hover:bg-purple-50 disabled:opacity-30" disabled={i.quantity >= i.stock} onClick={() => updateQty(i.productId, i.quantity + 1)}>+</button>
+                          </div>
+                          <p className="sm:w-24 text-right font-semibold text-gray-900 shrink-0">{fmt(i.price * i.quantity)}</p>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button className="w-8 h-8 rounded border border-purple-200 text-purple-700 hover:bg-purple-50" onClick={() => updateQty(i.productId, i.quantity - 1)}>−</button>
-                        <span className="w-8 text-center font-medium">{i.quantity}</span>
-                        <button className="w-8 h-8 rounded border border-purple-200 text-purple-700 hover:bg-purple-50 disabled:opacity-30" disabled={i.quantity >= i.stock} onClick={() => updateQty(i.productId, i.quantity + 1)}>+</button>
-                      </div>
-                      <p className="w-24 text-right font-semibold text-gray-900 shrink-0">{fmt(i.price * i.quantity)}</p>
                     </div>
                   ))}
                 </div>

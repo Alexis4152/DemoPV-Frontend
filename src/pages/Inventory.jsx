@@ -462,7 +462,7 @@ export default function Inventory() {
     // campo que usa cualquier otro error.
     if (!form.name.trim()) errors.name = 'El nombre es obligatorio'
     else if (form.name.length > 200) errors.name = 'El nombre no puede tener más de 200 caracteres'
-    if (form.barcode.length > 100) errors.barcode = 'El código de barras no puede tener más de 100 caracteres'
+    if (form.barcode.length > 100) errors.barcode = 'El código de producto no puede tener más de 100 caracteres'
     if (form.unit.length > 20) errors.unit = 'La unidad no puede tener más de 20 caracteres'
     if (form.description.length > 500) errors.description = 'La descripción no puede tener más de 500 caracteres'
     // Máximos alineados al límite real de columna en Postgres (ver ProductRequest en el
@@ -472,7 +472,10 @@ export default function Inventory() {
     if (form.price === '') errors.price = 'El precio es obligatorio'
     else if (Number(form.price) > 9999999999.99) errors.price = 'El precio no puede ser mayor a 9,999,999,999.99'
     if (form.cost !== '' && Number(form.cost) > 9999999999.99) errors.cost = 'El costo no puede ser mayor a 9,999,999,999.99'
-    if (form.stock !== '' && Number(form.stock) > 2147483647) errors.stock = 'El stock no puede ser mayor a 2,147,483,647'
+    // Al crear se exige stock inicial (mínimo 1); al editar el campo ni se envía como
+    // cambio (ver "Stock actual" en el modal), así que no se valida.
+    if (!editProduct && (form.stock === '' || Number(form.stock) < 1)) errors.stock = 'Captura el stock inicial (mínimo 1)'
+    else if (form.stock !== '' && Number(form.stock) > 2147483647) errors.stock = 'El stock no puede ser mayor a 2,147,483,647'
     if (form.minStock !== '' && Number(form.minStock) > 2147483647) errors.minStock = 'El stock mínimo no puede ser mayor a 2,147,483,647'
     if (!form.categoryId) errors.categoryId = 'Selecciona una categoría'
     if (form.apartadoDiscountPercent !== '') {
@@ -1093,7 +1096,7 @@ export default function Inventory() {
                 <div><label className="text-xs font-medium text-gray-600">Nombre <span className={fieldErrors.name ? 'text-red-600' : ''}>*</span></label>
                   <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                   {fieldErrors.name && <p className="text-red-600 text-xs mt-1">{fieldErrors.name}</p>}</div>
-                <div><label className="text-xs font-medium text-gray-600">Código de barras</label>
+                <div><label className="text-xs font-medium text-gray-600">Código de producto</label>
                   <input className="input" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
                   {fieldErrors.barcode && <p className="text-red-600 text-xs mt-1">{fieldErrors.barcode}</p>}</div>
                 <div><label className="text-xs font-medium text-gray-600">Precio venta <span className={fieldErrors.price ? 'text-red-600' : ''}>*</span></label>
@@ -1102,9 +1105,22 @@ export default function Inventory() {
                 <div><label className="text-xs font-medium text-gray-600">Costo</label>
                   <input className="input" type="number" step="0.01" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} />
                   {fieldErrors.cost && <p className="text-red-600 text-xs mt-1">{fieldErrors.cost}</p>}</div>
-                <div><label className="text-xs font-medium text-gray-600">Stock inicial</label>
-                  <input className="input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
-                  {fieldErrors.stock && <p className="text-red-600 text-xs mt-1">{fieldErrors.stock}</p>}</div>
+                {/* Al editar, el backend ignora `stock` (ProductService#update): todo cambio de
+                    existencias pasa por "Ajustar stock" para quedar registrado como movimiento
+                    de inventario. Por eso aquí solo se muestra, con acceso directo al ajuste. */}
+                {editProduct ? (
+                  <div><label className="text-xs font-medium text-gray-600">Stock actual</label>
+                    <input className="input bg-gray-100 text-gray-500" type="number" value={form.stock} disabled />
+                    <button
+                      type="button"
+                      className="text-xs text-blue-600 hover:underline mt-1"
+                      onClick={() => { const p = editProduct; setShowModal(false); openAdjust(p) }}
+                    >Cambiar con "Ajustar stock"</button></div>
+                ) : (
+                  <div><label className="text-xs font-medium text-gray-600">Stock inicial <span className={fieldErrors.stock ? 'text-red-600' : ''}>*</span></label>
+                    <input className="input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
+                    {fieldErrors.stock && <p className="text-red-600 text-xs mt-1">{fieldErrors.stock}</p>}</div>
+                )}
                 <div><label className="text-xs font-medium text-gray-600">Stock mínimo</label>
                   <input className="input" type="number" value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} />
                   {fieldErrors.minStock && <p className="text-red-600 text-xs mt-1">{fieldErrors.minStock}</p>}</div>
@@ -1364,7 +1380,7 @@ export default function Inventory() {
               <>
                 <p className="text-sm text-gray-500 mb-4">
                   Sube un Excel con el mismo formato que la plantilla — cada fila válida da de alta un producto nuevo.
-                  Un código de barras repetido (contra el catálogo o dentro del mismo archivo) se reporta como error,
+                  Un código de producto repetido (contra el catálogo o dentro del mismo archivo) se reporta como error,
                   nunca actualiza el producto existente.
                 </p>
                 <form onSubmit={handleBulkImportSubmit} className="space-y-3">
