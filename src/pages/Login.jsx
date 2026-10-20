@@ -72,52 +72,57 @@ export default function Login() {
         aria-hidden="true"
         className="pointer-events-none select-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-w-none opacity-[0.05]"
       />
-      <div className="bg-white rounded-2xl shadow-2xl shadow-[#155dea]/30 w-full max-w-md p-6 sm:p-8 relative z-10">
-        <div className="text-center mb-8">
-          <img src={logo} alt="Nexora Systems" className="w-24 h-24 rounded-full mx-auto mb-3 shadow-[0_0_24px_rgba(43,132,245,0.5)]" />
-          <h1 className="text-2xl font-bold text-gray-900">Punto de Venta Demo</h1>
-          <p className="text-gray-500 text-sm mt-1">Sistema de Punto de Venta</p>
-        </div>
-
-        {/* Sin type="email" ni required nativos a propósito (ver handleSubmit): el globo
-            del navegador se disparaba antes de que este formulario alcanzara a correr. */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Correo electrónico</label>
-            <input
-              type="text"
-              className="input"
-              placeholder="admin@boutique.com"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-            />
-            <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, cliente@outlook.com</p>
-            {fieldErrors.email && <p className="text-red-600 text-xs mt-1">{fieldErrors.email}</p>}
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
-            <PasswordInput
-              className="input"
-              placeholder="••••••••"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-            />
-            {fieldErrors.password && <p className="text-red-600 text-xs mt-1">{fieldErrors.password}</p>}
+      <div className="flex flex-col items-center w-full max-w-md relative z-10">
+        <div className="bg-white rounded-2xl shadow-2xl shadow-[#155dea]/30 w-full p-6 sm:p-8">
+          <div className="text-center mb-8">
+            <img src={logo} alt="Nexora Systems" className="w-24 h-24 rounded-full mx-auto mb-3 shadow-[0_0_24px_rgba(43,132,245,0.5)]" />
+            <h1 className="text-2xl font-bold text-gray-900">Punto de Venta Demo</h1>
+            <p className="text-gray-500 text-sm mt-1">Sistema de Punto de Venta</p>
           </div>
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
-              {error}
+          {/* Sin type="email" ni required nativos a propósito (ver handleSubmit): el globo
+              del navegador se disparaba antes de que este formulario alcanzara a correr. */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Correo electrónico</label>
+              <input
+                type="text"
+                className="input"
+                placeholder="admin@boutique.com"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+              <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, cliente@outlook.com</p>
+              {fieldErrors.email && <p className="text-red-600 text-xs mt-1">{fieldErrors.email}</p>}
             </div>
-          )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
+              <PasswordInput
+                className="input"
+                placeholder="••••••••"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+              />
+              {fieldErrors.password && <p className="text-red-600 text-xs mt-1">{fieldErrors.password}</p>}
+            </div>
 
-          <button type="submit" className="btn-primary w-full py-3" disabled={loading}>
-            {loading ? 'Iniciando sesión...' : 'Iniciar sesión'}
-          </button>
-          <Link to="/forgot-password" className="block text-center text-sm text-gray-500 hover:text-gray-700">
-            ¿Olvidaste tu contraseña?
-          </Link>
-        </form>
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+                {error}
+              </div>
+            )}
+
+            <button type="submit" className="btn-primary w-full py-3" disabled={loading}>
+              {loading ? 'Iniciando sesión...' : 'Iniciar sesión'}
+            </button>
+            <Link to="/forgot-password" className="block text-center text-sm text-gray-500 hover:text-gray-700">
+              ¿Olvidaste tu contraseña?
+            </Link>
+          </form>
+        </div>
+        <Link to="/arco" className="mt-4 text-center text-xs text-gray-400 hover:text-gray-200 transition-colors">
+          ¿Quieres ejercer tus derechos ARCO sobre tus datos personales?
+        </Link>
       </div>
     </div>
   )

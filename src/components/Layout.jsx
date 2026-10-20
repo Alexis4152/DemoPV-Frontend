@@ -3,7 +3,9 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { SECTIONS } from '../config/sections'
 import { getApartadosPendingCount } from '../api/apartados'
+import { getArcoRequestsPendingCount } from '../api/arco'
 import { resolveMediaUrl } from '../utils/media'
+import { roleLabel } from '../utils/roleLabels'
 import defaultLogo from '../assets/logo.png'
 import useEscapeClose from '../hooks/useEscapeClose'
 
@@ -25,7 +27,7 @@ const navLinkClass = (collapsed) => ({ isActive }) =>
   }`
 
 // Rutas agrupadas bajo el submenú colapsable "Configuración" del sidebar.
-const CONFIG_ROUTES = ['/roles', '/categories', '/appearance', '/store-info', '/mail-config']
+const CONFIG_ROUTES = ['/roles', '/categories', '/appearance', '/store-info', '/mail-config', '/arco-requests']
 
 /**
  * Shell visual de toda la app autenticada: arma el sidebar de navegación (logo de
@@ -70,6 +72,20 @@ export default function Layout({ children }) {
     return () => clearInterval(id)
   }, [canSeeApartados])
 
+  // Mismo patrón que pendingApartados de arriba, para las solicitudes ARCO sin atender —
+  // solo tiene sentido pollearlo si el usuario puede verlas (SUPER_ADMIN, el único rol que
+  // puede llamar /api/admin/arco-requests/pending-count sin que el backend le dé 403).
+  const [pendingArco, setPendingArco] = useState(0)
+  useEffect(() => {
+    if (!isSuperAdmin) return
+    function poll() {
+      getArcoRequestsPendingCount().then((r) => setPendingArco(r.data.data ?? 0)).catch(() => {})
+    }
+    poll()
+    const id = setInterval(poll, 60_000)
+    return () => clearInterval(id)
+  }, [isSuperAdmin])
+
   /** Cierra la sesión del usuario actual y lo redirige a la pantalla de login. */
   function handleLogout() {
     logout()
@@ -110,6 +126,7 @@ export default function Layout({ children }) {
     isAdmin && { to: '/appearance', icon: '🎨', label: 'Apariencia' },
     isAdmin && { to: '/store-info', icon: '🏬', label: 'Datos de la tienda' },
     isSuperAdmin && { to: '/mail-config', icon: '✉️', label: 'Correo del sistema' },
+    isSuperAdmin && { to: '/arco-requests', icon: '🛡️', label: 'Solicitudes ARCO', code: 'ARCO' },
   ].filter(Boolean)
   const configActive = CONFIG_ROUTES.includes(location.pathname)
   const sidebarLogo = resolveMediaUrl(user?.tienda?.logoPath) || defaultLogo
@@ -173,12 +190,27 @@ export default function Layout({ children }) {
             </NavLink>
           ))}
 
+          {/* "Mis solicitudes ARCO": a diferencia de todo lo demás del sidebar, NO depende de
+              `hasSection` — cualquier cuenta (de cualquier rol) puede tener solicitudes
+              propias que consultar, es del usuario, no de la tienda. */}
+          <NavLink to="/my-arco-requests" title={isCollapsed ? 'Mis solicitudes ARCO' : undefined} className={navLinkClass(isCollapsed)} onClick={onNavigate}>
+            <span>📋</span>
+            {!isCollapsed && <span className="whitespace-nowrap">Mis solicitudes ARCO</span>}
+          </NavLink>
+
           {configItems.length > 0 && (
             isCollapsed ? (
               // Sin espacio para agrupar en modo icono: se muestran sueltos, igual que el resto.
               configItems.map((n) => (
                 <NavLink key={n.to} to={n.to} title={n.label} className={navLinkClass(true)} onClick={onNavigate}>
-                  <span>{n.icon}</span>
+                  <span className="relative">
+                    {n.icon}
+                    {n.code === 'ARCO' && pendingArco > 0 && (
+                      <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[10px] leading-none rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-0.5">
+                        {pendingArco > 9 ? '9+' : pendingArco}
+                      </span>
+                    )}
+                  </span>
                 </NavLink>
               ))
             ) : (
@@ -198,7 +230,14 @@ export default function Layout({ children }) {
                     {configItems.map((n) => (
                       <NavLink key={n.to} to={n.to} className={navLinkClass(false)} onClick={onNavigate}>
                         <span>{n.icon}</span>
-                        <span className="whitespace-nowrap">{n.label}</span>
+                        <span className="whitespace-nowrap flex items-center gap-1.5">
+                          {n.label}
+                          {n.code === 'ARCO' && pendingArco > 0 && (
+                            <span className="bg-red-500 text-white text-[10px] leading-none rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1">
+                              {pendingArco > 99 ? '99+' : pendingArco}
+                            </span>
+                          )}
+                        </span>
                       </NavLink>
                     ))}
                   </div>
@@ -212,7 +251,7 @@ export default function Layout({ children }) {
           {!isCollapsed && (
             <div className="mb-2 px-3 py-2 text-xs text-slate-400">
               <span className="inline-block bg-purple-600/20 text-purple-300 rounded px-2 py-0.5 font-medium">
-                {user?.role}
+                {roleLabel(user?.role)}
               </span>
             </div>
           )}

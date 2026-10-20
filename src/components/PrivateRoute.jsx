@@ -1,6 +1,16 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
+// Pantallas de PLATAFORMA (no de una tienda en particular): se puede entrar directo, sin
+// elegir tienda primero — ver el chequeo 4 de abajo. SUPER_ADMIN_ONLY son las mismas rutas
+// que llevan `superAdminOnly` en App.jsx (Layout.jsx también las agrupa aparte, fuera del
+// contexto de "tienda actuante"): "Correo del sistema" y "Solicitudes ARCO". ANY_ROLE es
+// "Mis solicitudes" — abierta a cualquier rol (incluido SUPERVISOR, que igual que
+// SUPER_ADMIN parte con `user.tienda` en null hasta elegir una), así que su exención no se
+// acota a `isSuperAdmin` como la otra lista.
+const SUPER_ADMIN_ONLY_PLATFORM_ROUTES = ['/mail-config', '/arco-requests']
+const ANY_ROLE_PLATFORM_ROUTES = ['/my-arco-requests']
+
 /**
  * Guard de rutas: controla si `children` se renderiza o si el usuario es
  * redirigido, según el estado de sesión y (opcionalmente) sus permisos.
@@ -19,7 +29,14 @@ import { useAuth } from '../context/AuthContext'
  *    contexto (elegir tienda) — por eso también exceptúa `mustChangePassword`: sin esto,
  *    un SUPERVISOR nuevo (`mustChangePassword=true` y `tienda=null` a la vez, ver
  *    `UserService#create`) quedaba en un loop infinito entre `/change-password` y
- *    `/select-tienda`, cada chequeo mandando al otro de vuelta.
+ *    `/select-tienda`, cada chequeo mandando al otro de vuelta. También se exceptúan las
+ *    rutas de plataforma (sin tienda): {@link SUPER_ADMIN_ONLY_PLATFORM_ROUTES} solo para
+ *    SUPER_ADMIN (nunca SUPERVISOR), y {@link ANY_ROLE_PLATFORM_ROUTES} para cualquiera de
+ *    los dos — ninguna de esas pantallas es de ninguna tienda, así que obligar a elegir una
+ *    primero no tiene sentido: el backend ya maneja sin problema que `user.tienda` siga
+ *    `null` ahí (ver `api/axios.js`, que simplemente omite el header `X-Acting-Tienda-Id`
+ *    cuando no hay tienda elegida). Si el usuario después navega a algo sí ligado a una
+ *    tienda, este mismo chequeo lo manda a `/select-tienda` en ese momento, normal.
  * 5. Si se pasa `section` (código de `AppSection`) y el usuario no la tiene habilitada
  *    (`hasSection`), redirige a `/`.
  * 6. Si se pasa `adminOnly` y el usuario no es `ADMIN`, redirige a `/`. Se usa para
@@ -42,7 +59,11 @@ export default function PrivateRoute({ children, section, adminOnly, superAdminO
   if (user.mustChangePassword && location.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />
   }
-  if (isPlatformActor && !user.tienda && !user.mustChangePassword && location.pathname !== '/select-tienda') {
+  const onExemptPlatformRoute =
+    (isSuperAdmin && SUPER_ADMIN_ONLY_PLATFORM_ROUTES.includes(location.pathname)) ||
+    ANY_ROLE_PLATFORM_ROUTES.includes(location.pathname)
+  if (isPlatformActor && !user.tienda && !user.mustChangePassword
+      && location.pathname !== '/select-tienda' && !onExemptPlatformRoute) {
     return <Navigate to="/select-tienda" replace />
   }
   if (section && !hasSection(section)) return <Navigate to="/" replace />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { getTiendas, createTienda, updateTiendaName, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
@@ -30,6 +30,13 @@ const MAX_IMAGE_MB = 5
  * administrar cualquier tienda por id, y a SUPERVISOR las suyas, sin importar cuál tenga
  * elegida como "actuante". Los datos fiscales/de contacto completos siguen viviendo en
  * `StoreInfo.jsx`, reservada a la tienda sobre la que se está actuando.
+ *
+ * Para SUPER_ADMIN, también es la puerta directa a "Solicitudes ARCO" (de PLATAFORMA, ni
+ * de esta tienda ni de ninguna otra) — es lo único que el equipo de Nexora atiende de
+ * verdad desde esta cuenta, junto con dar de alta tiendas nuevas (ya en esta misma
+ * pantalla). Llegar ahí desde aquí no exige elegir tienda primero (ver `PrivateRoute.jsx`,
+ * que ya no obliga en esa ruta). "Correo del sistema" y "Mis solicitudes ARCO" siguen
+ * existiendo, solo que no como atajo en esta pantalla — ver `Layout.jsx`.
  */
 export default function SelectTienda() {
   const { user, selectTienda, patchTienda, logout, isSuperAdmin } = useAuth()
@@ -141,6 +148,21 @@ export default function SelectTienda() {
               <span className="text-lg">➕</span>
               <span className="font-medium">Nueva tienda</span>
             </button>
+          </div>
+        )}
+
+        {/* Acceso a lo que es de PLATAFORMA, no de ninguna tienda — por eso vive aquí, antes de
+            elegir una (ver PrivateRoute: esta ruta ya no obliga a elegir tienda primero). Solo
+            "Solicitudes ARCO": es lo único que un SUPER_ADMIN de Nexora hace de verdad desde
+            aquí (lo otro, dar de alta tiendas nuevas, ya está a la izquierda). "Correo del
+            sistema" y "Mis solicitudes ARCO" siguen existiendo (Configuración → Correo del
+            sistema una vez dentro de una tienda; "Mis solicitudes" en el sidebar normal, para
+            el personal real de cada tienda), solo no como atajo aquí. */}
+        {isSuperAdmin && (
+          <div className="flex flex-wrap gap-4 justify-center border-t border-gray-100 pt-4 mt-2">
+            <Link to="/arco-requests" className="text-sm text-purple-600 hover:text-purple-800 font-medium inline-flex items-center gap-1.5">
+              🛡️ Solicitudes ARCO
+            </Link>
           </div>
         )}
 
