@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
 import { openOrDownloadBlob } from '../utils/downloadBlob'
+import { resizeImage } from '../utils/resizeImage'
 import IconButton from '../components/IconButton'
 import { PencilIcon, SlidersIcon, ArchiveIcon } from '../components/icons'
 
@@ -24,6 +25,14 @@ const PAGE_SIZES = [10, 20, 50, 100]
 const MAX_IMAGE_MB = 5
 // Tope de fotos por producto — mismo valor que ProductImageService.MAX_IMAGES_PER_PRODUCT.
 const MAX_IMAGES = 3
+
+// Mensaje de error al subir una foto. Un 413 lo contesta el proxy (no el backend) cuando el
+// cuerpo excede su límite, así que no trae `message` — se explica aquí en vez de dar el
+// error genérico.
+function imageUploadError(err, fallback) {
+  if (err.response?.status === 413) return 'La imagen es demasiado pesada para el servidor'
+  return err.response?.data?.message ?? fallback
+}
 
 // -> los params que espera GET /products/page. Único filtro de disponibilidad que queda
 // (ver `lowStockOnly`) es "stock bajo", como un botón de encendido/apagado — los que
@@ -246,20 +255,20 @@ export default function Inventory() {
 
   /** Sube una foto nueva para el producto en edición y refresca la galería del modal. */
   async function handleUploadImage(e) {
-    const file = e.target.files?.[0]
-    if (!file || !editProduct) return
-    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
-      notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
-      e.target.value = ''
-      return
-    }
+    const original = e.target.files?.[0]
+    if (!original || !editProduct) return
     setUploadingImage(true)
     try {
+      const file = await resizeImage(original)
+      if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+        notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
+        return
+      }
       await uploadProductImage(editProduct.id, file)
       const r = await getProductImages(editProduct.id)
       setProductImages(r.data.data ?? [])
     } catch (err) {
-      notify(err.response?.data?.message ?? 'No se pudo subir la foto', 'error')
+      notify(imageUploadError(err, 'No se pudo subir la foto'), 'error')
     } finally {
       setUploadingImage(false)
       e.target.value = ''
@@ -272,9 +281,10 @@ export default function Inventory() {
    * (`URL.createObjectURL`) — la subida real ocurre en `handleSave`, justo después de que
    * la creación del producto responde con su id.
    */
-  function handleStageImage(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
+  async function handleStageImage(e) {
+    const original = e.target.files?.[0]
+    if (!original) return
+    const file = await resizeImage(original)
     if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
       notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
       e.target.value = ''
@@ -452,7 +462,7 @@ export default function Inventory() {
     // campo que usa cualquier otro error.
     if (!form.name.trim()) errors.name = 'El nombre es obligatorio'
     else if (form.name.length > 200) errors.name = 'El nombre no puede tener más de 200 caracteres'
-    if (form.barcode.length > 100) errors.barcode = 'El código de barras no puede tener más de 100 caracteres'
+    if (form.barcode.length > 100) errors.barcode = 'El código de producto no puede tener más de 100 caracteres'
     if (form.unit.length > 20) errors.unit = 'La unidad no puede tener más de 20 caracteres'
     if (form.description.length > 500) errors.description = 'La descripción no puede tener más de 500 caracteres'
     // Máximos alineados al límite real de columna en Postgres (ver ProductRequest en el
@@ -462,7 +472,10 @@ export default function Inventory() {
     if (form.price === '') errors.price = 'El precio es obligatorio'
     else if (Number(form.price) > 9999999999.99) errors.price = 'El precio no puede ser mayor a 9,999,999,999.99'
     if (form.cost !== '' && Number(form.cost) > 9999999999.99) errors.cost = 'El costo no puede ser mayor a 9,999,999,999.99'
-    if (form.stock !== '' && Number(form.stock) > 2147483647) errors.stock = 'El stock no puede ser mayor a 2,147,483,647'
+    // Al crear se exige stock inicial (mínimo 1); al editar el campo ni se envía como
+    // cambio (ver "Stock actual" en el modal), así que no se valida.
+    if (!editProduct && (form.stock === '' || Number(form.stock) < 1)) errors.stock = 'Captura el stock inicial (mínimo 1)'
+    else if (form.stock !== '' && Number(form.stock) > 2147483647) errors.stock = 'El stock no puede ser mayor a 2,147,483,647'
     if (form.minStock !== '' && Number(form.minStock) > 2147483647) errors.minStock = 'El stock mínimo no puede ser mayor a 2,147,483,647'
     if (!form.categoryId) errors.categoryId = 'Selecciona una categoría'
     if (form.apartadoDiscountPercent !== '') {
@@ -528,7 +541,7 @@ export default function Inventory() {
           // debe tumbar todo el flujo ni fingir que no pasó nada: se avisa aparte y se
           // sigue con las demás, en vez del `.catch(() => {})` de antes que lo escondía.
           await uploadProductImage(created.id, file)
-            .catch((err) => notify(err.response?.data?.message ?? `No se pudo subir "${file.name}"`, 'error'))
+            .catch((err) => notify(imageUploadError(err, `No se pudo subir "${file.name}"`), 'error'))
         }
       }
       pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
@@ -1083,7 +1096,7 @@ export default function Inventory() {
                 <div><label className="text-xs font-medium text-gray-600">Nombre <span className={fieldErrors.name ? 'text-red-600' : ''}>*</span></label>
                   <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                   {fieldErrors.name && <p className="text-red-600 text-xs mt-1">{fieldErrors.name}</p>}</div>
-                <div><label className="text-xs font-medium text-gray-600">Código de barras</label>
+                <div><label className="text-xs font-medium text-gray-600">Código de producto</label>
                   <input className="input" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
                   {fieldErrors.barcode && <p className="text-red-600 text-xs mt-1">{fieldErrors.barcode}</p>}</div>
                 <div><label className="text-xs font-medium text-gray-600">Precio venta <span className={fieldErrors.price ? 'text-red-600' : ''}>*</span></label>
@@ -1092,9 +1105,22 @@ export default function Inventory() {
                 <div><label className="text-xs font-medium text-gray-600">Costo</label>
                   <input className="input" type="number" step="0.01" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} />
                   {fieldErrors.cost && <p className="text-red-600 text-xs mt-1">{fieldErrors.cost}</p>}</div>
-                <div><label className="text-xs font-medium text-gray-600">Stock inicial</label>
-                  <input className="input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
-                  {fieldErrors.stock && <p className="text-red-600 text-xs mt-1">{fieldErrors.stock}</p>}</div>
+                {/* Al editar, el backend ignora `stock` (ProductService#update): todo cambio de
+                    existencias pasa por "Ajustar stock" para quedar registrado como movimiento
+                    de inventario. Por eso aquí solo se muestra, con acceso directo al ajuste. */}
+                {editProduct ? (
+                  <div><label className="text-xs font-medium text-gray-600">Stock actual</label>
+                    <input className="input bg-gray-100 text-gray-500" type="number" value={form.stock} disabled />
+                    <button
+                      type="button"
+                      className="text-xs text-blue-600 hover:underline mt-1"
+                      onClick={() => { const p = editProduct; setShowModal(false); openAdjust(p) }}
+                    >Cambiar con "Ajustar stock"</button></div>
+                ) : (
+                  <div><label className="text-xs font-medium text-gray-600">Stock inicial <span className={fieldErrors.stock ? 'text-red-600' : ''}>*</span></label>
+                    <input className="input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
+                    {fieldErrors.stock && <p className="text-red-600 text-xs mt-1">{fieldErrors.stock}</p>}</div>
+                )}
                 <div><label className="text-xs font-medium text-gray-600">Stock mínimo</label>
                   <input className="input" type="number" value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} />
                   {fieldErrors.minStock && <p className="text-red-600 text-xs mt-1">{fieldErrors.minStock}</p>}</div>
@@ -1354,7 +1380,7 @@ export default function Inventory() {
               <>
                 <p className="text-sm text-gray-500 mb-4">
                   Sube un Excel con el mismo formato que la plantilla — cada fila válida da de alta un producto nuevo.
-                  Un código de barras repetido (contra el catálogo o dentro del mismo archivo) se reporta como error,
+                  Un código de producto repetido (contra el catálogo o dentro del mismo archivo) se reporta como error,
                   nunca actualiza el producto existente.
                 </p>
                 <form onSubmit={handleBulkImportSubmit} className="space-y-3">

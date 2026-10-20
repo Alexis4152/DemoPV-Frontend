@@ -10,6 +10,7 @@ import ChangePasswordRequired from './pages/ChangePasswordRequired'
 import SelectTienda from './pages/SelectTienda'
 import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
+import RawMaterials from './pages/RawMaterials'
 import POS from './pages/POS'
 import Sales from './pages/Sales'
 import Reports from './pages/Reports'
@@ -71,6 +72,7 @@ function AppRoutes() {
                 <Route path="/" element={<PrivateRoute section="DASHBOARD"><Dashboard /></PrivateRoute>} />
                 <Route path="/pos" element={<PrivateRoute section="POS"><POS /></PrivateRoute>} />
                 <Route path="/inventory" element={<PrivateRoute section="INVENTORY"><Inventory /></PrivateRoute>} />
+                <Route path="/raw-materials" element={<PrivateRoute section="RAW_MATERIALS"><RawMaterials /></PrivateRoute>} />
                 <Route path="/sales" element={<PrivateRoute section="SALES"><Sales /></PrivateRoute>} />
                 <Route path="/cash-cuts" element={<PrivateRoute section="CASH_CUTS"><CashCuts /></PrivateRoute>} />
                 <Route path="/apartados" element={<PrivateRoute section="APARTADOS"><Apartados /></PrivateRoute>} />

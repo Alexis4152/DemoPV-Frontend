@@ -24,6 +24,7 @@ export const SECTIONS = [
   { code: 'DASHBOARD', label: 'Inicio', icon: '📊', to: '/' },
   { code: 'POS', label: 'Punto de Venta', icon: '🛒', to: '/pos' },
   { code: 'INVENTORY', label: 'Inventario', icon: '📦', to: '/inventory' },
+  { code: 'RAW_MATERIALS', label: 'Materia prima', icon: '🧰', to: '/raw-materials' },
   { code: 'SALES', label: 'Historial de ventas', icon: '📋', to: '/sales' },
   { code: 'CASH_CUTS', label: 'Cortes de Caja', icon: '💰', to: '/cash-cuts' },
   { code: 'APARTADOS', label: 'Apartados', icon: '🛍️', to: '/apartados' },

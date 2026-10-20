@@ -29,6 +29,7 @@ const CRUD_COLUMNS = [
 // /SUPER_ADMIN — solo otras cuentas sin rango.
 const CRUD_SECTIONS = {
   INVENTORY: ['CREATE', 'EDIT', 'DELETE'],
+  RAW_MATERIALS: ['CREATE', 'EDIT', 'DELETE'],
   SALES: ['DELETE'],
   APARTADOS: ['EDIT', 'DELETE'],
   USERS: ['CREATE', 'EDIT', 'DELETE'],
