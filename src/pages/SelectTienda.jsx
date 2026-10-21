@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { getTiendas, getTiendaPlan, createTienda, updateTiendaName, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
+import { getTiendas, getTiendaPlan, createTienda, updateTiendaName, updateTiendasPaymentMethods, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
@@ -32,11 +32,8 @@ const MAX_IMAGE_MB = 5
  * `StoreInfo.jsx`, reservada a la tienda sobre la que se está actuando.
  *
  * Para SUPER_ADMIN, también es la puerta directa a "Solicitudes ARCO" (de PLATAFORMA, ni
- * de esta tienda ni de ninguna otra) — es lo único que el equipo de Nexora atiende de
- * verdad desde esta cuenta, junto con dar de alta tiendas nuevas (ya en esta misma
- * pantalla). Llegar ahí desde aquí no exige elegir tienda primero (ver `PrivateRoute.jsx`,
- * que ya no obliga en esa ruta). "Correo del sistema" y "Mis solicitudes ARCO" siguen
- * existiendo, solo que no como atajo en esta pantalla — ver `Layout.jsx`.
+ * de esta tienda ni de ninguna otra) y a la configuración masiva de métodos de pago
+ * (Tarjeta y Pasarela Openpay) para N tiendas.
  */
 export default function SelectTienda() {
   const { user, selectTienda, patchTienda, logout, isSuperAdmin } = useAuth()
@@ -47,6 +44,7 @@ export default function SelectTienda() {
 
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState(null) // tienda siendo editada, o null
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
   // Plan del SUPERVISOR (máximo de tiendas que puede tener); null para SUPER_ADMIN.
   const [plan, setPlan] = useState(null)
 
@@ -79,9 +77,29 @@ export default function SelectTienda() {
       return next.sort((a, b) => a.name.localeCompare(b.name))
     })
     // Si la tienda editada es la que el SUPER_ADMIN tiene elegida ahorita, refleja el
-    // cambio de inmediato en el sidebar (nombre/logo) sin que tenga que re-elegirla.
+    // cambio de inmediato en el sidebar y en el POS sin que tenga que re-elegirla.
     if (user?.tienda?.id === tienda.id) {
-      patchTienda({ name: tienda.name, logoPath: tienda.logoPath })
+      patchTienda({
+        name: tienda.name,
+        logoPath: tienda.logoPath,
+        cardPaymentEnabled: tienda.cardPaymentEnabled,
+        openpayEnabled: tienda.openpayEnabled,
+      })
+    }
+  }
+
+  /** Refleja en la lista un lote de N tiendas actualizadas (ej. al configurar métodos de pago). */
+  function upsertManyLocal(updatedList) {
+    const byId = new Map(updatedList.map((t) => [t.id, t]))
+    setTiendas((list) =>
+      list.map((t) => (byId.has(t.id) ? { ...t, ...byId.get(t.id) } : t)).sort((a, b) => a.name.localeCompare(b.name))
+    )
+    if (user?.tienda?.id && byId.has(user.tienda.id)) {
+      const currentUpdated = byId.get(user.tienda.id)
+      patchTienda({
+        cardPaymentEnabled: currentUpdated.cardPaymentEnabled,
+        openpayEnabled: currentUpdated.openpayEnabled,
+      })
     }
   }
 
@@ -145,12 +163,26 @@ export default function SelectTienda() {
                       <p className="text-xs text-gray-400">
                         {isCurrent ? 'Actuando aquí ahora' : t.isActive ? 'Activa' : 'Inactiva'}
                       </p>
+                      {(t.cardPaymentEnabled || t.openpayEnabled) && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {t.cardPaymentEnabled && (
+                            <span className="text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded">
+                              💳 Tarjeta
+                            </span>
+                          )}
+                          {t.openpayEnabled && (
+                            <span className="text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.5 rounded">
+                              🌐 Openpay
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </button>
                   <button
                     type="button"
                     onClick={() => setEditing(t)}
-                    title="Editar nombre y logo"
+                    title={isSuperAdmin ? 'Editar nombre, logo y métodos de pago' : 'Editar nombre y logo'}
                     className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-purple-600 hover:bg-white"
                   >
                     ✏️
@@ -172,15 +204,18 @@ export default function SelectTienda() {
           </div>
         )}
 
-        {/* Acceso a lo que es de PLATAFORMA, no de ninguna tienda — por eso vive aquí, antes de
-            elegir una (ver PrivateRoute: esta ruta ya no obliga a elegir tienda primero). Solo
-            "Solicitudes ARCO": es lo único que un SUPER_ADMIN de Nexora hace de verdad desde
-            aquí (lo otro, dar de alta tiendas nuevas, ya está a la izquierda). "Correo del
-            sistema" y "Mis solicitudes ARCO" siguen existiendo (Configuración → Correo del
-            sistema una vez dentro de una tienda; "Mis solicitudes" en el sidebar normal, para
-            el personal real de cada tienda), solo no como atajo aquí. */}
+        {/* Acciones de PLATAFORMA exclusivas de SUPER_ADMIN */}
         {isSuperAdmin && (
-          <div className="flex flex-wrap gap-4 justify-center border-t border-gray-100 pt-4 mt-2">
+          <div className="flex flex-wrap gap-4 justify-center items-center border-t border-gray-100 pt-4 mt-4">
+            {tiendas.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowPaymentModal(true)}
+                className="text-sm text-purple-600 hover:text-purple-800 font-medium inline-flex items-center gap-1.5"
+              >
+                💳 Configurar métodos de pago (N tiendas)
+              </button>
+            )}
             <Link to="/arco-requests" className="text-sm text-purple-600 hover:text-purple-800 font-medium inline-flex items-center gap-1.5">
               🛡️ Solicitudes ARCO
             </Link>
@@ -195,17 +230,39 @@ export default function SelectTienda() {
         </div>
       </div>
 
-      {showCreate && <CreateTiendaModal onClose={() => setShowCreate(false)} onCreated={(t) => { upsertLocal(t); setShowCreate(false); loadPlan() }} />}
-      {editing && <EditTiendaModal tienda={editing} onClose={() => setEditing(null)} onSaved={(t) => { upsertLocal(t); setEditing(null) }} />}
+      {showCreate && (
+        <CreateTiendaModal
+          isSuperAdmin={isSuperAdmin}
+          onClose={() => setShowCreate(false)}
+          onCreated={(t) => { upsertLocal(t); setShowCreate(false); loadPlan() }}
+        />
+      )}
+      {editing && (
+        <EditTiendaModal
+          tienda={editing}
+          isSuperAdmin={isSuperAdmin}
+          onClose={() => setEditing(null)}
+          onSaved={(t) => { upsertLocal(t); setEditing(null) }}
+        />
+      )}
+      {showPaymentModal && isSuperAdmin && (
+        <BulkPaymentMethodsModal
+          tiendas={tiendas}
+          onClose={() => setShowPaymentModal(false)}
+          onSaved={(updatedList) => { upsertManyLocal(updatedList); setShowPaymentModal(false) }}
+        />
+      )}
     </div>
   )
 }
 
-/** Modal "+ Nueva tienda": nombre (obligatorio) y logo (opcional, se sube justo después de crearla). */
-function CreateTiendaModal({ onClose, onCreated }) {
+/** Modal "+ Nueva tienda": nombre (obligatorio), logo (opcional) y, para SUPER_ADMIN, métodos de pago (inician en false). */
+function CreateTiendaModal({ isSuperAdmin, onClose, onCreated }) {
   const { notify } = useNotify()
   const [name, setName] = useState('')
   const [logoFile, setLogoFile] = useState(null)
+  const [cardPaymentEnabled, setCardPaymentEnabled] = useState(false)
+  const [openpayEnabled, setOpenpayEnabled] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   // Solo al dar clic en "Crear tienda" — mismo patrón que Usuarios/Roles/Categorías.
@@ -214,9 +271,6 @@ function CreateTiendaModal({ onClose, onCreated }) {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    // Sin `required` nativo en el input (ver el JSX de abajo) — esto es lo único que valida
-    // antes de mandar la solicitud. Mismo límite que TiendaRequest.name en el backend (150,
-    // por Tienda.name VARCHAR(150)).
     const trimmed = name.trim()
     if (!trimmed) { setNameError('El nombre es obligatorio'); notify('Revisa los campos marcados en rojo', 'error'); return }
     if (trimmed.length > 150) { setNameError('El nombre no puede tener más de 150 caracteres'); notify('Revisa los campos marcados en rojo', 'error'); return }
@@ -224,7 +278,8 @@ function CreateTiendaModal({ onClose, onCreated }) {
     setSaving(true)
     setError('')
     try {
-      const res = await createTienda(trimmed)
+      const extra = isSuperAdmin ? { cardPaymentEnabled, openpayEnabled } : {}
+      const res = await createTienda(trimmed, extra)
       let tienda = res.data.data
       if (logoFile) {
         const logoRes = await uploadTiendaLogo(tienda.id, logoFile)
@@ -251,7 +306,6 @@ function CreateTiendaModal({ onClose, onCreated }) {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-          {/* Sin required nativo a propósito (ver handleSubmit). */}
           <input type="text" className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
           {nameError && <p className="text-red-600 text-xs mt-1">{nameError}</p>}
         </div>
@@ -276,6 +330,28 @@ function CreateTiendaModal({ onClose, onCreated }) {
           <p className="text-xs text-gray-400 mt-1">Si no subes uno, se usa el logo de Nexora. Puedes cambiarlo después. PNG, JPG o WEBP, máximo {MAX_IMAGE_MB} MB.</p>
         </div>
 
+        {isSuperAdmin && (
+          <div className="border-t border-gray-100 pt-3 space-y-2">
+            <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Métodos de pago adicionales</p>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cardPaymentEnabled}
+                onChange={(e) => setCardPaymentEnabled(e.target.checked)}
+              />
+              <span>💳 Pago con tarjeta (Terminal física)</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={openpayEnabled}
+                onChange={(e) => setOpenpayEnabled(e.target.checked)}
+              />
+              <span>🌐 Pasarela de pagos Openpay</span>
+            </label>
+          </div>
+        )}
+
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}
 
         <div className="flex justify-end gap-2 pt-2">
@@ -287,23 +363,21 @@ function CreateTiendaModal({ onClose, onCreated }) {
   )
 }
 
-/** Modal de edición rápida (nombre + logo) para una tienda existente, sin tener que "entrar" a ella. */
-function EditTiendaModal({ tienda, onClose, onSaved }) {
+/** Modal de edición rápida (nombre + logo + métodos de pago si es SUPER_ADMIN) para una tienda existente. */
+function EditTiendaModal({ tienda, isSuperAdmin, onClose, onSaved }) {
   const { notify } = useNotify()
   const [name, setName] = useState(tienda.name)
   const [logoPath, setLogoPath] = useState(tienda.logoPath)
+  const [cardPaymentEnabled, setCardPaymentEnabled] = useState(!!tienda.cardPaymentEnabled)
+  const [openpayEnabled, setOpenpayEnabled] = useState(!!tienda.openpayEnabled)
   const [saving, setSaving] = useState(false)
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [error, setError] = useState('')
-  // Solo al dar clic en "Guardar" — mismo patrón que Usuarios/Roles/Categorías.
   const [nameError, setNameError] = useState('')
   useEscapeClose(true, onClose)
 
   async function handleSave(e) {
     e.preventDefault()
-    // Sin `required` nativo en el input (ver el JSX de abajo) — esto es lo único que valida
-    // antes de mandar la solicitud. Mismo límite que TiendaRequest.name en el backend (150,
-    // por Tienda.name VARCHAR(150)).
     const trimmed = name.trim()
     if (!trimmed) { setNameError('El nombre es obligatorio'); notify('Revisa los campos marcados en rojo', 'error'); return }
     if (trimmed.length > 150) { setNameError('El nombre no puede tener más de 150 caracteres'); notify('Revisa los campos marcados en rojo', 'error'); return }
@@ -311,7 +385,8 @@ function EditTiendaModal({ tienda, onClose, onSaved }) {
     setSaving(true)
     setError('')
     try {
-      const res = await updateTiendaName(tienda.id, trimmed)
+      const extra = isSuperAdmin ? { cardPaymentEnabled, openpayEnabled } : {}
+      const res = await updateTiendaName(tienda.id, trimmed, extra)
       notify('Tienda editada correctamente', 'success')
       onSaved({ ...res.data.data, logoPath })
     } catch (err) {
@@ -386,16 +461,213 @@ function EditTiendaModal({ tienda, onClose, onSaved }) {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-          {/* Sin required nativo a propósito (ver handleSave). */}
           <input type="text" className="input" value={name} onChange={(e) => setName(e.target.value)} />
           {nameError && <p className="text-red-600 text-xs mt-1">{nameError}</p>}
         </div>
+
+        {isSuperAdmin && (
+          <div className="border-t border-gray-100 pt-3 space-y-2">
+            <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Métodos de pago adicionales</p>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cardPaymentEnabled}
+                onChange={(e) => setCardPaymentEnabled(e.target.checked)}
+              />
+              <span>💳 Pago con tarjeta (Terminal física)</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={openpayEnabled}
+                onChange={(e) => setOpenpayEnabled(e.target.checked)}
+              />
+              <span>🌐 Pasarela de pagos Openpay</span>
+            </label>
+          </div>
+        )}
 
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}
 
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>Cancelar</button>
           <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Guardando...' : 'Guardar'}</button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+/**
+ * Modal exclusivo de SUPER_ADMIN para habilitar o deshabilitar el pago con tarjeta y/o
+ * la pasarela Openpay en 1 o N tiendas de forma simultánea.
+ */
+function BulkPaymentMethodsModal({ tiendas, onClose, onSaved }) {
+  const { notify } = useNotify()
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [search, setSearch] = useState('')
+  const [cardPaymentEnabled, setCardPaymentEnabled] = useState(false)
+  const [openpayEnabled, setOpenpayEnabled] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  useEscapeClose(true, onClose)
+
+  const filteredTiendas = tiendas.filter((t) =>
+    t.name.toLowerCase().includes(search.trim().toLowerCase())
+  )
+
+  function toggleTienda(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAllVisible() {
+    const allVisibleSelected = filteredTiendas.length > 0 && filteredTiendas.every((t) => selectedIds.has(t.id))
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allVisibleSelected) {
+        filteredTiendas.forEach((t) => next.delete(t.id))
+      } else {
+        filteredTiendas.forEach((t) => next.add(t.id))
+      }
+      return next
+    })
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (selectedIds.size === 0) {
+      setError('Selecciona al menos una tienda para aplicar los cambios')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const res = await updateTiendasPaymentMethods({
+        tiendaIds: Array.from(selectedIds),
+        cardPaymentEnabled,
+        openpayEnabled,
+      })
+      const updated = res.data.data ?? []
+      notify(`Métodos de pago actualizados en ${updated.length} tienda${updated.length === 1 ? '' : 's'}`, 'success')
+      onSaved(updated)
+    } catch (err) {
+      setError(err.response?.data?.message || 'No se pudieron actualizar los métodos de pago')
+      notify('Error al actualizar métodos de pago', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const allVisibleSelected = filteredTiendas.length > 0 && filteredTiendas.every((t) => selectedIds.has(t.id))
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20" onClick={onClose}>
+      <form
+        onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] flex flex-col"
+      >
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Configurar métodos de pago por tienda</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Selecciona una o varias tiendas y define si tendrán habilitado el cobro con tarjeta (terminal física) y la pasarela Openpay.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            className="input text-sm flex-1"
+            placeholder="Buscar tienda por nombre..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={toggleAllVisible}
+            className="btn-secondary text-xs whitespace-nowrap"
+          >
+            {allVisibleSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+          </button>
+        </div>
+
+        <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-y-auto max-h-56">
+          {filteredTiendas.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-6">No se encontraron tiendas</p>
+          ) : (
+            filteredTiendas.map((t) => {
+              const checked = selectedIds.has(t.id)
+              return (
+                <label
+                  key={t.id}
+                  className={`flex items-center justify-between gap-3 px-3.5 py-2.5 cursor-pointer transition-colors ${
+                    checked ? 'bg-purple-50/60' : 'hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleTienda(t.id)}
+                    />
+                    <span className="text-sm font-medium text-gray-800 truncate">{t.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${t.cardPaymentEnabled ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
+                      💳 {t.cardPaymentEnabled ? 'Activa' : 'Inactiva'}
+                    </span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${t.openpayEnabled ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
+                      🌐 {t.openpayEnabled ? 'Activo' : 'Inactivo'}
+                    </span>
+                  </div>
+                </label>
+              )
+            })
+          )}
+        </div>
+
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3.5 space-y-2.5">
+          <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+            Configuración a aplicar en {selectedIds.size} tienda{selectedIds.size === 1 ? '' : 's'} seleccionada{selectedIds.size === 1 ? '' : 's'}
+          </p>
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={cardPaymentEnabled}
+              onChange={(e) => setCardPaymentEnabled(e.target.checked)}
+            />
+            <div>
+              <span className="text-sm font-medium text-gray-800 block">💳 Habilitar pago con tarjeta (Terminal física)</span>
+              <span className="text-xs text-gray-500">Si se desmarca, quedará deshabilitado en las tiendas seleccionadas.</span>
+            </div>
+          </label>
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={openpayEnabled}
+              onChange={(e) => setOpenpayEnabled(e.target.checked)}
+            />
+            <div>
+              <span className="text-sm font-medium text-gray-800 block">🌐 Habilitar pasarela de pagos Openpay</span>
+              <span className="text-xs text-gray-500">Habilita o deshabilita Tarjeta Openpay, Paynet y SPEI en las tiendas seleccionadas.</span>
+            </div>
+          </label>
+        </div>
+
+        {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button type="submit" className="btn-primary" disabled={saving || selectedIds.size === 0}>
+            {saving ? 'Aplicando...' : `Aplicar a ${selectedIds.size} tienda${selectedIds.size === 1 ? '' : 's'}`}
+          </button>
         </div>
       </form>
     </div>

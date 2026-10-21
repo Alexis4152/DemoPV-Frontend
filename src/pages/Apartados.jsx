@@ -548,7 +548,9 @@ export default function Apartados() {
                 <label className="text-xs font-medium text-gray-600">Método de pago</label>
                 <select className="input" value={paymentMethod} onChange={(e) => { setPaymentMethod(e.target.value); setAmountReceived('') }}>
                   <option value="CASH">💵 Efectivo</option>
-                  <option value="CARD">💳 Tarjeta</option>
+                  {!!user?.tienda?.cardPaymentEnabled && (
+                    <option value="CARD">💳 Tarjeta</option>
+                  )}
                   <option value="TRANSFER">🏦 Transferencia</option>
                 </select>
               </div>

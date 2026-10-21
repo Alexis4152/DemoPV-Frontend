@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { searchProducts, getProductByBarcode } from '../api/products'
 import { getCategories } from '../api/categories'
-import { createSale } from '../api/sales'
+import { createSale, getSale } from '../api/sales'
 import { getOpenCashCut } from '../api/cashCuts'
 import { printSaleTicket } from '../utils/printer'
 import { resolveMediaUrl } from '../utils/media'
@@ -102,6 +102,8 @@ export default function POS() {
   const [storeModalOpen, setStoreModalOpen] = useState(false)
   const [speiModalOpen, setSpeiModalOpen] = useState(false)
   const [openpayPaymentResult, setOpenpayPaymentResult] = useState(null)
+  const [pendingGatewaySale, setPendingGatewaySale] = useState(null)
+  const [refreshingStatus, setRefreshingStatus] = useState(false)
 
   const searchInputRef = useRef(null)
   const successRef = useRef(success)
@@ -116,6 +118,28 @@ export default function POS() {
   }, [])
 
   useEffect(() => { successRef.current = success }, [success])
+
+  // Si la pantalla de resumen muestra una venta en estado PENDING (ej. Paynet o SPEI),
+  // consulta periódicamente su estado para reflejar en automático cuando el webhook la complete.
+  useEffect(() => {
+    if (!success?.id || success.status !== 'PENDING') return undefined
+    const interval = setInterval(() => {
+      getSale(success.id)
+        .then((r) => {
+          const updated = r?.data?.data
+          if (updated && updated.status !== success.status) {
+            setSuccess((prev) => (prev ? { ...prev, ...updated } : prev))
+            if (updated.status === 'COMPLETED') {
+              notify(`¡Pago confirmado! La venta #${updated.id} pasó a Completada`, 'success')
+            } else if (updated.status === 'CANCELLED') {
+              notify(`La venta #${updated.id} fue cancelada`, 'error')
+            }
+          }
+        })
+        .catch(() => {})
+    }, 4000)
+    return () => clearInterval(interval)
+  }, [success?.id, success?.status])
 
   // Captura de escaneo "global": una pistola lectora de código de barras funciona como un
   // teclado que teclea cada carácter en milisegundos y termina con Enter — mucho más rápido
@@ -562,6 +586,18 @@ export default function POS() {
   const customerEmailTooLong = customerEmail.length > 150
   const customerEmailInvalid = customerEmail.trim() !== '' && !EMAIL_RE.test(customerEmail.trim())
 
+  const activeTienda = cashCut?.tienda ?? user?.tienda
+  const cardPaymentEnabled = !!activeTienda?.cardPaymentEnabled
+  const openpayEnabled = !!activeTienda?.openpayEnabled
+
+  useEffect(() => {
+    if (paymentMethod === 'CARD' && !cardPaymentEnabled) {
+      setPaymentMethod('CASH')
+    } else if (paymentMethod.startsWith('OPENPAY_') && !openpayEnabled) {
+      setPaymentMethod('CASH')
+    }
+  }, [paymentMethod, cardPaymentEnabled, openpayEnabled])
+
   /** Cambia el método de pago, limpiando el monto recibido si ya no aplica (no es CASH). */
   function handlePaymentMethodChange(value) {
     setPaymentMethod(value)
@@ -636,6 +672,7 @@ export default function POS() {
 
       const lowStockWarnings = cart.filter((i) => i.minStock != null && (i.stock - i.quantity) <= i.minStock)
       setSuccess({ ...saleRes.data.data, lowStockWarnings, openpayTx: paymentData, ticketType })
+      setBrowseRefresh((n) => n + 1)
       setCart([])
       setSelectedIds(new Set())
       setCustomerName('')
@@ -709,6 +746,8 @@ export default function POS() {
       })
 
       const lowStockWarnings = cart.filter((i) => i.minStock != null && (i.stock - i.quantity) <= i.minStock)
+      setPendingGatewaySale({ ...saleRes.data.data, lowStockWarnings, openpayTx: paymentData, ticketType })
+      setBrowseRefresh((n) => n + 1)
       setCart([])
       setSelectedIds(new Set())
       setCustomerName('')
@@ -735,6 +774,46 @@ export default function POS() {
       setError(errorMsg)
     } finally {
       setLoading(false)
+    }
+  }
+
+  /**
+   * Al cerrar el modal de ficha Paynet o SPEI, consulta el estado más reciente de la venta
+   * y actualiza automáticamente la pantalla para mostrar el resumen con su estado actual.
+   */
+  async function handleCloseGatewayModal() {
+    setStoreModalOpen(false)
+    setSpeiModalOpen(false)
+    if (!pendingGatewaySale) return
+
+    const snapshot = pendingGatewaySale
+    setPendingGatewaySale(null)
+    setBrowseRefresh((n) => n + 1)
+
+    try {
+      const res = await getSale(snapshot.id)
+      const freshSale = res?.data?.data
+      setSuccess(freshSale ? { ...snapshot, ...freshSale } : snapshot)
+    } catch {
+      setSuccess(snapshot)
+    }
+  }
+
+  /** Consulta manualmente el estado actualizado de la venta recién registrada. */
+  async function refreshSaleStatus() {
+    if (!success?.id) return
+    setRefreshingStatus(true)
+    try {
+      const res = await getSale(success.id)
+      const freshSale = res?.data?.data
+      if (freshSale) {
+        setSuccess((prev) => (prev ? { ...prev, ...freshSale } : prev))
+        notify(`Estado de la venta #${freshSale.id} actualizado`, 'success')
+      }
+    } catch {
+      notify('No se pudo actualizar el estado de la venta', 'error')
+    } finally {
+      setRefreshingStatus(false)
     }
   }
 
@@ -787,6 +866,7 @@ export default function POS() {
       })
       const lowStockWarnings = cart.filter((i) => i.minStock != null && (i.stock - i.quantity) <= i.minStock)
       setSuccess({ ...res.data.data, lowStockWarnings, ticketType })
+      setBrowseRefresh((n) => n + 1)
       setCart([])
       setSelectedIds(new Set())
       setCustomerName('')
@@ -823,14 +903,31 @@ export default function POS() {
   }
 
   // Pantalla de confirmación tras un cobro exitoso: reemplaza toda la pantalla del POS
-  // (early return) hasta que el cajero pulse "Nueva venta", mostrando el folio, el total
-  // y — si aplica — el aviso de productos que quedaron en stock mínimo (ver handleCheckout).
+  // (early return) hasta que el cajero pulse "Nueva venta", mostrando el folio, el total,
+  // el estado actual de la venta y — si aplica — el aviso de productos en stock mínimo.
   if (success) {
+    const statusBadge =
+      success.status === 'PENDING'
+        ? { label: '⏳ Pendiente de pago', cls: 'bg-amber-100 text-amber-800 border-amber-200' }
+        : success.status === 'CANCELLED'
+          ? { label: '✕ Cancelada', cls: 'bg-red-100 text-red-700 border-red-200' }
+          : { label: '✓ Completada', cls: 'bg-green-100 text-green-700 border-green-200' }
+
     return (
       <div className="max-w-md mx-auto mt-16 card text-center">
-        <div className="text-5xl mb-4">✅</div>
-        <h3 className="text-xl font-bold text-gray-900 mb-2">Venta registrada</h3>
-        <p className="text-gray-500 mb-1">Ticket #{success.id}</p>
+        <div className="text-5xl mb-3">{success.status === 'PENDING' ? '⏳' : success.status === 'CANCELLED' ? '❌' : '✅'}</div>
+        <h3 className="text-xl font-bold text-gray-900 mb-2">
+          {success.status === 'PENDING' ? 'Venta registrada (pago pendiente)' : 'Venta registrada'}
+        </h3>
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <span className="text-gray-500 text-sm">Ticket #{success.id}</span>
+          <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusBadge.cls}`}>
+            {statusBadge.label}
+          </span>
+        </div>
+        {success.orderId && (
+          <p className="text-xs font-mono text-gray-400 mb-1">Orden Openpay: {success.orderId}</p>
+        )}
         <p className="text-2xl font-bold text-purple-700 mb-1">{fmt(success.total)}</p>
         {success.discount > 0 && (
           <p className="text-sm text-green-600 mb-1">Descuento aplicado: -{fmt(success.discount)}</p>
@@ -841,12 +938,31 @@ export default function POS() {
             <p className="font-semibold text-gray-700">Cambio: {fmt(success.changeGiven)}</p>
           </div>
         )}
+        {success.notes && (
+          <div className="bg-purple-50/70 border border-purple-100 rounded-lg p-2.5 my-3 text-xs text-left">
+            <span className="font-semibold text-purple-900 block mb-0.5">Referencia / Pasarela:</span>
+            <span className="text-purple-700 font-mono break-all">{success.notes}</span>
+          </div>
+        )}
+        {success.status === 'PENDING' && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-3 py-2.5 mb-4">
+            <p className="font-medium">Esperando confirmación de pago de Openpay (actualización automática activa)...</p>
+            <button
+              type="button"
+              onClick={refreshSaleStatus}
+              disabled={refreshingStatus}
+              className="mt-1.5 underline font-semibold text-amber-900 hover:text-amber-700 disabled:opacity-50"
+            >
+              {refreshingStatus ? 'Consultando estado...' : '🔄 Actualizar estado ahora'}
+            </button>
+          </div>
+        )}
         {success.ticketType === 'digital' ? (
           <p className="text-sm text-purple-700 mb-6">
             {success.customerEmail ? `📧 Ticket enviado a ${success.customerEmail}` : 'Venta sin ticket'}
           </p>
         ) : (
-          success.amountReceived == null && <div className="mb-6" />
+          success.amountReceived == null && <div className="mb-4" />
         )}
         {success.lowStockWarnings?.length > 0 && (
           <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded-lg px-4 py-3 mb-6 text-left">
@@ -859,13 +975,26 @@ export default function POS() {
           </div>
         )}
         <button
-          className="btn-secondary w-full mb-3"
+          className="btn-secondary w-full mb-2.5"
           onClick={() => printTicket(success.id)}
           disabled={printing}
         >
           🖨️ {printing ? 'Imprimiendo…' : 'Reimprimir ticket'}
         </button>
-        <button className="btn-primary" onClick={() => setSuccess(null)}>Nueva venta</button>
+        <div className="flex gap-2">
+          <Link to="/sales" className="btn-secondary w-1/2 text-center">
+            Ver en Ventas
+          </Link>
+          <button
+            className="btn-primary w-1/2"
+            onClick={() => {
+              setSuccess(null)
+              setBrowseRefresh((n) => n + 1)
+            }}
+          >
+            Nueva venta
+          </button>
+        </div>
       </div>
     )
   }
@@ -1192,14 +1321,18 @@ export default function POS() {
               <select className="input mt-1" value={paymentMethod} onChange={(e) => handlePaymentMethodChange(e.target.value)}>
                 <optgroup label="Cobro Tradicional">
                   <option value="CASH">💵 Efectivo</option>
-                  <option value="CARD">💳 Tarjeta (Terminal física)</option>
+                  {cardPaymentEnabled && (
+                    <option value="CARD">💳 Tarjeta (Terminal física)</option>
+                  )}
                   <option value="TRANSFER">🏦 Transferencia bancaria directa</option>
                 </optgroup>
-                <optgroup label="Pasarela Digital Openpay">
-                  <option value="OPENPAY_CARD">💳 Tarjeta Débito / Crédito (Openpay)</option>
-                  <option value="OPENPAY_STORE">🏪 Pago en Tiendas (Paynet)</option>
-                  <option value="OPENPAY_SPEI">⚡ Transferencia SPEI (Openpay)</option>
-                </optgroup>
+                {openpayEnabled && (
+                  <optgroup label="Pasarela Digital Openpay">
+                    <option value="OPENPAY_CARD">💳 Tarjeta Débito / Crédito (Openpay)</option>
+                    <option value="OPENPAY_STORE">🏪 Pago en Tiendas (Paynet)</option>
+                    <option value="OPENPAY_SPEI">⚡ Transferencia SPEI (Openpay)</option>
+                  </optgroup>
+                )}
               </select>
             </div>
 
@@ -1299,7 +1432,7 @@ export default function POS() {
 
       <StorePaynetModal
         isOpen={storeModalOpen}
-        onClose={() => setStoreModalOpen(false)}
+        onClose={handleCloseGatewayModal}
         paymentDetails={openpayPaymentResult?.paymentMethodDetails}
         amount={openpayPaymentResult?.amount || subtotal}
         orderId={openpayPaymentResult?.orderId}
@@ -1307,7 +1440,7 @@ export default function POS() {
 
       <SpeiPaymentModal
         isOpen={speiModalOpen}
-        onClose={() => setSpeiModalOpen(false)}
+        onClose={handleCloseGatewayModal}
         paymentDetails={openpayPaymentResult?.paymentMethodDetails}
         amount={openpayPaymentResult?.amount || subtotal}
         orderId={openpayPaymentResult?.orderId}

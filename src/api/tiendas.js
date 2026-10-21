@@ -26,19 +26,28 @@ export const getTiendasBySupervisor = (supervisorId) => api.get('/tiendas', { pa
  * @param {string} name Nombre de la tienda.
  * @returns {Promise} Respuesta de axios con la tienda creada.
  */
-export const createTienda = (name) => api.post('/tiendas', { name })
+export const createTienda = (name, extra = {}) => api.post('/tiendas', { name, ...extra })
 
 /** Plan del SUPERVISOR: `{ maxTiendas (null = sin límite), usedTiendas }`. */
 export const getTiendaPlan = () => api.get('/tiendas/plan')
 
 /**
- * Actualiza el nombre de una tienda existente (solo SUPER_ADMIN, para cualquier tienda;
- * el ADMIN de una tienda no tiene este endpoint disponible — ver `TiendaController`).
+ * Actualiza el nombre de una tienda existente (solo SUPER_ADMIN/SUPERVISOR; si es
+ * SUPER_ADMIN también puede enviar `{ cardPaymentEnabled, openpayEnabled }`).
  * @param {number|string} id Id de la tienda.
  * @param {string} name Nuevo nombre.
+ * @param {Object} [extra] Campos adicionales opcionales (exclusivos de SUPER_ADMIN).
  * @returns {Promise} Respuesta de axios con la tienda actualizada.
  */
-export const updateTiendaName = (id, name) => api.put(`/tiendas/${id}`, { name })
+export const updateTiendaName = (id, name, extra = {}) => api.put(`/tiendas/${id}`, { name, ...extra })
+
+/**
+ * Habilita o deshabilita el pago con tarjeta y/o la pasarela Openpay para 1 o N tiendas
+ * en una sola operación (exclusivo de SUPER_ADMIN).
+ * @param {{ tiendaIds: number[], cardPaymentEnabled?: boolean, openpayEnabled?: boolean }} data
+ * @returns {Promise} Respuesta de axios con las tiendas actualizadas.
+ */
+export const updateTiendasPaymentMethods = (data) => api.put('/tiendas/payment-methods', data)
 
 /**
  * Actualiza el color primario de marca de una tienda. Tras un guardado exitoso,

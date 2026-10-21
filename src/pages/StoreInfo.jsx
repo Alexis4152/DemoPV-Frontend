@@ -79,7 +79,7 @@ const TABS = [
  * para reflejar el cambio de inmediato en el sidebar sin recargar la página.
  */
 export default function StoreInfo() {
-  const { user, patchTienda } = useAuth()
+  const { user, patchTienda, isSuperAdmin } = useAuth()
   const { notify, confirmDialog } = useNotify()
   const tiendaId = user?.tienda?.id
 
@@ -125,6 +125,8 @@ export default function StoreInfo() {
         dailySalesGoal: info.tienda?.dailySalesGoal ?? '',
         pollingIntervalSeconds: info.tienda?.pollingIntervalSeconds ?? 20,
         blindCashCount: info.tienda?.blindCashCount ?? false,
+        cardPaymentEnabled: !!info.tienda?.cardPaymentEnabled,
+        openpayEnabled: !!info.tienda?.openpayEnabled,
       })
     }).finally(() => setLoading(false))
   }, [tiendaId])
@@ -214,6 +216,7 @@ export default function StoreInfo() {
         apartadosEnabled: form.apartadosEnabled, publicSlug: savedSlug,
         maxApartadoDiscountAmount, maxApartadoDiscountPercent, defaultApartadoHours: Number(form.defaultApartadoHours) || 24,
         dailySalesGoal, pollingIntervalSeconds, blindCashCount: form.blindCashCount,
+        ...(isSuperAdmin ? { cardPaymentEnabled: form.cardPaymentEnabled, openpayEnabled: form.openpayEnabled } : {}),
       })
       setMessage('Datos guardados')
     } catch (err) {
@@ -477,6 +480,49 @@ export default function StoreInfo() {
               />
               {fieldErrors.maxDiscountPercent && <p className="text-red-600 text-xs mt-1">{fieldErrors.maxDiscountPercent}</p>}
             </div>
+          </div>
+        </div>
+
+        <div className="border-t border-gray-100 pt-4">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <p className="text-sm font-semibold text-gray-800">Métodos de pago adicionales</p>
+            {!isSuperAdmin && (
+              <span className="text-[11px] font-medium bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                Solo SUPER_ADMIN
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            Habilita o deshabilita el cobro con tarjeta en terminal física y los cobros mediante la pasarela
+            Openpay en el Punto de Venta de esta tienda. Exclusivo del rol <span className="font-medium">SUPER_ADMIN</span>.
+          </p>
+          <div className="space-y-2.5 bg-gray-50 rounded-lg p-3.5 border border-gray-100">
+            <label className={`flex items-start gap-2.5 ${isSuperAdmin ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}>
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={!!form.cardPaymentEnabled}
+                disabled={!isSuperAdmin}
+                onChange={(e) => setForm({ ...form, cardPaymentEnabled: e.target.checked })}
+              />
+              <div>
+                <span className="text-sm font-medium text-gray-800 block">💳 Pago con tarjeta (Terminal física)</span>
+                <span className="text-xs text-gray-500">Permite registrar ventas y liquidar apartados con tarjeta bancaria tradicional.</span>
+              </div>
+            </label>
+            <label className={`flex items-start gap-2.5 ${isSuperAdmin ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}>
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={!!form.openpayEnabled}
+                disabled={!isSuperAdmin}
+                onChange={(e) => setForm({ ...form, openpayEnabled: e.target.checked })}
+              />
+              <div>
+                <span className="text-sm font-medium text-gray-800 block">🌐 Pasarela de pagos Openpay</span>
+                <span className="text-xs text-gray-500">Habilita cobros con Tarjeta Openpay, referencias en tiendas Paynet y transferencia SPEI.</span>
+              </div>
+            </label>
           </div>
         </div>
         </>
