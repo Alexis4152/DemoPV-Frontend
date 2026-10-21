@@ -11,14 +11,18 @@ import defaultLogo from '../assets/logo.png'
 const MAX_LOGO_MB = 3
 
 // Mismos límites reales de columna que TiendaInfoRequest en el backend (ver ese archivo) —
-// redesSociales/notasAdicionales son TEXT sin límite de columna, su tope de 500 es solo de
-// aplicación, igual que en ProductRequest.description.
+// horario/redesSociales/notasAdicionales son TEXT sin límite de columna, su tope de 500 es
+// solo de aplicación, igual que en ProductRequest.description. `horario` (y `telefono`,
+// `paginaWeb`, `redesSociales`, la dirección) también se muestran en la vitrina pública de
+// apartados (ver PublicApartar.jsx) — rfc/razonSocial/notasAdicionales no, son fiscales/
+// internos.
 const FIELDS = [
   { key: 'name', label: 'Nombre de la tienda', required: true, maxLength: 150 },
   { key: 'razonSocial', label: 'Razón social', maxLength: 200 },
   { key: 'rfc', label: 'RFC', maxLength: 20 },
   { key: 'telefono', label: 'Teléfono', maxLength: 30 },
   { key: 'paginaWeb', label: 'Página web', maxLength: 200 },
+  { key: 'horario', label: 'Horario de atención', textarea: true, maxLength: 500 },
   { key: 'calle', label: 'Calle', maxLength: 200 },
   { key: 'colonia', label: 'Colonia', maxLength: 150 },
   { key: 'codigoPostal', label: 'Código postal', maxLength: 10 },
@@ -103,6 +107,7 @@ export default function StoreInfo() {
         rfc: info.rfc || '',
         telefono: info.telefono || '',
         paginaWeb: info.paginaWeb || '',
+        horario: info.horario || '',
         calle: info.calle || '',
         colonia: info.colonia || '',
         codigoPostal: info.codigoPostal || '',
@@ -119,6 +124,7 @@ export default function StoreInfo() {
         defaultApartadoHours: info.tienda?.defaultApartadoHours ?? 24,
         dailySalesGoal: info.tienda?.dailySalesGoal ?? '',
         pollingIntervalSeconds: info.tienda?.pollingIntervalSeconds ?? 20,
+        blindCashCount: info.tienda?.blindCashCount ?? false,
       })
     }).finally(() => setLoading(false))
   }, [tiendaId])
@@ -207,7 +213,7 @@ export default function StoreInfo() {
         name: form.name, maxDiscountAmount, maxDiscountPercent,
         apartadosEnabled: form.apartadosEnabled, publicSlug: savedSlug,
         maxApartadoDiscountAmount, maxApartadoDiscountPercent, defaultApartadoHours: Number(form.defaultApartadoHours) || 24,
-        dailySalesGoal, pollingIntervalSeconds,
+        dailySalesGoal, pollingIntervalSeconds, blindCashCount: form.blindCashCount,
       })
       setMessage('Datos guardados')
     } catch (err) {
@@ -340,7 +346,7 @@ export default function StoreInfo() {
         <p className="text-xs text-gray-400 mt-3">PNG, JPG o WEBP, máximo {MAX_LOGO_MB} MB. Si no subes uno, se usa el logo de Nexora.</p>
       </div>
 
-      <div className="border-b border-gray-200 mb-6 flex gap-6 overflow-x-auto">
+      <div className="border-b border-gray-200 mb-6 flex gap-6 flex-wrap">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -406,6 +412,22 @@ export default function StoreInfo() {
         {activeTab === 'ventas' && (
         <>
         <div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.blindCashCount}
+              onChange={(e) => setForm({ ...form, blindCashCount: e.target.checked })}
+            />
+            <span className="text-sm font-semibold text-gray-800">Conteo ciego al cerrar corte</span>
+          </label>
+          <p className="text-xs text-gray-500 mt-1 mb-1">
+            El cajero no ve el efectivo esperado ni sus ventas en efectivo mientras su corte está abierto: cuenta
+            el efectivo, cierra y solo entonces ve si cuadró. Así no puede ajustar su conteo para que coincida.
+            Los administradores y supervisores siempre ven todo.
+          </p>
+        </div>
+
+        <div className="border-t border-gray-100 pt-4">
           <p className="text-sm font-semibold text-gray-800">Meta de venta diaria</p>
           <p className="text-xs text-gray-500 mb-3">
             El Dashboard muestra la venta del día contra esta meta, con el % de avance. Déjala en blanco
@@ -493,6 +515,16 @@ export default function StoreInfo() {
                     disabled={!form.publicSlug}
                   >
                     Copiar link
+                  </button>
+                  {/* Abre el slug YA GUARDADO (user.tienda), no el del campo: un slug escrito y
+                      sin guardar todavía no existe en el backend y la página pública daría 404. */}
+                  <button
+                    type="button" className="btn-secondary text-sm whitespace-nowrap"
+                    onClick={() => window.open(`/apartar/${user.tienda.publicSlug}`, '_blank', 'noopener')}
+                    disabled={!user?.tienda?.apartadosEnabled || !user?.tienda?.publicSlug}
+                    title={user?.tienda?.apartadosEnabled && user?.tienda?.publicSlug ? 'Abrir la tienda pública en otra pestaña' : 'Guarda los cambios primero'}
+                  >
+                    Abrir tienda ↗
                   </button>
                 </div>
                 {fieldErrors.publicSlug && <p className="text-red-600 text-xs mt-1">{fieldErrors.publicSlug}</p>}

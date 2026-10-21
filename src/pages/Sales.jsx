@@ -7,6 +7,8 @@ import { printSaleTicket } from '../utils/printer'
 import useEscapeClose from '../hooks/useEscapeClose'
 import RefundModal from '../components/payments/RefundModal'
 import { getFriendlyErrorMessage } from '../utils/openpayErrors'
+import IconButton from '../components/IconButton'
+import { EyeIcon, PrinterIcon, XCircleIcon } from '../components/icons'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
@@ -42,7 +44,7 @@ const EMPTY_FILTERS = { from: '', to: '', customerName: '', paymentMethod: '', s
  * sola vez al montar.
  */
 export default function Sales() {
-  const { isAdmin } = useAuth()
+  const { hasAction } = useAuth()
   const { notify, confirmDialog } = useNotify()
   const [searchParams] = useSearchParams()
   const initialFilters = () => ({
@@ -159,7 +161,7 @@ export default function Sales() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Ventas</h2>
+      <h2 className="text-2xl font-bold text-gray-900 mb-6">Historial de ventas</h2>
 
       {/* flex-wrap, sin botón "Filtrar": cada campo aplica solo al cambiar (mismo patrón
           que Apartados.jsx/Inventory.jsx) — "Limpiar filtros" solo aparece si hay algo que limpiar. */}
@@ -227,16 +229,15 @@ export default function Sales() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
-                    <button className="text-blue-600 hover:underline text-xs" onClick={() => setDetail(s)}>Ver</button>
-                    <button
-                      className="text-gray-500 hover:underline text-xs disabled:opacity-40 disabled:hover:no-underline"
+                    <IconButton icon={EyeIcon} label="Ver" variant="primary" onClick={() => setDetail(s)} />
+                    <IconButton
+                      icon={PrinterIcon}
+                      label={printingId === s.id ? 'Imprimiendo…' : 'Reimprimir'}
                       disabled={printingId === s.id}
                       onClick={() => handleReprint(s.id)}
-                    >
-                      {printingId === s.id ? 'Imprimiendo…' : '🖨️ Reimprimir'}
-                    </button>
-                    {isAdmin && s.status !== 'CANCELLED' && (
-                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleCancel(s)}>Cancelar</button>
+                    />
+                    {hasAction('SALES', 'DELETE') && s.status !== 'CANCELLED' && (
+                      <IconButton icon={XCircleIcon} label="Cancelar" variant="danger" onClick={() => handleCancel(s)} />
                     )}
                   </div>
                 </td>

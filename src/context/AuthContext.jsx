@@ -86,6 +86,7 @@ export function AuthProvider({ children }) {
           ...parsed,
           role: fresh.role?.name ?? parsed.role,
           sections: fresh.role?.sections ?? parsed.sections,
+          actionGrants: fresh.role?.actionGrants ?? parsed.actionGrants,
           tienda: fresh.tienda ?? parsed.tienda,
         }
         localStorage.setItem('pos_user', JSON.stringify(merged))
@@ -167,6 +168,16 @@ export function AuthProvider({ children }) {
   const isAdmin = user?.role === 'ADMIN' || isPlatformActor
   /** Indica si el usuario en sesión tiene habilitada la `AppSection` con el código dado (RBAC). */
   const hasSection = (code) => !!user?.sections?.includes(code)
+  /**
+   * Indica si el usuario en sesión puede realizar una ACCIÓN de mutación concreta
+   * (ej. `hasAction('INVENTORY', 'CREATE')`) dentro de una sección a la que ya tiene
+   * acceso — capa más fina que `hasSection`. `isAdmin` ya cubre a ADMIN/SUPER_ADMIN/
+   * SUPERVISOR (siempre CRUD completo, igual que decide el backend en
+   * SectionAccessService#checkAction), así que para ellos no hace falta ni mirar
+   * `actionGrants`. El backend sigue siendo quien de verdad lo exige en cada endpoint;
+   * esto es solo para no mostrar botones que el servidor va a rechazar de todas formas.
+   */
+  const hasAction = (section, action) => isAdmin || !!user?.actionGrants?.includes(`${section}:${action}`)
 
   // Actualiza campos de user.tienda en memoria + localStorage al instante, sin
   // recargar ni volver a loguear. Usado por Apariencia (color) y Datos de la
@@ -240,7 +251,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      user, login, logout, isAdmin, isSuperAdmin, isSupervisor, isPlatformActor, hasSection, loading,
+      user, login, logout, isAdmin, isSuperAdmin, isSupervisor, isPlatformActor, hasSection, hasAction, loading,
       patchTienda, clearMustChangePassword, selectTienda, clearSelectedTienda,
     }}>
       {children}
@@ -249,6 +260,7 @@ export function AuthProvider({ children }) {
 }
 
 /** Hook de acceso al contexto de autenticación (`user`, `login`, `logout`, `isAdmin`,
- *  `isSuperAdmin`, `isSupervisor`, `isPlatformActor`, `hasSection`, `patchTienda`,
- *  `clearMustChangePassword`, `selectTienda`, `clearSelectedTienda`, `loading`). */
+ *  `isSuperAdmin`, `isSupervisor`, `isPlatformActor`, `hasSection`, `hasAction`,
+ *  `patchTienda`, `clearMustChangePassword`, `selectTienda`, `clearSelectedTienda`,
+ *  `loading`). */
 export const useAuth = () => useContext(AuthContext)

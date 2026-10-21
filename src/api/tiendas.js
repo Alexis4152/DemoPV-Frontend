@@ -28,6 +28,9 @@ export const getTiendasBySupervisor = (supervisorId) => api.get('/tiendas', { pa
  */
 export const createTienda = (name) => api.post('/tiendas', { name })
 
+/** Plan del SUPERVISOR: `{ maxTiendas (null = sin límite), usedTiendas }`. */
+export const getTiendaPlan = () => api.get('/tiendas/plan')
+
 /**
  * Actualiza el nombre de una tienda existente (solo SUPER_ADMIN, para cualquier tienda;
  * el ADMIN de una tienda no tiene este endpoint disponible — ver `TiendaController`).

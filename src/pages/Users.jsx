@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react'
-import { getUsers, createUser, updateUser, deleteUser } from '../api/users'
+import { getUsers, createUser, updateUser, deleteUser, forceLogoutUser } from '../api/users'
 import { getRoles } from '../api/roles'
 import { getTiendas, getTiendasBySupervisor } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import useEscapeClose from '../hooks/useEscapeClose'
 import PasswordInput from '../components/PasswordInput'
+import IconButton from '../components/IconButton'
+import { PencilIcon, ArchiveIcon, LogOutIcon } from '../components/icons'
+import { roleLabel } from '../utils/roleLabels'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
-const emptyForm = { name: '', email: '', password: '', roleId: '', supervisedTiendaIds: [], tiendaId: '' }
+const emptyForm = { name: '', email: '', phone: '', password: '', roleId: '', supervisedTiendaIds: [], tiendaId: '', maxTiendas: '' }
 const EMPTY_FILTERS = { from: '', to: '', name: '', email: '', roleId: '', isActive: '' }
 const PAGE_SIZES = [10, 20, 50, 100]
 
@@ -32,10 +35,13 @@ const rankOf = (roleName) => ROLE_RANK[roleName] ?? 3
  * la tabla muestra una columna de Estado en vez de que el usuario desaparezca de la lista;
  * los usuarios inactivos siguen apareciendo salvo que el filtro de Estado los excluya.
  *
- * Control de acceso (vía `isAdmin`, solo frontend — el backend es quien realmente lo hace
+ * Control de acceso (vía `hasAction`, solo frontend — el backend es quien realmente lo hace
  * cumplir): cualquiera con la sección `USERS` habilitada puede VER esta pantalla y su
- * listado, pero dar de alta, editar y desactivar usuarios están reservados a ADMIN — antes
- * cualquier rol con acceso a Usuarios (ej. un vendedor) podía hacerlo también.
+ * listado, pero dar de alta, editar, desactivar y forzar cierre de sesión requieren el
+ * permiso fino correspondiente (USERS:CREATE/EDIT/DELETE, configurable por rol desde
+ * "Roles y Permisos") — y, más allá del permiso, la jerarquía de roles del backend
+ * (`UserService#assertCanManage`) sigue sin dejar a un rol sin rango tocar cuentas
+ * ADMIN/SUPERVISOR/SUPER_ADMIN, solo otras cuentas sin rango.
  *
  * Paginación server-side (mismo patrón que Sales/CashCuts/Inventory): `page`/`size` viajan
  * como query params y el backend responde `{content, page, size, totalElements, totalPages}`.
@@ -54,7 +60,7 @@ const rankOf = (roleName) => ROLE_RANK[roleName] ?? 3
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export default function Users() {
-  const { user, isAdmin, isSuperAdmin, isPlatformActor } = useAuth()
+  const { user, isAdmin, isSuperAdmin, isPlatformActor, hasAction } = useAuth()
   const { notify, confirmDialog } = useNotify()
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [roles, setRoles] = useState([])
@@ -149,7 +155,7 @@ export default function Users() {
   // para uno de plataforma, que no tiene) — ver showMoveTiendaPicker más abajo.
   function openEdit(u) {
     setEditUser(u)
-    setForm({ name: u.name, email: u.email, password: '', roleId: u.role?.id ?? '', supervisedTiendaIds: [], tiendaId: u.tienda?.id ?? '' })
+    setForm({ name: u.name, email: u.email, phone: u.phone ?? '', password: '', roleId: u.role?.id ?? '', supervisedTiendaIds: [], tiendaId: u.tienda?.id ?? '', maxTiendas: u.maxTiendas ?? '' })
     setError('')
     setFieldErrors({})
     setShowModal(true)
@@ -176,6 +182,8 @@ export default function Users() {
     if (!form.email.trim()) errors.email = 'El correo es obligatorio'
     else if (!EMAIL_RE.test(form.email)) errors.email = 'El correo no tiene un formato válido'
     else if (form.email.length > 150) errors.email = 'El correo no puede tener más de 150 caracteres'
+    // Opcional; si se captura, 10 dígitos (se aceptan espacios/guiones, el backend guarda solo números).
+    if (form.phone.trim() && form.phone.replace(/\D/g, '').length !== 10) errors.phone = 'El teléfono debe tener 10 dígitos'
     // La contraseña solo se valida si de verdad se va a cambiar (al crear, este campo ni
     // siquiera se muestra — ver el JSX; al editar, vacío significa "no cambiarla").
     if (editUser && form.password && (form.password.length < 6 || form.password.length > 72)) {
@@ -183,6 +191,9 @@ export default function Users() {
     }
     if (!form.roleId) errors.roleId = 'Selecciona un rol'
     if (showMoveTiendaPicker && !form.tiendaId) errors.tiendaId = 'Selecciona una tienda'
+    if (showSupervisorTiendaPicker && form.maxTiendas !== '' && Number(form.maxTiendas) > 1000) {
+      errors.maxTiendas = 'El máximo de tiendas no puede ser mayor a 1000'
+    }
     return errors
   }
 
@@ -213,7 +224,13 @@ export default function Users() {
       // tiendaId viaja como número solo cuando de verdad hay un selector visible para
       // elegirla (showMoveTiendaPicker) — de lo contrario se manda `undefined` (axios lo
       // omite del JSON) en vez de '' cruda, que el backend rechazaría al no ser un Long válido.
-      const payload = { ...form, tiendaId: showMoveTiendaPicker && form.tiendaId ? Number(form.tiendaId) : undefined }
+      const payload = {
+        ...form,
+        phone: form.phone.replace(/\D/g, '') || null,
+        // Solo viaja para un SUPERVISOR editado por SUPER_ADMIN; vacío = sin límite.
+        maxTiendas: showSupervisorTiendaPicker ? (form.maxTiendas === '' ? null : Number(form.maxTiendas)) : undefined,
+        tiendaId: showMoveTiendaPicker && form.tiendaId ? Number(form.tiendaId) : undefined,
+      }
       if (editUser) await updateUser(editUser.id, payload)
       else await createUser(payload)
       setShowModal(false)
@@ -247,6 +264,26 @@ export default function Users() {
     if (!(await confirmDialog(`¿Desactivar a "${u.name}"?`, { confirmText: 'Desactivar' }))) return
     await deleteUser(u.id)
     load()
+  }
+
+  /**
+   * Cierra a la fuerza la sesión abierta de un usuario (ej. un cajero que la dejó abierta
+   * en otro dispositivo y no puede volver a cerrarla él mismo). No es instantáneo del
+   * todo — su token actual sigue sirviendo hasta que expire solo (máx. 30 min) — así que
+   * el aviso de confirmación lo deja claro para no generar una expectativa equivocada.
+   */
+  async function handleForceLogout(u) {
+    if (!(await confirmDialog(
+      `¿Cerrar la sesión abierta de "${u.name}"? Puede tardar hasta 30 minutos en hacerse efectivo del todo.`,
+      { confirmText: 'Cerrar sesión', danger: false }
+    ))) return
+    try {
+      await forceLogoutUser(u.id)
+      notify(`Sesión de "${u.name}" cerrada`, 'success')
+      load()
+    } catch (err) {
+      notify(err.response?.data?.message || 'Error al cerrar la sesión', 'error')
+    }
   }
 
   // Colores de la etiqueta de rol en la tabla; los roles sin color definido (roles
@@ -300,7 +337,7 @@ export default function Users() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Usuarios</h2>
-        {isAdmin && <button className="btn-primary" onClick={openNew}>+ Nuevo usuario</button>}
+        {hasAction('USERS', 'CREATE') && <button className="btn-primary" onClick={openNew}>+ Nuevo usuario</button>}
       </div>
 
       {/* flex-wrap, sin botón "Filtrar": cada campo aplica solo al cambiar (mismo patrón
@@ -327,7 +364,7 @@ export default function Users() {
           <label className="text-xs font-medium text-gray-600 block mb-1">Rol</label>
           <select className="input" value={filters.roleId} onChange={(e) => setFilter({ roleId: e.target.value })}>
             <option value="">Todos</option>
-            {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            {roles.map((r) => <option key={r.id} value={r.id}>{roleLabel(r.name)}</option>)}
           </select>
         </div>
         <div className="w-36">
@@ -348,7 +385,7 @@ export default function Users() {
         <table className="w-full text-sm min-w-[720px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              {['Nombre', 'Email', 'Rol', 'Fecha de registro', 'Estado', ''].map((h) => (
+              {['Nombre', 'Email', 'Rol', 'Fecha de registro', 'Estado', 'Sesión', ''].map((h) => (
                 <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
               ))}
             </tr>
@@ -359,7 +396,12 @@ export default function Users() {
                 <td className="px-4 py-3 font-medium text-gray-900">{u.name}</td>
                 <td className="px-4 py-3 text-gray-500">{u.email}</td>
                 <td className="px-4 py-3">
-                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${roleColor(u.role?.name)}`}>{u.role?.name}</span>
+                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${roleColor(u.role?.name)}`}>{roleLabel(u.role?.name)}</span>
+                  {u.role?.name === 'SUPERVISOR' && !u.tienda && (
+                    <span className="block text-xs text-gray-500 mt-1">
+                      Plataforma · {u.maxTiendas != null ? `plan de ${u.maxTiendas} tienda${u.maxTiendas === 1 ? '' : 's'}` : 'sin límite de tiendas'}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-gray-600">{fmtDate(u.createdAt)}</td>
                 <td className="px-4 py-3">
@@ -368,11 +410,23 @@ export default function Users() {
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  {isAdmin ? (
+                  {u.hasActiveSession ? (
+                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-blue-100 text-blue-700">Sesión activa</span>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {hasAction('USERS', 'EDIT') || hasAction('USERS', 'DELETE') ? (
                     <div className="flex gap-2">
-                      <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(u)}>Editar</button>
-                      {u.isActive && (
-                        <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(u)}>Desact.</button>
+                      {hasAction('USERS', 'EDIT') && (
+                        <IconButton icon={PencilIcon} label="Editar" variant="primary" onClick={() => openEdit(u)} />
+                      )}
+                      {hasAction('USERS', 'DELETE') && u.isActive && (
+                        <IconButton icon={ArchiveIcon} label="Desactivar" variant="danger" onClick={() => handleDelete(u)} />
+                      )}
+                      {hasAction('USERS', 'EDIT') && u.hasActiveSession && u.id !== user.id && (
+                        <IconButton icon={LogOutIcon} label="Cerrar sesión" variant="warning" onClick={() => handleForceLogout(u)} />
                       )}
                     </div>
                   ) : (
@@ -382,7 +436,7 @@ export default function Users() {
               </tr>
             ))}
             {users.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Sin usuarios</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Sin usuarios</td></tr>
             )}
           </tbody>
         </table>
@@ -435,6 +489,14 @@ export default function Users() {
               <div><label className="text-xs font-medium text-gray-600">Email <span className={fieldErrors.email ? 'text-red-600' : ''}>*</span></label>
                 <input className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
                 {fieldErrors.email && <p className="text-red-600 text-xs mt-1">{fieldErrors.email}</p>}</div>
+              <div><label htmlFor="user-phone" className="text-xs font-medium text-gray-600">Teléfono (opcional)</label>
+                <input
+                  id="user-phone" className="input" type="tel" inputMode="numeric" autoComplete="off" placeholder="10 dígitos"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/[^\d\s-]/g, '').slice(0, 14) })}
+                />
+                {fieldErrors.phone && <p className="text-red-600 text-xs mt-1">{fieldErrors.phone}</p>}
+                <p className="text-xs text-gray-400 mt-1">Sirve para iniciar sesión con el teléfono en lugar del correo, con la misma contraseña.</p></div>
               {editUser ? (
                 <div><label className="text-xs font-medium text-gray-600">Contraseña (dejar vacío para no cambiar)</label>
                   <PasswordInput className="input" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
@@ -452,7 +514,7 @@ export default function Users() {
                   {/* Sin tienda = rol de plataforma (SUPERVISOR); se distingue en el label
                       por si ya existe un rol personalizado con el mismo nombre en esta
                       tienda (el nombre de un rol no es único entre plataforma y tiendas). */}
-                  {assignableRoles.map((r) => <option key={r.id} value={r.id}>{r.name}{!r.tienda ? ' (plataforma)' : ''}</option>)}
+                  {assignableRoles.map((r) => <option key={r.id} value={r.id}>{roleLabel(r.name)}{!r.tienda ? ' (plataforma)' : ''}</option>)}
                 </select>
                 {fieldErrors.roleId && <p className="text-red-600 text-xs mt-1">{fieldErrors.roleId}</p>}</div>
               {showSupervisorTiendaPicker && (
@@ -474,6 +536,34 @@ export default function Users() {
                   </div>
                   {form.supervisedTiendaIds.length === 0 && (
                     <p className="text-xs text-amber-600 mt-1">Sin ninguna marcada, este Supervisor no podrá ver ni administrar ninguna tienda todavía.</p>
+                  )}
+                </div>
+              )}
+              {showSupervisorTiendaPicker && (
+                <div>
+                  <label htmlFor="user-max-tiendas" className="text-xs font-medium text-gray-600">Máximo de tiendas (plan contratado)</label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <button type="button" aria-label="Una tienda menos" className="w-9 h-9 rounded border text-gray-600 hover:bg-gray-100 text-lg leading-none"
+                      onClick={() => setForm((f) => ({ ...f, maxTiendas: f.maxTiendas === '' ? '' : String(Math.max(0, Number(f.maxTiendas) - 1)) }))}>−</button>
+                    <input
+                      id="user-max-tiendas" className="input text-center !w-28" type="text" inputMode="numeric" placeholder="Sin límite"
+                      value={form.maxTiendas}
+                      onChange={(e) => setForm({ ...form, maxTiendas: e.target.value.replace(/\D/g, '').slice(0, 4) })}
+                    />
+                    <button type="button" aria-label="Una tienda más" className="w-9 h-9 rounded border text-gray-600 hover:bg-gray-100 text-lg leading-none"
+                      onClick={() => setForm((f) => ({ ...f, maxTiendas: String(Math.min(1000, (Number(f.maxTiendas) || 0) + 1)) }))}>+</button>
+                    {form.maxTiendas !== '' && (
+                      <button type="button" className="text-xs text-gray-500 hover:text-gray-700 underline" onClick={() => setForm({ ...form, maxTiendas: '' })}>Sin límite</button>
+                    )}
+                  </div>
+                  {fieldErrors.maxTiendas && <p className="text-red-600 text-xs mt-1">{fieldErrors.maxTiendas}</p>}
+                  <p className="text-xs text-gray-400 mt-1">
+                    {form.maxTiendas === ''
+                      ? 'Vacío = sin límite. El supervisor puede crear todas las tiendas que quiera.'
+                      : `El supervisor podrá tener hasta ${form.maxTiendas} tienda${Number(form.maxTiendas) === 1 ? '' : 's'} activa${Number(form.maxTiendas) === 1 ? '' : 's'}; al llegar al límite ya no podrá crear más.`}
+                  </p>
+                  {form.maxTiendas !== '' && form.supervisedTiendaIds.length > Number(form.maxTiendas) && (
+                    <p className="text-xs text-amber-600 mt-1">Ya tiene {form.supervisedTiendaIds.length} tiendas asignadas: las conserva, pero no podrá crear más.</p>
                   )}
                 </div>
               )}

@@ -94,3 +94,33 @@ export const getYearOverYear = (from, to) => api.get('/reports/year-over-year', 
  * @returns {Promise} Respuesta de axios con el PDF como blob.
  */
 export const getReportPdf = (from, to) => api.get('/reports/pdf', { params: { from, to }, responseType: 'blob' })
+
+/**
+ * Catálogo de reportes del módulo "Reportes" (título, grupo, filtros que acepta cada
+ * uno) — alimenta el menú lateral de `Reports.jsx`. A diferencia de las funciones de
+ * arriba (un endpoint fijo por cada consulta, usadas por el widget del Dashboard), este
+ * y los dos de abajo son el catálogo genérico: un solo endpoint por tipo de reporte.
+ * @returns {Promise} Respuesta de axios con la lista de reportes disponibles.
+ */
+export const getReportCatalog = () => api.get('/reports/catalog')
+
+/**
+ * Genera uno de los reportes del catálogo (ver {@link getReportCatalog}).
+ * @param {string} type Tipo del reporte (ej. `'ventas'`, `'ingresos'`) — el mismo `type`
+ *        que trae cada entrada del catálogo.
+ * @param {Object} params `{ from, to, status, method, movementType }` — cada reporte usa
+ *        solo los filtros que declara, el resto se ignora.
+ * @returns {Promise} Respuesta de axios con el reporte (indicadores, gráficas y tabla).
+ */
+export const getReportItem = (type, params) => api.get(`/reports/${type}`, { params })
+
+/**
+ * Exporta uno de los reportes del catálogo a CSV, Excel o PDF. `responseType: 'blob'`
+ * porque la respuesta es un archivo binario, no JSON.
+ * @param {string} type Tipo del reporte.
+ * @param {string} format `'csv' | 'xlsx' | 'pdf'`.
+ * @param {Object} params Mismos filtros que {@link getReportItem}.
+ * @returns {Promise} Respuesta de axios con el archivo como blob.
+ */
+export const exportReportItem = (type, format, params) =>
+  api.get(`/reports/${type}/export`, { params: { ...params, format }, responseType: 'blob' })

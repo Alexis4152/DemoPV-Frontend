@@ -87,8 +87,8 @@ export default function POS() {
   const [customerEmail, setCustomerEmail] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
   // 'physical': imprime en la impresora térmica al cobrar, igual que siempre. 'digital': no
-  // imprime nada, solo envía el ticket en PDF por correo — por eso exige capturar el email
-  // (ver `digitalEmailMissing` y el label del campo, más abajo).
+  // imprime nada; si se capturó un correo, el ticket en PDF se manda ahí — el correo es
+  // opcional en ambos modos (digital sin correo = venta sin ticket).
   const [ticketType, setTicketType] = useState('physical')
   const [cashCut, setCashCut] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -239,8 +239,14 @@ export default function POS() {
    * todo útil navegando por categoría, donde el carrito no siempre está a la vista y sin
    * esto no había ninguna confirmación de qué se acababa de agregar. No se muestra si el
    * intento no cambió nada (sin stock, o ya en el tope de existencias).
+   *
+   * @param refocus si regresa el foco al buscador al terminar (default `true`, pensado
+   *        para seguir escaneando/tecleando). En tablet, enfocar el input de texto abre
+   *        el teclado en pantalla — al agregar con un tap en la imagen/fila del producto
+   *        (no desde el buscador) se manda `false` para no dispararlo sin que el cajero
+   *        vaya a escribir nada.
    */
-  function addToCart(product) {
+  function addToCart(product, { refocus = true } = {}) {
     if (product.stock <= 0) { setError(`"${product.name}" no tiene stock disponible`); return }
     const existingBefore = cart.find((i) => i.productId === product.id)
     if (existingBefore && existingBefore.quantity + 1 > product.stock) return
@@ -263,7 +269,7 @@ export default function POS() {
       setQuery('')
       setResults([])
     }
-    searchInputRef.current?.focus()
+    if (refocus) searchInputRef.current?.focus()
   }
 
   /**
@@ -549,9 +555,6 @@ export default function POS() {
   // sin esto, un monto absurdamente grande pasaba hasta el backend y tronaba con un error
   // crudo en vez de un mensaje claro (mismo caso que ya se resolvió en Inventario).
   const amountExceedsLimit = paymentMethod === 'CASH' && amountReceivedNum != null && amountReceivedNum > 9999999999.99
-  // Ticket digital exige correo del cliente (es el único medio de entrega en ese modo,
-  // a diferencia del físico donde el correo es opcional).
-  const digitalEmailMissing = ticketType === 'digital' && !customerEmail.trim()
   // Nombre y correo del cliente son SIEMPRE opcionales (se puede vender sin capturar
   // ninguno de los dos) — estos chequeos solo importan cuando sí se escribió algo. Máximos
   // alineados a sales.customer_name/customer_email VARCHAR(150) en el backend (SaleRequest).
@@ -583,9 +586,9 @@ export default function POS() {
    * por accidente (p. ej. un doble clic o un Enter de más).
    *
    * Ticket físico vs digital (`ticketType`): en físico, tras cobrar se manda a imprimir
-   * a la térmica igual que siempre. En digital NO se imprime nada — el ticket en PDF ya
-   * lo manda el backend por correo (ver `SaleService.create`, dispara el envío cuando hay
-   * `customerEmail`), que en este modo es obligatorio (`digitalEmailMissing`).
+   * a la térmica igual que siempre. En digital NO se imprime nada — si hay `customerEmail`
+   * el backend manda el ticket en PDF por correo (ver `SaleService.create`); si no, la
+   * venta simplemente queda sin ticket.
    */
   /**
    * Procesa el cargo con tarjeta mediante tokenización Openpay y registra la venta.
@@ -750,7 +753,7 @@ export default function POS() {
    * corregir y reintentar.
    */
   async function handleCheckout() {
-    if (cart.length === 0 || !cashCut || cashAmountMissing || amountExceedsLimit || digitalEmailMissing
+    if (cart.length === 0 || !cashCut || cashAmountMissing || amountExceedsLimit
       || customerNameTooLong || customerEmailTooLong || customerEmailInvalid) return
 
     // Canales digitales Openpay
@@ -839,7 +842,9 @@ export default function POS() {
           </div>
         )}
         {success.ticketType === 'digital' ? (
-          <p className="text-sm text-purple-700 mb-6">📧 Ticket enviado a {success.customerEmail}</p>
+          <p className="text-sm text-purple-700 mb-6">
+            {success.customerEmail ? `📧 Ticket enviado a ${success.customerEmail}` : 'Venta sin ticket'}
+          </p>
         ) : (
           success.amountReceived == null && <div className="mb-6" />
         )}
@@ -943,7 +948,7 @@ export default function POS() {
                       key={p.id}
                       type="button"
                       className="flex flex-col text-left rounded-xl border border-gray-200 hover:border-purple-300 hover:shadow-md transition-all overflow-hidden bg-white"
-                      onClick={() => addToCart(p)}
+                      onClick={() => addToCart(p, { refocus: false })}
                     >
                       <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
                         {p.primaryImage ? (
@@ -973,7 +978,7 @@ export default function POS() {
                     type="button"
                     className={`w-full flex items-center justify-between px-4 py-3 text-left border-b last:border-0 ${idx === highlighted ? 'bg-purple-50' : 'hover:bg-gray-50'}`}
                     onMouseEnter={() => setHighlighted(idx)}
-                    onClick={() => addToCart(p)}
+                    onClick={() => addToCart(p, { refocus: false })}
                   >
                     <div>
                       <p className="font-medium text-gray-900 text-sm">{p.name}</p>
@@ -1165,7 +1170,7 @@ export default function POS() {
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">
-                Correo para enviar el ticket {ticketType === 'digital' ? <span className="text-red-500">*</span> : '(opcional)'}
+                Correo para enviar el ticket (opcional)
               </label>
               {/* Sin type="email" ni required nativos a propósito: el navegador metía su
                   propio globo de validación de formato antes de que este formulario
@@ -1176,9 +1181,7 @@ export default function POS() {
                 onChange={(e) => setCustomerEmail(e.target.value)}
               />
               <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, cliente@outlook.com</p>
-              {digitalEmailMissing ? (
-                <p className="text-xs text-red-500 mt-1">El ticket digital se manda por correo, captura uno para poder cobrar.</p>
-              ) : customerEmailInvalid ? (
+              {customerEmailInvalid ? (
                 <p className="text-xs text-red-500 mt-1">El correo no tiene un formato válido</p>
               ) : customerEmailTooLong ? (
                 <p className="text-xs text-red-500 mt-1">El correo no puede tener más de 150 caracteres</p>
@@ -1265,13 +1268,12 @@ export default function POS() {
           <button
             className="btn-primary w-full py-3 text-base disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={handleCheckout}
-            disabled={cart.length === 0 || loading || !cashCut || cashAmountMissing || amountExceedsLimit || digitalEmailMissing
+            disabled={cart.length === 0 || loading || !cashCut || cashAmountMissing || amountExceedsLimit
               || customerNameTooLong || customerEmailTooLong || customerEmailInvalid}
-            title={!cashCut ? 'Abre un corte de caja para poder cobrar' : amountExceedsLimit ? 'El monto capturado es excesivamente grande' : cashAmountMissing ? 'Captura cuánto pagó el cliente en efectivo' : digitalEmailMissing ? 'Captura el correo del cliente para el ticket digital' : customerEmailInvalid ? 'El correo capturado no es válido' : (customerNameTooLong || customerEmailTooLong) ? 'Revisa los campos marcados en rojo' : undefined}
+            title={!cashCut ? 'Abre un corte de caja para poder cobrar' : amountExceedsLimit ? 'El monto capturado es excesivamente grande' : cashAmountMissing ? 'Captura cuánto pagó el cliente en efectivo' : customerEmailInvalid ? 'El correo capturado no es válido' : (customerNameTooLong || customerEmailTooLong) ? 'Revisa los campos marcados en rojo' : undefined}
           >
             {loading ? 'Procesando...'
               : !cashCut ? 'Abre un corte para cobrar'
-              : digitalEmailMissing ? 'Captura el correo del cliente'
               : amountExceedsLimit ? 'El monto es excesivamente grande'
               : cashAmountMissing ? 'Captura el monto recibido'
               : customerEmailInvalid ? 'Revisa el correo del cliente'

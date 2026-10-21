@@ -6,6 +6,25 @@ function escapeHtml(str) {
 }
 
 /**
+ * Descarga directa de un blob ya obtenido (CSV, Excel, ZIP...) con el patrón clásico de
+ * `<a download>` + clic sintético. A diferencia de {@link openOrDownloadBlob}, no hace
+ * falta el rodeo de la pestaña emergente: ese truco es solo para que un PDF o una imagen
+ * se vean bien en Safari de iOS; un archivo que el navegador no sabe mostrar (como un
+ * .xlsx o un .csv) ya dispara la descarga directa en cualquier navegador.
+ *
+ * @param {Blob} blob Contenido del archivo (ej. `res.data` de una petición con `responseType: 'blob'`).
+ * @param {string} filename Nombre con el que se guarda.
+ */
+export function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+/**
  * Abre en una pestaña nueva (o, si el navegador de plano bloquea el popup, cae a una
  * descarga directa tipo `<a download>`) el archivo binario que regresa una petición al
  * backend — un PDF o una imagen generada al vuelo, nunca un archivo ya existente en disco.

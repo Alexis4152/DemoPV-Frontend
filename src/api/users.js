@@ -36,3 +36,12 @@ export const updateUser = (id, data) => api.put(`/users/${id}`, data)
  * @returns {Promise} Respuesta de axios confirmando la eliminación.
  */
 export const deleteUser = (id) => api.delete(`/users/${id}`)
+
+/**
+ * Cierra a la fuerza la sesión abierta de un usuario (ej. un cajero que dejó la sesión
+ * abierta en otro dispositivo) — revoca sus refresh tokens, no es instantáneo del todo
+ * (ver UserService#forceLogout en el backend para el detalle).
+ * @param {number|string} id Id del usuario a desloguear.
+ * @returns {Promise} Respuesta de axios confirmando el cierre de sesión.
+ */
+export const forceLogoutUser = (id) => api.post(`/users/${id}/force-logout`)

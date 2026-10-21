@@ -3,12 +3,16 @@ import { useSearchParams } from 'react-router-dom'
 import {
   getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductReservedStats,
   getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage, getSiblingStock,
-  getBulkImportTemplate, bulkImportProducts,
+  getBulkImportTemplate, bulkImportProducts, getInventoryCountSheetExcel, getInventoryCountSheetPdf,
 } from '../api/products'
-import { getCategories, createCategory } from '../api/categories'
+import { getCategories } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
+import { openOrDownloadBlob } from '../utils/downloadBlob'
+import { resizeImage } from '../utils/resizeImage'
+import IconButton from '../components/IconButton'
+import { PencilIcon, SlidersIcon, ArchiveIcon } from '../components/icons'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
@@ -19,6 +23,16 @@ const PAGE_SIZES = [10, 20, 50, 100]
 // también evita el viaje redondo al servidor solo para enterarse de que pesa de más, y dice
 // el motivo exacto en vez de un error genérico de red al fallar la subida.
 const MAX_IMAGE_MB = 5
+// Tope de fotos por producto — mismo valor que ProductImageService.MAX_IMAGES_PER_PRODUCT.
+const MAX_IMAGES = 3
+
+// Mensaje de error al subir una foto. Un 413 lo contesta el proxy (no el backend) cuando el
+// cuerpo excede su límite, así que no trae `message` — se explica aquí en vez de dar el
+// error genérico.
+function imageUploadError(err, fallback) {
+  if (err.response?.status === 413) return 'La imagen es demasiado pesada para el servidor'
+  return err.response?.data?.message ?? fallback
+}
 
 // -> los params que espera GET /products/page. Único filtro de disponibilidad que queda
 // (ver `lowStockOnly`) es "stock bajo", como un botón de encendido/apagado — los que
@@ -28,10 +42,6 @@ function availabilityParams(lowStockOnly) {
   return lowStockOnly ? { lowStock: true } : {}
 }
 
-// Valor centinela para la opción "Otra..." del selector de categoría: no puede colisionar
-// con un id real (los ids de categoría son numéricos), así que sirve para distinguir
-// "el usuario quiere crear una categoría nueva" de una categoría existente seleccionada.
-const NEW_CATEGORY_VALUE = '__new__'
 
 /**
  * Página "Inventario": administración del catálogo de productos de la tienda del usuario
@@ -62,7 +72,12 @@ const NEW_CATEGORY_VALUE = '__new__'
  * producto" con el código ya precargado, para dar de alta sin volver a teclearlo.
  */
 export default function Inventory() {
-  const { isAdmin, isSuperAdmin } = useAuth()
+  const { user, isAdmin, hasAction } = useAuth()
+  // Sin ningún límite de descuento de apartados en "Datos de la tienda", el backend
+  // rechaza cualquier oferta pública (ProductService#validateApartadoDiscountPercent) —
+  // se deshabilita el campo desde aquí en vez de dejar capturar algo que va a fallar.
+  const apartadoDiscountsDisabled = user?.tienda?.maxApartadoDiscountAmount == null
+    && user?.tienda?.maxApartadoDiscountPercent == null
   const { notify, confirmDialog } = useNotify()
   // Permite llegar con el filtro ya aplicado desde afuera (ej. la tarjeta "Stock bajo" del
   // Dashboard enlaza a `/inventory?availability=lowStock`). Solo se lee al montar — un
@@ -70,6 +85,10 @@ export default function Inventory() {
   const [searchParams] = useSearchParams()
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [categories, setCategories] = useState([])
+  const [countSheetLoading, setCountSheetLoading] = useState(null)
+  // Menú "Más opciones" del encabezado (descargas de inventario y carga masiva).
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreMenuRef = useRef(null)
   const [search, setSearch] = useState('')
   const [filterCat, setFilterCat] = useState('')
   // Único filtro de disponibilidad: stock bajo, como botón de encendido/apagado (no un
@@ -124,12 +143,11 @@ export default function Inventory() {
   const [adjustNotice, setAdjustNotice] = useState('')
   const [scanCode, setScanCode] = useState('')
   const [choiceModal, setChoiceModal] = useState(null)
-  const [newCategoryName, setNewCategoryName] = useState('')
   // Modal "Buscar en tiendas asociadas" (ver SiblingStockModal más abajo) — visible para
   // cualquier rol, no solo ADMIN: es una consulta de solo lectura entre sucursales del
   // mismo Supervisor, útil para cualquiera que atienda al cliente en el mostrador.
   const [showSiblingStock, setShowSiblingStock] = useState(false)
-  // Modal "Carga masiva" (solo SUPER_ADMIN, ver isSuperAdmin) — `bulkImportResult` queda
+  // Modal "Carga masiva" (requiere permiso "Agregar" de Inventario) — `bulkImportResult` queda
   // null mientras no se ha subido nada; una vez subido, se queda con el resumen (creados/
   // errores) para mostrarlo dentro del mismo modal hasta que lo cierren.
   const [bulkImportModal, setBulkImportModal] = useState(false)
@@ -205,7 +223,6 @@ export default function Inventory() {
   function openNew(prefillBarcode) {
     setEditProduct(null)
     setForm({ ...emptyForm, barcode: prefillBarcode ?? '' })
-    setNewCategoryName('')
     setProductImages([])
     pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPendingImages([])
@@ -229,7 +246,6 @@ export default function Inventory() {
       isReservable: !!p.isReservable,
       apartadoDiscountPercent: p.apartadoDiscountPercent ?? '',
     })
-    setNewCategoryName('')
     setProductImages([])
     getProductImages(p.id).then((r) => setProductImages(r.data.data ?? [])).catch(() => {})
     setError('')
@@ -239,20 +255,20 @@ export default function Inventory() {
 
   /** Sube una foto nueva para el producto en edición y refresca la galería del modal. */
   async function handleUploadImage(e) {
-    const file = e.target.files?.[0]
-    if (!file || !editProduct) return
-    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
-      notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
-      e.target.value = ''
-      return
-    }
+    const original = e.target.files?.[0]
+    if (!original || !editProduct) return
     setUploadingImage(true)
     try {
+      const file = await resizeImage(original)
+      if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+        notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
+        return
+      }
       await uploadProductImage(editProduct.id, file)
       const r = await getProductImages(editProduct.id)
       setProductImages(r.data.data ?? [])
     } catch (err) {
-      notify(err.response?.data?.message ?? 'No se pudo subir la foto', 'error')
+      notify(imageUploadError(err, 'No se pudo subir la foto'), 'error')
     } finally {
       setUploadingImage(false)
       e.target.value = ''
@@ -265,15 +281,16 @@ export default function Inventory() {
    * (`URL.createObjectURL`) — la subida real ocurre en `handleSave`, justo después de que
    * la creación del producto responde con su id.
    */
-  function handleStageImage(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
+  async function handleStageImage(e) {
+    const original = e.target.files?.[0]
+    if (!original) return
+    const file = await resizeImage(original)
     if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
       notify(`La imagen pesa demasiado — el máximo permitido es ${MAX_IMAGE_MB} MB`, 'error')
       e.target.value = ''
       return
     }
-    setPendingImages((prev) => [...prev, { file, previewUrl: URL.createObjectURL(file) }])
+    setPendingImages((prev) => prev.length >= MAX_IMAGES ? prev : [...prev, { file, previewUrl: URL.createObjectURL(file) }])
     e.target.value = ''
   }
 
@@ -335,11 +352,13 @@ export default function Inventory() {
     }
     const found = (await getProductByBarcode(code).catch(() => null))?.data?.data
     if (found) {
-      if (isAdmin) setChoiceModal(found)
+      if (hasAction('INVENTORY', 'EDIT') || hasAction('INVENTORY', 'DELETE')) setChoiceModal(found)
       else openAdjust(found, '1')
-    } else {
+    } else if (hasAction('INVENTORY', 'CREATE')) {
       notify(`Código "${code}" no encontrado — completa los datos para darlo de alta`, 'info')
       openNew(code)
+    } else {
+      notify(`Código "${code}" no encontrado`, 'warning')
     }
   }
 
@@ -443,7 +462,7 @@ export default function Inventory() {
     // campo que usa cualquier otro error.
     if (!form.name.trim()) errors.name = 'El nombre es obligatorio'
     else if (form.name.length > 200) errors.name = 'El nombre no puede tener más de 200 caracteres'
-    if (form.barcode.length > 100) errors.barcode = 'El código de barras no puede tener más de 100 caracteres'
+    if (form.barcode.length > 100) errors.barcode = 'El código de producto no puede tener más de 100 caracteres'
     if (form.unit.length > 20) errors.unit = 'La unidad no puede tener más de 20 caracteres'
     if (form.description.length > 500) errors.description = 'La descripción no puede tener más de 500 caracteres'
     // Máximos alineados al límite real de columna en Postgres (ver ProductRequest en el
@@ -453,10 +472,12 @@ export default function Inventory() {
     if (form.price === '') errors.price = 'El precio es obligatorio'
     else if (Number(form.price) > 9999999999.99) errors.price = 'El precio no puede ser mayor a 9,999,999,999.99'
     if (form.cost !== '' && Number(form.cost) > 9999999999.99) errors.cost = 'El costo no puede ser mayor a 9,999,999,999.99'
-    if (form.stock !== '' && Number(form.stock) > 2147483647) errors.stock = 'El stock no puede ser mayor a 2,147,483,647'
+    // Al crear se exige stock inicial (mínimo 1); al editar el campo ni se envía como
+    // cambio (ver "Stock actual" en el modal), así que no se valida.
+    if (!editProduct && (form.stock === '' || Number(form.stock) < 1)) errors.stock = 'Captura el stock inicial (mínimo 1)'
+    else if (form.stock !== '' && Number(form.stock) > 2147483647) errors.stock = 'El stock no puede ser mayor a 2,147,483,647'
     if (form.minStock !== '' && Number(form.minStock) > 2147483647) errors.minStock = 'El stock mínimo no puede ser mayor a 2,147,483,647'
     if (!form.categoryId) errors.categoryId = 'Selecciona una categoría'
-    else if (form.categoryId === NEW_CATEGORY_VALUE && !newCategoryName.trim()) errors.newCategoryName = 'Escribe el nombre de la nueva categoría'
     if (form.apartadoDiscountPercent !== '') {
       const pct = Number(form.apartadoDiscountPercent)
       if (pct < 0) errors.apartadoDiscountPercent = 'El descuento de apartado no puede ser negativo'
@@ -474,12 +495,8 @@ export default function Inventory() {
    * y recarga el catálogo completo (para reflejar el nuevo/actualizado producto y, si
    * cambió el stock inicial, el aviso de stock mínimo).
    *
-   * Categoría nueva ("Otra..."): si el selector quedó en `NEW_CATEGORY_VALUE`, primero
-   * crea la categoría con el nombre capturado en `newCategoryName` y usa el id que
-   * devuelve el backend para el producto — todo en un solo Guardar, sin que el usuario
-   * tenga que ir a otra pantalla a darla de alta antes. Si la creación de la categoría
-   * falla (nombre repetido, etc.), el producto tampoco se guarda: se corta ahí y se
-   * muestra el error, para no dejar a medias un producto sin categoría real.
+   * La categoría solo se elige de las existentes: desde aquí ya no se pueden crear
+   * categorías nuevas (se dan de alta en la pantalla de Categorías).
    *
    * Pide confirmación explícita antes de tocar el backend (crear o editar), para evitar
    * altas/ediciones accidentales por un clic de más — pero solo si el formulario ya pasó
@@ -505,17 +522,14 @@ export default function Inventory() {
     setError('')
     setFieldErrors({})
     try {
-      let categoryId = form.categoryId
-      if (categoryId === NEW_CATEGORY_VALUE) {
-        const name = newCategoryName.trim()
-        if (!name) { setError('Escribe el nombre de la nueva categoría'); setLoading(false); return }
-        const newCategory = (await createCategory({ name })).data.data
-        setCategories((prev) => [...prev, newCategory])
-        categoryId = newCategory.id
-      }
+      const categoryId = form.categoryId
       const payload = { ...form, price: Number(form.price), cost: form.cost ? Number(form.cost) : null,
         stock: Number(form.stock), minStock: Number(form.minStock), categoryId: Number(categoryId),
-        apartadoDiscountPercent: form.apartadoDiscountPercent === '' ? null : Number(form.apartadoDiscountPercent) }
+        // La oferta solo aplica si el producto sale en la tienda pública y la tienda
+        // permite descuentos de apartado; si no, se manda vacía (el campo solo se oculta
+        // o deshabilita, no se borra, y un valor viejo se seguiría enviando).
+        apartadoDiscountPercent: !form.isReservable || apartadoDiscountsDisabled || form.apartadoDiscountPercent === ''
+          ? null : Number(form.apartadoDiscountPercent) }
       if (editProduct) {
         await updateProduct(editProduct.id, payload)
       } else {
@@ -527,7 +541,7 @@ export default function Inventory() {
           // debe tumbar todo el flujo ni fingir que no pasó nada: se avisa aparte y se
           // sigue con las demás, en vez del `.catch(() => {})` de antes que lo escondía.
           await uploadProductImage(created.id, file)
-            .catch((err) => notify(err.response?.data?.message ?? `No se pudo subir "${file.name}"`, 'error'))
+            .catch((err) => notify(imageUploadError(err, `No se pudo subir "${file.name}"`), 'error'))
         }
       }
       pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
@@ -749,6 +763,39 @@ export default function Inventory() {
     }
   }
 
+  // Cierra "Más opciones" al hacer clic fuera del menú o con Escape.
+  useEffect(() => {
+    if (!moreOpen) return
+    const onDown = (e) => { if (!moreMenuRef.current?.contains(e.target)) setMoreOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setMoreOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [moreOpen])
+
+  // Hoja de conteo físico (producto, cantidad actual, "Cantidad real" en blanco). Libre
+  // para cualquiera con acceso a Inventario — no depende de ninguna acción (ver
+  // ProductController#countSheetExcel). `countSheetLoading` = formato en curso.
+  async function handleDownloadCountSheet(format) {
+    setCountSheetLoading(format)
+    const filename = `inventario-${new Date().toISOString().slice(0, 10)}.${format}`
+    try {
+      if (format === 'pdf') {
+        await openOrDownloadBlob(getInventoryCountSheetPdf, filename, 'application/pdf')
+      } else {
+        const res = await getInventoryCountSheetExcel()
+        downloadBlob(res.data, filename)
+      }
+    } catch (err) {
+      notify('No se pudo generar el inventario', 'error')
+    } finally {
+      setCountSheetLoading(null)
+    }
+  }
+
   function openBulkImport() {
     setBulkImportModal(true)
     setBulkImportFile(null)
@@ -781,14 +828,47 @@ export default function Inventory() {
     downloadBlob(blob, 'errores-carga-masiva-productos.xlsx')
   }
 
+  // Carga masiva (plantilla + subida) va bajo el permiso "Agregar" de Inventario — crea
+  // productos igual que "+ Nuevo producto". La selección en lote (checkbox por fila,
+  // reservable/descuento) va bajo "Editar" — son ediciones masivas. Antes estaban fijos a
+  // isAdmin/isSuperAdmin; ahora respetan actionGrants de roles personalizados también.
+  const canBulkImport = hasAction('INVENTORY', 'CREATE')
+  const canBulkEdit = hasAction('INVENTORY', 'EDIT')
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Inventario</h2>
         <div className="flex flex-wrap gap-2">
-          {isAdmin && <button className="btn-secondary text-sm" onClick={handleDownloadTemplate}>⬇️ Plantilla de carga masiva</button>}
-          {isSuperAdmin && <button className="btn-secondary text-sm" onClick={openBulkImport}>📤 Carga masiva</button>}
-          {isAdmin && <button className="btn-primary" onClick={() => openNew()}>+ Nuevo producto</button>}
+          {hasAction('INVENTORY', 'CREATE') && <button className="btn-primary" onClick={() => openNew()}>+ Nuevo producto</button>}
+          <div className="relative" ref={moreMenuRef}>
+            <button
+              type="button" className="btn-secondary text-sm h-full"
+              aria-haspopup="menu" aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((o) => !o)}
+            >
+              {countSheetLoading ? 'Generando…' : 'Más opciones ▾'}
+            </button>
+            {moreOpen && (
+              <div role="menu" className="absolute right-0 mt-1 w-60 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-30">
+                {[
+                  { label: '📊 Inventario Excel', onClick: () => handleDownloadCountSheet('xlsx'), show: true, disabled: countSheetLoading !== null },
+                  { label: '📄 Inventario PDF', onClick: () => handleDownloadCountSheet('pdf'), show: true, disabled: countSheetLoading !== null },
+                  { label: '⬇️ Plantilla de carga masiva', onClick: handleDownloadTemplate, show: canBulkImport },
+                  { label: '📤 Carga masiva', onClick: openBulkImport, show: canBulkImport },
+                ].filter((o) => o.show).map((o) => (
+                  <button
+                    key={o.label} type="button" role="menuitem"
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                    disabled={o.disabled}
+                    onClick={() => { setMoreOpen(false); o.onClick() }}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -859,7 +939,7 @@ export default function Inventory() {
 
       {/* Table */}
       <div className="card p-0 overflow-hidden">
-        {isAdmin && selectedIds.size > 0 && (
+        {canBulkEdit && selectedIds.size > 0 && (
           <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 bg-purple-50">
             <span className="text-xs text-gray-600">{selectedIds.size} seleccionado{selectedIds.size === 1 ? '' : 's'}</span>
             <div className="flex items-center gap-2">
@@ -894,14 +974,14 @@ export default function Inventory() {
                 de datos de la tienda pública de apartados, para diferenciarlas a simple
                 vista del resto (que son datos de mostrador/inventario normal). */}
             <tr>
-              <th colSpan={(isAdmin ? 1 : 0) + 6} className="bg-gray-50"></th>
+              <th colSpan={(canBulkEdit ? 1 : 0) + 6} className="bg-gray-50"></th>
               <th colSpan={3} className="text-center px-2 py-1 text-[11px] font-semibold text-purple-700 bg-purple-50 border-l-2 border-purple-200">
                 🛍️ Tienda en línea de apartados
               </th>
               <th className="bg-gray-50"></th>
             </tr>
             <tr>
-              {isAdmin && (
+              {canBulkEdit && (
                 <th className="px-4 py-3 w-8">
                   <input type="checkbox" checked={products.length > 0 && selectedIds.size === products.length} onChange={toggleSelectAll} aria-label="Seleccionar todos" />
                 </th>
@@ -918,7 +998,7 @@ export default function Inventory() {
           <tbody className="divide-y divide-gray-50">
             {products.map((p) => (
               <tr key={p.id} className={`hover:bg-gray-50 ${selectedIds.has(p.id) ? 'bg-purple-50/50' : ''}`}>
-                {isAdmin && (
+                {canBulkEdit && (
                   <td className="px-4 py-3">
                     <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelect(p.id)} aria-label={`Seleccionar ${p.name}`} />
                   </td>
@@ -950,19 +1030,21 @@ export default function Inventory() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
-                    {isAdmin && (
-                      <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(p)}>Editar</button>
+                    {hasAction('INVENTORY', 'EDIT') && (
+                      <IconButton icon={PencilIcon} label="Editar" variant="primary" onClick={() => openEdit(p)} />
                     )}
-                    <button className="text-purple-600 hover:underline text-xs" onClick={() => openAdjust(p)}>Ajustar</button>
-                    {isAdmin && (
-                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(p)}>Desact.</button>
+                    {hasAction('INVENTORY', 'EDIT') && (
+                      <IconButton icon={SlidersIcon} label="Ajustar stock" variant="purple" onClick={() => openAdjust(p)} />
+                    )}
+                    {hasAction('INVENTORY', 'DELETE') && (
+                      <IconButton icon={ArchiveIcon} label="Desactivar" variant="danger" onClick={() => handleDelete(p)} />
                     )}
                   </div>
                 </td>
               </tr>
             ))}
             {products.length === 0 && (
-              <tr><td colSpan={isAdmin ? 11 : 10} className="px-4 py-8 text-center text-gray-400">{tableLoading ? 'Cargando...' : 'Sin productos'}</td></tr>
+              <tr><td colSpan={canBulkEdit ? 11 : 10} className="px-4 py-8 text-center text-gray-400">{tableLoading ? 'Cargando...' : 'Sin productos'}</td></tr>
             )}
           </tbody>
         </table>
@@ -1014,7 +1096,7 @@ export default function Inventory() {
                 <div><label className="text-xs font-medium text-gray-600">Nombre <span className={fieldErrors.name ? 'text-red-600' : ''}>*</span></label>
                   <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                   {fieldErrors.name && <p className="text-red-600 text-xs mt-1">{fieldErrors.name}</p>}</div>
-                <div><label className="text-xs font-medium text-gray-600">Código de barras</label>
+                <div><label className="text-xs font-medium text-gray-600">Código de producto</label>
                   <input className="input" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
                   {fieldErrors.barcode && <p className="text-red-600 text-xs mt-1">{fieldErrors.barcode}</p>}</div>
                 <div><label className="text-xs font-medium text-gray-600">Precio venta <span className={fieldErrors.price ? 'text-red-600' : ''}>*</span></label>
@@ -1023,9 +1105,22 @@ export default function Inventory() {
                 <div><label className="text-xs font-medium text-gray-600">Costo</label>
                   <input className="input" type="number" step="0.01" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} />
                   {fieldErrors.cost && <p className="text-red-600 text-xs mt-1">{fieldErrors.cost}</p>}</div>
-                <div><label className="text-xs font-medium text-gray-600">Stock inicial</label>
-                  <input className="input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
-                  {fieldErrors.stock && <p className="text-red-600 text-xs mt-1">{fieldErrors.stock}</p>}</div>
+                {/* Al editar, el backend ignora `stock` (ProductService#update): todo cambio de
+                    existencias pasa por "Ajustar stock" para quedar registrado como movimiento
+                    de inventario. Por eso aquí solo se muestra, con acceso directo al ajuste. */}
+                {editProduct ? (
+                  <div><label className="text-xs font-medium text-gray-600">Stock actual</label>
+                    <input className="input bg-gray-100 text-gray-500" type="number" value={form.stock} disabled />
+                    <button
+                      type="button"
+                      className="text-xs text-blue-600 hover:underline mt-1"
+                      onClick={() => { const p = editProduct; setShowModal(false); openAdjust(p) }}
+                    >Cambiar con "Ajustar stock"</button></div>
+                ) : (
+                  <div><label className="text-xs font-medium text-gray-600">Stock inicial <span className={fieldErrors.stock ? 'text-red-600' : ''}>*</span></label>
+                    <input className="input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
+                    {fieldErrors.stock && <p className="text-red-600 text-xs mt-1">{fieldErrors.stock}</p>}</div>
+                )}
                 <div><label className="text-xs font-medium text-gray-600">Stock mínimo</label>
                   <input className="input" type="number" value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} />
                   {fieldErrors.minStock && <p className="text-red-600 text-xs mt-1">{fieldErrors.minStock}</p>}</div>
@@ -1036,16 +1131,9 @@ export default function Inventory() {
                   <select className="input" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
                     <option value="">Seleccionar...</option>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    <option value={NEW_CATEGORY_VALUE}>Otra...</option>
                   </select>
                   {fieldErrors.categoryId && <p className="text-red-600 text-xs mt-1">{fieldErrors.categoryId}</p>}
                 </div>
-                {form.categoryId === NEW_CATEGORY_VALUE && (
-                  <div><label className="text-xs font-medium text-gray-600">Nombre de la nueva categoría <span className={fieldErrors.newCategoryName ? 'text-red-600' : ''}>*</span></label>
-                    <input className="input" autoFocus value={newCategoryName}
-                      onChange={(e) => setNewCategoryName(e.target.value)} placeholder="Ej. Electrónica" />
-                    {fieldErrors.newCategoryName && <p className="text-red-600 text-xs mt-1">{fieldErrors.newCategoryName}</p>}</div>
-                )}
               </div>
               <div><label className="text-xs font-medium text-gray-600">Descripción</label>
                 <textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
@@ -1062,7 +1150,8 @@ export default function Inventory() {
 
               {form.isReservable && (
                 <div>
-                  <label className="text-xs font-medium text-gray-600">Descuento de oferta (%) — se le muestra al cliente</label>
+                  <label className="text-xs font-medium text-gray-600 block">Descuento en apartados (%)</label>
+                  <p className="text-xs text-gray-400 mb-1">Oferta que se le muestra al cliente en la tienda pública. Déjalo vacío si no hay oferta.</p>
                   {/* Sin min/max nativos a propósito: el navegador los valida con su propio
                       globo emergente ANTES de que este formulario alcance a correr — con
                       eso, el rango 0-100 lo reporta el backend (@DecimalMin/@DecimalMax en
@@ -1071,9 +1160,13 @@ export default function Inventory() {
                   <input
                     className="input sm:max-w-[160px]" type="number" step="1"
                     placeholder="Sin oferta"
-                    value={form.apartadoDiscountPercent}
+                    value={apartadoDiscountsDisabled ? '' : form.apartadoDiscountPercent}
                     onChange={(e) => setForm({ ...form, apartadoDiscountPercent: e.target.value })}
+                    disabled={apartadoDiscountsDisabled}
                   />
+                  {apartadoDiscountsDisabled && (
+                    <p className="text-xs text-amber-600 mt-1">Para ofrecer descuento, primero configura un límite de descuento de apartados en "Datos de la tienda".</p>
+                  )}
                   {fieldErrors.apartadoDiscountPercent && <p className="text-red-600 text-xs mt-1">{fieldErrors.apartadoDiscountPercent}</p>}
                 </div>
               )}
@@ -1097,10 +1190,12 @@ export default function Inventory() {
                           </div>
                         </div>
                       ))}
+                      {productImages.length < MAX_IMAGES && (
                       <label className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer text-gray-400 hover:border-purple-400 hover:text-purple-500 text-xs text-center">
                         {uploadingImage ? '...' : '+ Foto'}
                         <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleUploadImage} disabled={uploadingImage} />
                       </label>
+                      )}
                     </>
                   ) : (
                     <>
@@ -1115,15 +1210,17 @@ export default function Inventory() {
                           </div>
                         </div>
                       ))}
+                      {pendingImages.length < MAX_IMAGES && (
                       <label className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer text-gray-400 hover:border-purple-400 hover:text-purple-500 text-xs text-center">
                         + Foto
                         <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleStageImage} />
                       </label>
+                      )}
                     </>
                   )}
                 </div>
                 <p className="text-xs text-gray-400">La primera foto (borde morado) es la portada del catálogo público.</p>
-                <p className="text-xs text-gray-400">PNG, JPG o WEBP, máximo {MAX_IMAGE_MB} MB por foto.</p>
+                <p className="text-xs text-gray-400">Hasta {MAX_IMAGES} fotos. PNG, JPG o WEBP, máximo {MAX_IMAGE_MB} MB por foto.</p>
               </div>
 
               {error && <p className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</p>}
@@ -1143,21 +1240,25 @@ export default function Inventory() {
             <h3 className="text-lg font-bold mb-1">Producto encontrado</h3>
             <p className="text-sm text-gray-500 mb-4">{choiceModal.name} — código {choiceModal.barcode}</p>
             <div className="grid grid-cols-1 gap-2">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => { const p = choiceModal; setChoiceModal(null); openEdit(p) }}
-              >✏️ Editar producto</button>
+              {hasAction('INVENTORY', 'EDIT') && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => { const p = choiceModal; setChoiceModal(null); openEdit(p) }}
+                >✏️ Editar producto</button>
+              )}
               <button
                 type="button"
                 className="btn-primary"
                 onClick={() => { const p = choiceModal; setChoiceModal(null); openAdjust(p, '1') }}
               >➕ Ajustar stock</button>
-              <button
-                type="button"
-                className="btn-secondary text-red-600"
-                onClick={() => { const p = choiceModal; setChoiceModal(null); handleDelete(p) }}
-              >🚫 Desactivar producto</button>
+              {hasAction('INVENTORY', 'DELETE') && (
+                <button
+                  type="button"
+                  className="btn-secondary text-red-600"
+                  onClick={() => { const p = choiceModal; setChoiceModal(null); handleDelete(p) }}
+                >🚫 Desactivar producto</button>
+              )}
             </div>
             <button type="button" className="text-sm text-gray-400 hover:text-gray-600 mt-4 w-full text-center" onClick={() => setChoiceModal(null)}>Cancelar</button>
           </div>
@@ -1269,7 +1370,7 @@ export default function Inventory() {
 
       {showSiblingStock && <SiblingStockModal onClose={() => setShowSiblingStock(false)} />}
 
-      {/* Carga masiva de productos por Excel — solo SUPER_ADMIN (ver el botón que lo abre). */}
+      {/* Carga masiva de productos por Excel — requiere permiso "Agregar" de Inventario (ver el botón que lo abre). */}
       {bulkImportModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setBulkImportModal(false)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -1279,7 +1380,7 @@ export default function Inventory() {
               <>
                 <p className="text-sm text-gray-500 mb-4">
                   Sube un Excel con el mismo formato que la plantilla — cada fila válida da de alta un producto nuevo.
-                  Un código de barras repetido (contra el catálogo o dentro del mismo archivo) se reporta como error,
+                  Un código de producto repetido (contra el catálogo o dentro del mismo archivo) se reporta como error,
                   nunca actualiza el producto existente.
                 </p>
                 <form onSubmit={handleBulkImportSubmit} className="space-y-3">

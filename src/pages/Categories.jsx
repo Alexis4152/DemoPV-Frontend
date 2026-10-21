@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { getCategoriesPage, createCategory, updateCategory, deleteCategory } from '../api/categories'
 import { useNotify } from '../context/NotifyContext'
+import IconButton from '../components/IconButton'
+import { PencilIcon, ArchiveIcon } from '../components/icons'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
@@ -245,9 +247,9 @@ export default function Categories() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
-                    <button className="text-blue-600 hover:underline text-xs" onClick={() => openEdit(c)}>Editar</button>
+                    <IconButton icon={PencilIcon} label="Editar" variant="primary" onClick={() => openEdit(c)} />
                     {c.isActive && (
-                      <button className="text-red-500 hover:underline text-xs" onClick={() => handleDelete(c)}>Desact.</button>
+                      <IconButton icon={ArchiveIcon} label="Desactivar" variant="danger" onClick={() => handleDelete(c)} />
                     )}
                   </div>
                 </td>

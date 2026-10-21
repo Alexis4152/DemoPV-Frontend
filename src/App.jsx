@@ -10,6 +10,7 @@ import ChangePasswordRequired from './pages/ChangePasswordRequired'
 import SelectTienda from './pages/SelectTienda'
 import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
+import RawMaterials from './pages/RawMaterials'
 import POS from './pages/POS'
 import Sales from './pages/Sales'
 import Reports from './pages/Reports'
@@ -22,6 +23,9 @@ import StoreInfo from './pages/StoreInfo'
 import MailSettings from './pages/MailSettings'
 import Apartados from './pages/Apartados'
 import PublicApartar from './pages/PublicApartar'
+import ArcoRequest from './pages/ArcoRequest'
+import ArcoRequests from './pages/ArcoRequests'
+import MyArcoRequests from './pages/MyArcoRequests'
 
 /**
  * Árbol de rutas de la aplicación.
@@ -37,7 +41,11 @@ import PublicApartar from './pages/PublicApartar'
  * pero para SUPER_ADMIN sin ninguna tienda elegida (`user.tienda` sigue `null` — ver
  * `AuthContext#selectTienda`): también exige sesión, también vive fuera del `Layout`, y
  * `PrivateRoute` también rebota aquí desde cualquier otra ruta mientras no haya elegido
- * una. Todo lo demás vive bajo un `PrivateRoute` genérico (solo exige sesión iniciada) que
+ * una. `/arco` es el mismo caso que `/apartar/:slug` (público, sin `Layout`, sin sesión)
+ * pero para solicitudes de derechos ARCO — no depende de ninguna tienda, por eso no lleva
+ * `:slug`; se enlaza desde `Login.jsx`. `/my-arco-requests` ("Mis solicitudes") SÍ exige
+ * sesión pero no `section` ni `adminOnly`/`superAdminOnly`: cualquier rol puede ver su
+ * propio historial, no es un permiso de tienda. Todo lo demás vive bajo un `PrivateRoute` genérico (solo exige sesión iniciada) que
  * envuelve el `Layout` (sidebar + contenido), y dentro de este cada ruta hija está envuelta
  * en su propio `PrivateRoute` con `section` (código de `AppSection` para el chequeo fino de
  * permisos RBAC) o `adminOnly` (para pantallas reservadas al administrador de la tienda,
@@ -52,6 +60,7 @@ function AppRoutes() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/apartar/:slug" element={<PublicApartar />} />
+      <Route path="/arco" element={<ArcoRequest />} />
       <Route path="/change-password" element={<PrivateRoute><ChangePasswordRequired /></PrivateRoute>} />
       <Route path="/select-tienda" element={<PrivateRoute><SelectTienda /></PrivateRoute>} />
       <Route
@@ -63,6 +72,7 @@ function AppRoutes() {
                 <Route path="/" element={<PrivateRoute section="DASHBOARD"><Dashboard /></PrivateRoute>} />
                 <Route path="/pos" element={<PrivateRoute section="POS"><POS /></PrivateRoute>} />
                 <Route path="/inventory" element={<PrivateRoute section="INVENTORY"><Inventory /></PrivateRoute>} />
+                <Route path="/raw-materials" element={<PrivateRoute section="RAW_MATERIALS"><RawMaterials /></PrivateRoute>} />
                 <Route path="/sales" element={<PrivateRoute section="SALES"><Sales /></PrivateRoute>} />
                 <Route path="/cash-cuts" element={<PrivateRoute section="CASH_CUTS"><CashCuts /></PrivateRoute>} />
                 <Route path="/apartados" element={<PrivateRoute section="APARTADOS"><Apartados /></PrivateRoute>} />
@@ -73,6 +83,8 @@ function AppRoutes() {
                 <Route path="/appearance" element={<PrivateRoute adminOnly><Appearance /></PrivateRoute>} />
                 <Route path="/store-info" element={<PrivateRoute adminOnly><StoreInfo /></PrivateRoute>} />
                 <Route path="/mail-config" element={<PrivateRoute superAdminOnly><MailSettings /></PrivateRoute>} />
+                <Route path="/arco-requests" element={<PrivateRoute superAdminOnly><ArcoRequests /></PrivateRoute>} />
+                <Route path="/my-arco-requests" element={<PrivateRoute><MyArcoRequests /></PrivateRoute>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>

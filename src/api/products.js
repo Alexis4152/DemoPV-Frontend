@@ -159,3 +159,18 @@ export const bulkImportProducts = (file) => {
   return api.post('/products/bulk-import', form, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
 
+
+// ── Hoja de conteo de inventario ──────────────────────────────────────────────────────
+
+/**
+ * Descarga la hoja de conteo de inventario en Excel: producto, cantidad actual y
+ * "Cantidad real" en blanco. Disponible para cualquiera con acceso a Inventario.
+ * @returns {Promise} Respuesta de axios con el archivo en `data` (blob).
+ */
+export const getInventoryCountSheetExcel = () => api.get('/products/count-sheet.xlsx', { responseType: 'blob' })
+
+/**
+ * Igual que `getInventoryCountSheetExcel`, en PDF listo para imprimir.
+ * @returns {Promise} Respuesta de axios con el PDF en `data` (blob).
+ */
+export const getInventoryCountSheetPdf = () => api.get('/products/count-sheet.pdf', { responseType: 'blob' })
