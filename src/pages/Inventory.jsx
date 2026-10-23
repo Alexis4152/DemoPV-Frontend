@@ -33,6 +33,8 @@ const MAX_IMAGES = 3
 // no lo elige el usuario; para otro rollo, cambiar aquí por otra clave de
 // BarcodeLabelPdfService.SIZES (50x25, 51x25, 50x30, 40x30, 60x40).
 const LABEL_SIZE = '50x30'
+// Nombres que parecen de impresora de etiquetas, para sugerirla/detectarla en QZ Tray.
+const LABEL_PRINTER_PATTERN = /aiyin|ayin|label|etiqueta|zebra|xprinter/i
 
 // Con `responseType: 'blob'` un error del backend también llega como Blob — hay que
 // leerlo para sacar el `message` del JSON.
@@ -92,7 +94,7 @@ function availabilityParams(lowStockOnly) {
  * producto" con el código ya precargado, para dar de alta sin volver a teclearlo.
  */
 export default function Inventory() {
-  const { user, isAdmin, hasAction } = useAuth()
+  const { user, isAdmin, isSuperAdmin, hasAction } = useAuth()
   // Sin ningún límite de descuento de apartados en "Datos de la tienda", el backend
   // rechaza cualquier oferta pública (ProductService#validateApartadoDiscountPercent) —
   // se deshabilita el campo desde aquí en vez de dejar capturar algo que va a fallar.
@@ -253,8 +255,24 @@ export default function Inventory() {
     setLabelModal({ product })
     const saved = getLabelPrinterName()
     setLabelPrinter(saved)
-    setChoosingPrinter(!saved)
-    if (!saved) loadLabelPrinters()
+    // Solo SUPER_ADMIN ve y elige la impresora de etiquetas; los demás usan la que quedó
+    // configurada en esta computadora (ver handlePrintLabels).
+    setChoosingPrinter(isSuperAdmin && !saved)
+    if (isSuperAdmin && !saved) loadLabelPrinters()
+  }
+
+  /**
+   * Impresora de etiquetas a usar: la elegida/guardada; si no hay ninguna (y no es
+   * SUPER_ADMIN, que la elige a mano), la que parezca de etiquetas entre las que ve QZ
+   * Tray, y se guarda para la próxima. null si no se encontró.
+   */
+  async function resolveLabelPrinter() {
+    if (labelPrinter) return labelPrinter
+    if (isSuperAdmin) return null
+    const names = await listPrinters()
+    const found = names.find((n) => LABEL_PRINTER_PATTERN.test(n)) || null
+    if (found) setLabelPrinterName(found)
+    return found
   }
 
   /** Impresoras que ve QZ Tray, para elegir la de etiquetas (una vez por computadora). */
@@ -264,7 +282,7 @@ export default function Inventory() {
       const names = await listPrinters()
       setLabelPrinters(names)
       // Sugerir la que parezca de etiquetas, sin guardarla hasta que se imprima.
-      setLabelPrinter((cur) => cur || names.find((n) => /aiyin|ayin|label|etiqueta|zebra|xprinter/i.test(n)) || '')
+      setLabelPrinter((cur) => cur || names.find((n) => LABEL_PRINTER_PATTERN.test(n)) || '')
     } catch {
       setLabelPrinters([])
     }
@@ -285,10 +303,20 @@ export default function Inventory() {
   async function handlePrintLabels() {
     const body = labelRequestBody()
     if (!body) return
-    if (!labelPrinter) { notify('Elige la impresora de etiquetas', 'error'); return }
-    setLabelPrinterName(labelPrinter)
     setLabelLoading(true)
     try {
+      let printer
+      try {
+        printer = await resolveLabelPrinter()
+      } catch {
+        throw new Error('No se pudo conectar con QZ Tray en esta computadora. Usa "Descargar PDF".')
+      }
+      if (!printer) {
+        throw new Error(isSuperAdmin
+          ? 'Elige la impresora de etiquetas'
+          : 'No hay impresora de etiquetas configurada en esta computadora. Pide al administrador del portal que la configure, o usa "Descargar PDF".')
+      }
+      setLabelPrinterName(printer)
       const pdf = (await getBarcodeLabelsPdf(body)).data
       const [widthMm, heightMm] = LABEL_SIZE.split('x').map(Number)
       await printLabelsPdf(pdf, { widthMm, heightMm })
@@ -1530,8 +1558,9 @@ export default function Inventory() {
             </p>
             <label className="text-xs font-medium text-gray-600">{labelModal.product ? 'Cantidad de etiquetas' : 'Etiquetas por producto'}</label>
             <input className="input" type="number" min="1" max="500" value={labelCopies} onChange={(e) => setLabelCopies(e.target.value)} />
-            {/* Impresora de etiquetas: se elige una vez por computadora y se recuerda. */}
-            {choosingPrinter ? (
+            {/* Impresora de etiquetas: solo SUPER_ADMIN la ve y la elige (una vez por
+                computadora, se recuerda); para los demás no se muestra. */}
+            {!isSuperAdmin ? null : choosingPrinter ? (
               <div className="mt-3">
                 <label className="text-xs font-medium text-gray-600">Impresora de etiquetas</label>
                 {labelPrinters === null ? (
@@ -1554,7 +1583,7 @@ export default function Inventory() {
             <div className="flex flex-wrap gap-2 justify-end pt-4">
               <button type="button" className="btn-secondary" disabled={labelLoading} onClick={() => setLabelModal(null)}>Cancelar</button>
               <button type="button" className="btn-secondary" disabled={labelLoading} onClick={handleDownloadLabels}>Descargar PDF</button>
-              <button type="button" className="btn-primary" disabled={labelLoading || !labelPrinter} onClick={handlePrintLabels}>
+              <button type="button" className="btn-primary" disabled={labelLoading || (isSuperAdmin && !labelPrinter)} onClick={handlePrintLabels}>
                 {labelLoading ? 'Imprimiendo…' : 'Imprimir'}
               </button>
             </div>

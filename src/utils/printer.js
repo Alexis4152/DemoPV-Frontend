@@ -196,7 +196,7 @@ export async function printLabelsPdf(pdfBlob, { widthMm, heightMm }) {
     await qz.print(config, data)
   } catch (err) {
     throw new Error(
-      `No se pudieron imprimir las etiquetas (¿está encendida y conectada la impresora "${printer}"?): ${err?.message || err}`
+      `No se pudieron imprimir las etiquetas (¿está encendida y conectada la impresora de etiquetas?): ${err?.message || err}`
     )
   }
 }

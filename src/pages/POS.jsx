@@ -281,6 +281,13 @@ export default function POS() {
       setQuery('')
       setResults([])
     }
+    // En la vista "Códigos" el catálogo ocupa la pantalla: al agregar se cierra para que
+    // se vea el desglose de la venta. Sin regresar el foco al buscador, porque su onFocus
+    // lo volvería a abrir; el lector global sigue funcionando sin foco en el buscador.
+    if (viewMode === 'codes') {
+      setCatalogVisible(false)
+      return
+    }
     if (refocus) searchInputRef.current?.focus()
   }
 
