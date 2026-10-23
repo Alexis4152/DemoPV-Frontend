@@ -132,3 +132,71 @@ export async function printSaleTicket(saleId) {
     )
   }
 }
+
+// ── Etiquetas de código de barras ─────────────────────────────────────────────────────
+//
+// Impresora de etiquetas (ej. AiYin AE240-bt), elegida una vez por computadora y guardada
+// aparte de la de tickets: la de tickets es la predeterminada de Windows (o la configurada
+// arriba), y mandarle el PDF de etiquetas — o los comandos ESC/POS del ticket a la de
+// etiquetas — imprimiría basura.
+
+const LABEL_PRINTER_KEY = 'pos_label_printer_name'
+
+export function getLabelPrinterName() {
+  try {
+    return localStorage.getItem(LABEL_PRINTER_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function setLabelPrinterName(name) {
+  try {
+    if (name) localStorage.setItem(LABEL_PRINTER_KEY, name)
+    else localStorage.removeItem(LABEL_PRINTER_KEY)
+  } catch {
+    // localStorage no disponible; simplemente no se recuerda la preferencia
+  }
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',')[1])
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })
+}
+
+/**
+ * Manda el PDF de etiquetas directo a la impresora de etiquetas vía QZ Tray, sin abrir
+ * el visor de PDF. Cada página del PDF ya mide lo mismo que una etiqueta, así que se
+ * imprime a tamaño real (sin escalar).
+ *
+ * @param {Blob} pdfBlob PDF generado por el backend (`getBarcodeLabelsPdf`).
+ * @param {{ widthMm: number, heightMm: number }} size Tamaño de la etiqueta.
+ * @throws {Error} con un mensaje en español listo para mostrar, si no hay impresora de
+ *   etiquetas elegida, QZ Tray no está disponible o la impresión falla.
+ */
+export async function printLabelsPdf(pdfBlob, { widthMm, heightMm }) {
+  const printer = getLabelPrinterName()
+  if (!printer) throw new Error('Elige primero la impresora de etiquetas.')
+
+  await ensureConnected()
+  const config = qz.configs.create(printer, {
+    size: { width: widthMm, height: heightMm },
+    units: 'mm',
+    margins: 0,
+    scaleContent: false,
+    colorType: 'blackwhite',
+  })
+  const data = [{ type: 'pixel', format: 'pdf', flavor: 'base64', data: await blobToBase64(pdfBlob) }]
+
+  try {
+    await qz.print(config, data)
+  } catch (err) {
+    throw new Error(
+      `No se pudieron imprimir las etiquetas (¿está encendida y conectada la impresora "${printer}"?): ${err?.message || err}`
+    )
+  }
+}
