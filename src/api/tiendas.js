@@ -105,3 +105,16 @@ export const uploadTiendaLogo = (id, file) => {
  * @returns {Promise} Respuesta de axios confirmando la eliminación.
  */
 export const removeTiendaLogo = (id) => api.delete(`/tiendas/${id}/logo`)
+
+/**
+ * Borra una tienda de forma PERMANENTE junto con absolutamente todo lo relacionado
+ * (usuarios, productos, ventas, apartados, cortes de caja, materia prima...) — exclusivo de
+ * SUPER_ADMIN. A diferencia de `getTiendas`/baja lógica, esto NO es reversible: no hay
+ * respaldo ni "deshacer". El backend exige `confirmedName` exactamente igual al nombre real
+ * de la tienda (ver `TiendaPurgeService`), como segunda confirmación además de cualquier
+ * diálogo que ya haya mostrado el frontend.
+ * @param {number|string} id Id de la tienda a borrar.
+ * @param {string} confirmedName Nombre exacto de la tienda, escrito por quien confirma.
+ * @returns {Promise} Respuesta de axios confirmando el borrado.
+ */
+export const purgeTienda = (id, confirmedName) => api.post(`/tiendas/${id}/purge`, { confirmedName })

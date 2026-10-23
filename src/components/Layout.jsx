@@ -147,7 +147,7 @@ export default function Layout({ children }) {
             <>
               <div className="flex items-center gap-3">
                 <img src={sidebarLogo} alt={user?.tienda?.name || 'Nexora Systems'} className="w-11 h-11 rounded-full shrink-0 object-cover shadow-[0_0_12px_rgba(43,132,245,0.5)]" />
-                <h1 className="text-base font-bold text-white leading-tight">{user?.tienda?.name || 'Punto de Venta Demo'}</h1>
+                <h1 className="text-base font-bold text-white leading-tight">{user?.tienda?.name || 'Punto de Venta'}</h1>
               </div>
               <p className="text-xs text-purple-300/70 mt-2 whitespace-nowrap">{user?.name}</p>
               {/* Solo SUPER_ADMIN/SUPERVISOR: recuerda que "su" tienda de arriba es la que
@@ -301,7 +301,7 @@ export default function Layout({ children }) {
         <header className="lg:hidden flex items-center gap-3 bg-white border-b border-gray-200 px-4 py-3 shrink-0">
           <button onClick={() => setMobileOpen(true)} className="p-2 -ml-2 text-gray-600" aria-label="Abrir menú">☰</button>
           <img src={sidebarLogo} alt={user?.tienda?.name || 'Nexora Systems'} className="w-8 h-8 rounded-full object-cover" />
-          <span className="font-semibold text-gray-800 truncate">{user?.tienda?.name || 'Punto de Venta Demo'}</span>
+          <span className="font-semibold text-gray-800 truncate">{user?.tienda?.name || 'Punto de Venta'}</span>
         </header>
         <main className="flex-1 overflow-y-auto flex flex-col">
           <div className="p-4 sm:p-6 lg:p-8 flex-1">{children}</div>

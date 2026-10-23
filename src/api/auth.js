@@ -58,3 +58,11 @@ export const resetPassword = (token, newPassword) => api.post('/auth/reset-passw
  * @returns {Promise} Respuesta de axios confirmando el cambio.
  */
 export const changePassword = (currentPassword, newPassword) => api.post('/auth/change-password', { currentPassword, newPassword })
+
+/**
+ * Registra la aceptación de los Términos y condiciones y del Aviso de privacidad del
+ * usuario autenticado — lo que usa la pantalla obligatoria de su primer login
+ * (`user.mustAcceptLegalTerms`).
+ * @returns {Promise} Respuesta de axios confirmando el registro.
+ */
+export const acceptLegalTerms = () => api.post('/auth/accept-legal-terms', { acceptTerms: true, acceptPrivacyNotice: true })

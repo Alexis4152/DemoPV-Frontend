@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getSalesSummary } from '../api/reports'
-import { getOpenCashCut } from '../api/cashCuts'
+import { getOpenCashCutForDashboard } from '../api/cashCuts'
 import { searchProducts } from '../api/products'
 import { getApartadosPendingCount } from '../api/apartados'
 import { useAuth } from '../context/AuthContext'
@@ -140,7 +140,7 @@ export default function Dashboard() {
 
     // Corte de caja abierto (si existe) en este momento, para el indicador "Corte de caja".
     if (canCashCuts) {
-      getOpenCashCut()
+      getOpenCashCutForDashboard()
         .then((r) => setCashCut(r.data.data))
         .catch(() => {})
     }
@@ -162,7 +162,19 @@ export default function Dashboard() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Inicio</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">Inicio</h2>
+        {/* Acceso directo al escaparate público, igual que el botón "Abrir tienda en línea"
+            de Apartados.jsx/StoreInfo.jsx — arriba a la derecha de la página. */}
+        {user?.tienda?.apartadosEnabled && user?.tienda?.publicSlug && (
+          <a
+            href={`/apartar/${user.tienda.publicSlug}`} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-sm text-purple-600 hover:text-purple-800 font-medium"
+          >
+            🌐 Tienda en línea ↗
+          </a>
+        )}
+      </div>
 
       {hasStats && (
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-8">
@@ -226,22 +238,24 @@ export default function Dashboard() {
         </Link>
         )}
         {canApartados && (
-        <Link to="/apartados?status=PENDING" className="card hover:shadow-md transition-shadow flex items-center gap-4 cursor-pointer">
-          <span className="relative text-3xl">
-            🛍️
-            {pendingApartados > 0 && (
-              <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[10px] leading-none rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-0.5">
-                {pendingApartados > 9 ? '9+' : pendingApartados}
-              </span>
-            )}
-          </span>
-          <div>
-            <p className="font-semibold text-gray-900">Apartados</p>
-            <p className={`text-sm ${pendingApartados > 0 ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
-              {pendingApartados} pendiente{pendingApartados === 1 ? '' : 's'}
-            </p>
-          </div>
-        </Link>
+        <div className="card hover:shadow-md transition-shadow">
+          <Link to="/apartados?status=PENDING" className="flex items-center gap-4 cursor-pointer">
+            <span className="relative text-3xl">
+              🛍️
+              {pendingApartados > 0 && (
+                <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[10px] leading-none rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-0.5">
+                  {pendingApartados > 9 ? '9+' : pendingApartados}
+                </span>
+              )}
+            </span>
+            <div>
+              <p className="font-semibold text-gray-900">Apartados</p>
+              <p className={`text-sm ${pendingApartados > 0 ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+                {pendingApartados} pendiente{pendingApartados === 1 ? '' : 's'}
+              </p>
+            </div>
+          </Link>
+        </div>
         )}
         {canReports && (
         <Link to="/reports" className="card hover:shadow-md transition-shadow flex items-center gap-4 cursor-pointer">

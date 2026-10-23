@@ -491,9 +491,9 @@ export default function Users() {
                 {fieldErrors.email && <p className="text-red-600 text-xs mt-1">{fieldErrors.email}</p>}</div>
               <div><label htmlFor="user-phone" className="text-xs font-medium text-gray-600">Teléfono (opcional)</label>
                 <input
-                  id="user-phone" className="input" type="tel" inputMode="numeric" autoComplete="off" placeholder="10 dígitos"
+                  id="user-phone" className="input" type="tel" inputMode="numeric" maxLength={10} autoComplete="off" placeholder="10 dígitos"
                   value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/[^\d\s-]/g, '').slice(0, 14) })}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
                 />
                 {fieldErrors.phone && <p className="text-red-600 text-xs mt-1">{fieldErrors.phone}</p>}
                 <p className="text-xs text-gray-400 mt-1">Sirve para iniciar sesión con el teléfono en lugar del correo, con la misma contraseña.</p></div>

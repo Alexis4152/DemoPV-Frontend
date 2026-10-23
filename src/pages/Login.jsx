@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import PasswordInput from '../components/PasswordInput'
 import { applyDefaultBrand } from '../utils/theme'
+import PublicFooter from '../components/PublicFooter'
 import logo from '../assets/logo.png'
 
 /**
@@ -65,18 +66,19 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#03050c] via-[#050b18] to-[#0d1b3d] flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-[#03050c] via-[#050b18] to-[#0d1b3d] flex flex-col relative overflow-hidden">
       <img
         src={logo}
         alt=""
         aria-hidden="true"
-        className="pointer-events-none select-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-w-none opacity-[0.05]"
+        className="pointer-events-none select-none fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-w-none opacity-[0.05]"
       />
+      <div className="flex-1 flex items-center justify-center p-4">
       <div className="flex flex-col items-center w-full max-w-md relative z-10">
         <div className="bg-white rounded-2xl shadow-2xl shadow-[#155dea]/30 w-full p-6 sm:p-8">
           <div className="text-center mb-8">
             <img src={logo} alt="Nexora Systems" className="w-24 h-24 rounded-full mx-auto mb-3 shadow-[0_0_24px_rgba(43,132,245,0.5)]" />
-            <h1 className="text-2xl font-bold text-gray-900">Punto de Venta Demo</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Punto de Venta</h1>
             <p className="text-gray-500 text-sm mt-1">Sistema de Punto de Venta</p>
           </div>
 
@@ -122,10 +124,9 @@ export default function Login() {
             </Link>
           </form>
         </div>
-        <Link to="/arco" className="mt-4 text-center text-xs text-gray-400 hover:text-gray-200 transition-colors">
-          ¿Quieres ejercer tus derechos ARCO sobre tus datos personales?
-        </Link>
       </div>
+      </div>
+      <PublicFooter dark />
     </div>
   )
 }

@@ -23,6 +23,15 @@ export const getCashCutCashiers = () => api.get('/cash-cuts/cashiers')
 export const getOpenCashCut = () => api.get('/cash-cuts/open')
 
 /**
+ * Igual que {@link getOpenCashCut}, pero pensado para el widget "Corte de caja" del
+ * Dashboard: si el usuario es SUPER_ADMIN/SUPERVISOR, responde con el corte abierto de
+ * la tienda sobre la que está actuando (ellos no abren cortes propios); para el resto de
+ * los roles es idéntico a {@link getOpenCashCut}.
+ * @returns {Promise} Respuesta de axios con el corte abierto relevante para el widget.
+ */
+export const getOpenCashCutForDashboard = () => api.get('/cash-cuts/open-for-dashboard')
+
+/**
  * Obtiene el corte de caja de HOY perteneciente al usuario (cajero) autenticado.
  * @returns {Promise} Respuesta de axios con el corte del día del usuario actual.
  */

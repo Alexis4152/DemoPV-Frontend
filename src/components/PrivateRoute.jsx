@@ -22,6 +22,10 @@ const ANY_ROLE_PLATFORM_ROUTES = ['/my-arco-requests']
  *    reseteó la suya, y todavía no la cambia — ver `ChangePasswordRequired.jsx`), redirige
  *    a `/change-password` sin importar qué otra cosa pidiera la ruta; se exceptúa esa
  *    misma ruta para no crear un loop de redirects.
+ * 3.5. Si `user.mustAcceptLegalTerms` (todavía no acepta los Términos y condiciones y/o el
+ *    Aviso de privacidad vigentes — ver `AcceptLegalTerms.jsx`), redirige a
+ *    `/accept-legal-terms`, con la misma excepción de no loopear esa ruta. Va DESPUÉS del
+ *    cambio de contraseña (primero resolver que pueda entrar con una contraseña propia).
  * 4. Si es SUPER_ADMIN o SUPERVISOR y todavía no eligió con cuál tienda actuar
  *    (`user.tienda` sigue `null` — ver `AuthContext#selectTienda`), redirige a
  *    `/select-tienda`, con la misma excepción de no crear un loop en esa propia ruta. Va
@@ -58,6 +62,9 @@ export default function PrivateRoute({ children, section, adminOnly, superAdminO
   if (!user) return <Navigate to="/login" replace />
   if (user.mustChangePassword && location.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />
+  }
+  if (user.mustAcceptLegalTerms && location.pathname !== '/accept-legal-terms') {
+    return <Navigate to="/accept-legal-terms" replace />
   }
   const onExemptPlatformRoute =
     (isSuperAdmin && SUPER_ADMIN_ONLY_PLATFORM_ROUTES.includes(location.pathname)) ||

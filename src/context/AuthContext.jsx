@@ -213,6 +213,16 @@ export function AuthProvider({ children }) {
     setUser(merged)
   }
 
+  // Mismo patrón que clearMustChangePassword, pero para la pantalla obligatoria de
+  // aceptación de Términos/Aviso de privacidad — ver AcceptLegalTerms.jsx.
+  /** Marca en el usuario en sesión que ya aceptó los Términos y el Aviso de privacidad. */
+  function clearMustAcceptLegalTerms() {
+    if (!user) return
+    const merged = { ...user, mustAcceptLegalTerms: false }
+    localStorage.setItem('pos_user', JSON.stringify(merged))
+    setUser(merged)
+  }
+
   // Reemplaza `user.tienda` por completo (no fusiona campos como `patchTienda`, que es
   // para editar la tienda ACTUAL) — usado únicamente por SelectTienda.jsx cuando un
   // SUPER_ADMIN elige con cuál tienda actuar. A partir de aquí el resto de la app ve esa
@@ -252,7 +262,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, login, logout, isAdmin, isSuperAdmin, isSupervisor, isPlatformActor, hasSection, hasAction, loading,
-      patchTienda, clearMustChangePassword, selectTienda, clearSelectedTienda,
+      patchTienda, clearMustChangePassword, clearMustAcceptLegalTerms, selectTienda, clearSelectedTienda,
     }}>
       {children}
     </AuthContext.Provider>
@@ -261,6 +271,6 @@ export function AuthProvider({ children }) {
 
 /** Hook de acceso al contexto de autenticación (`user`, `login`, `logout`, `isAdmin`,
  *  `isSuperAdmin`, `isSupervisor`, `isPlatformActor`, `hasSection`, `hasAction`,
- *  `patchTienda`, `clearMustChangePassword`, `selectTienda`, `clearSelectedTienda`,
- *  `loading`). */
+ *  `patchTienda`, `clearMustChangePassword`, `clearMustAcceptLegalTerms`, `selectTienda`,
+ *  `clearSelectedTienda`, `loading`). */
 export const useAuth = () => useContext(AuthContext)

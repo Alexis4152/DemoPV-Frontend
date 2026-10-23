@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { getTiendas, getTiendaPlan, createTienda, updateTiendaName, uploadTiendaLogo, removeTiendaLogo } from '../api/tiendas'
+import { getTiendas, getTiendaPlan, createTienda, updateTiendaName, uploadTiendaLogo, removeTiendaLogo, purgeTienda } from '../api/tiendas'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
@@ -47,6 +47,7 @@ export default function SelectTienda() {
 
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState(null) // tienda siendo editada, o null
+  const [purging, setPurging] = useState(null) // tienda siendo borrada permanentemente, o null (solo SUPER_ADMIN)
   // Plan del SUPERVISOR (máximo de tiendas que puede tener); null para SUPER_ADMIN.
   const [plan, setPlan] = useState(null)
 
@@ -83,6 +84,11 @@ export default function SelectTienda() {
     if (user?.tienda?.id === tienda.id) {
       patchTienda({ name: tienda.name, logoPath: tienda.logoPath })
     }
+  }
+
+  /** Quita del listado local una tienda recién borrada permanentemente (ver `purgeTienda`). */
+  function removeLocal(tiendaId) {
+    setTiendas((list) => list.filter((t) => t.id !== tiendaId))
   }
 
   const hasCurrentTienda = !!user?.tienda
@@ -155,6 +161,19 @@ export default function SelectTienda() {
                   >
                     ✏️
                   </button>
+                  {/* Borrado permanente: exclusivo de SUPER_ADMIN (ni siquiera SUPERVISOR),
+                      ver TiendaPurgeService. La baja lógica normal sigue sin cambios: no hay
+                      botón para ella aquí, se maneja desde Datos de la tienda si aplica. */}
+                  {isSuperAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setPurging(t)}
+                      title="Borrar tienda permanentemente"
+                      className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-red-600 hover:bg-white"
+                    >
+                      🗑️
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -197,6 +216,86 @@ export default function SelectTienda() {
 
       {showCreate && <CreateTiendaModal onClose={() => setShowCreate(false)} onCreated={(t) => { upsertLocal(t); setShowCreate(false); loadPlan() }} />}
       {editing && <EditTiendaModal tienda={editing} onClose={() => setEditing(null)} onSaved={(t) => { upsertLocal(t); setEditing(null) }} />}
+      {purging && <PurgeTiendaModal tienda={purging} onClose={() => setPurging(null)} onPurged={(id) => { removeLocal(id); setPurging(null); loadPlan() }} />}
+    </div>
+  )
+}
+
+/**
+ * Modal de borrado PERMANENTE de una tienda (solo SUPER_ADMIN) — con doble confirmación a
+ * propósito, dado que es irreversible y borra más de 20 tablas de datos relacionados (ver
+ * `TiendaPurgeService`): primero hay que escribir aquí el nombre EXACTO de la tienda (mismo
+ * patrón que GitHub al borrar un repositorio), y solo entonces se dispara un segundo
+ * `confirmDialog` ("¿estás absolutamente seguro?") antes de llamar al backend.
+ */
+function PurgeTiendaModal({ tienda, onClose, onPurged }) {
+  const { notify, confirmDialog } = useNotify()
+  const [typedName, setTypedName] = useState('')
+  const [purging, setPurging] = useState(false)
+  const [error, setError] = useState('')
+  useEscapeClose(!purging, onClose)
+
+  const nameMatches = typedName.trim() === tienda.name
+
+  async function handlePurge() {
+    if (!nameMatches) return
+    const ok = await confirmDialog(
+      `¿Estás ABSOLUTAMENTE seguro de borrar "${tienda.name}" para siempre? Se perderán todos sus usuarios, productos, ventas, apartados, cortes de caja y todo lo demás. Esto NO se puede deshacer.`,
+      { title: 'Última confirmación', confirmText: 'Sí, borrar para siempre', danger: true },
+    )
+    if (!ok) return
+    setPurging(true)
+    setError('')
+    try {
+      await purgeTienda(tienda.id, typedName.trim())
+      notify(`"${tienda.name}" fue borrada permanentemente`, 'success')
+      onPurged(tienda.id)
+    } catch (err) {
+      setError(err.response?.data?.message || 'No se pudo borrar la tienda')
+      notify('Error al borrar la tienda', 'error')
+    } finally {
+      setPurging(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20" onClick={() => !purging && onClose()}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4 border-t-4 border-t-red-500"
+      >
+        <h2 className="text-lg font-bold text-red-700">⚠️ Borrar "{tienda.name}" para siempre</h2>
+        <p className="text-sm text-gray-600">
+          Esto borra <span className="font-semibold">permanentemente</span> esta tienda y TODO lo relacionado:
+          usuarios, productos, categorías, ventas, apartados, cortes de caja, cajas, materia prima, faltantes
+          y reembolsos. No hay respaldo ni forma de deshacerlo.
+        </p>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Escribe <span className="font-mono bg-gray-100 px-1 rounded">{tienda.name}</span> para confirmar
+          </label>
+          <input
+            type="text" className="input" value={typedName}
+            onChange={(e) => setTypedName(e.target.value)}
+            autoFocus
+            disabled={purging}
+          />
+        </div>
+
+        {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={purging}>Cancelar</button>
+          <button
+            type="button"
+            className="bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            onClick={handlePurge}
+            disabled={!nameMatches || purging}
+          >
+            {purging ? 'Borrando...' : 'Borrar permanentemente'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

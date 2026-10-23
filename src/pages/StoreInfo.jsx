@@ -524,7 +524,7 @@ export default function StoreInfo() {
                     disabled={!user?.tienda?.apartadosEnabled || !user?.tienda?.publicSlug}
                     title={user?.tienda?.apartadosEnabled && user?.tienda?.publicSlug ? 'Abrir la tienda pública en otra pestaña' : 'Guarda los cambios primero'}
                   >
-                    Abrir tienda ↗
+                    Abrir tienda en línea ↗
                   </button>
                 </div>
                 {fieldErrors.publicSlug && <p className="text-red-600 text-xs mt-1">{fieldErrors.publicSlug}</p>}

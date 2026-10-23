@@ -7,6 +7,7 @@ import Login from './pages/Login'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import ChangePasswordRequired from './pages/ChangePasswordRequired'
+import AcceptLegalTerms from './pages/AcceptLegalTerms'
 import SelectTienda from './pages/SelectTienda'
 import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
@@ -24,8 +25,13 @@ import MailSettings from './pages/MailSettings'
 import Apartados from './pages/Apartados'
 import PublicApartar from './pages/PublicApartar'
 import ArcoRequest from './pages/ArcoRequest'
+import ArcoTracking from './pages/ArcoTracking'
 import ArcoRequests from './pages/ArcoRequests'
 import MyArcoRequests from './pages/MyArcoRequests'
+import PrivacyHub from './pages/PrivacyHub'
+import PrivacyNotice from './pages/PrivacyNotice'
+import TermsAndConditions from './pages/TermsAndConditions'
+import DeleteAccount from './pages/DeleteAccount'
 
 /**
  * Árbol de rutas de la aplicación.
@@ -37,7 +43,9 @@ import MyArcoRequests from './pages/MyArcoRequests'
  * SÍ exige sesión (usa `PrivateRoute` sin `section`) pero vive fuera del `Layout`, sin
  * sidebar — es la pantalla obligatoria que ve un usuario con `mustChangePassword` (dado de
  * alta con contraseña temporal); `PrivateRoute` la usa como destino de rebote sin importar
- * qué otra ruta se haya pedido (ver su propio JSDoc). `/select-tienda` es el mismo caso
+ * qué otra ruta se haya pedido (ver su propio JSDoc). `/accept-legal-terms` es análoga,
+ * para la aceptación obligatoria de Términos/Aviso de privacidad en el primer login
+ * (`user.mustAcceptLegalTerms`). `/select-tienda` es el mismo caso
  * pero para SUPER_ADMIN sin ninguna tienda elegida (`user.tienda` sigue `null` — ver
  * `AuthContext#selectTienda`): también exige sesión, también vive fuera del `Layout`, y
  * `PrivateRoute` también rebota aquí desde cualquier otra ruta mientras no haya elegido
@@ -61,7 +69,13 @@ function AppRoutes() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/apartar/:slug" element={<PublicApartar />} />
       <Route path="/arco" element={<ArcoRequest />} />
+      <Route path="/arco/seguimiento/:token" element={<ArcoTracking />} />
+      <Route path="/privacidad" element={<PrivacyHub />} />
+      <Route path="/aviso-de-privacidad" element={<PrivacyNotice />} />
+      <Route path="/terminos" element={<TermsAndConditions />} />
+      <Route path="/eliminar-cuenta" element={<DeleteAccount />} />
       <Route path="/change-password" element={<PrivateRoute><ChangePasswordRequired /></PrivateRoute>} />
+      <Route path="/accept-legal-terms" element={<PrivateRoute><AcceptLegalTerms /></PrivateRoute>} />
       <Route path="/select-tienda" element={<PrivateRoute><SelectTienda /></PrivateRoute>} />
       <Route
         path="/*"

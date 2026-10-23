@@ -201,7 +201,7 @@ export default function Sales() {
           <tbody className="divide-y divide-gray-50">
             {sales.map((s) => (
               <tr key={s.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-gray-400 font-mono text-xs">#{s.id}</td>
+                <td className="px-4 py-3 text-gray-400 font-mono text-xs">#{s.folio}</td>
                 <td className="px-4 py-3 text-gray-600">{fmtDate(s.createdAt)}</td>
                 <td className="px-4 py-3 text-gray-700">{s.customerName ?? '—'}</td>
                 <td className="px-4 py-3 text-gray-600">{s.user?.name ?? '—'}</td>
@@ -274,7 +274,7 @@ export default function Sales() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-4">
               <div>
-                <h3 className="text-lg font-bold">Venta #{detail.id}</h3>
+                <h3 className="text-lg font-bold">Venta #{detail.folio}</h3>
                 <p className="text-sm text-gray-500">{fmtDate(detail.createdAt)}</p>
               </div>
               <button className="text-gray-400 hover:text-gray-600 text-xl" onClick={() => setDetail(null)}>✕</button>

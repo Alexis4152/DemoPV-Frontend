@@ -318,7 +318,7 @@ export default function Apartados() {
             className="btn-secondary text-sm whitespace-nowrap"
             title="Abrir la tienda pública de apartados en otra pestaña"
           >
-            Abrir tienda ↗
+            Abrir tienda en línea ↗
           </a>
         )}
       </div>
@@ -402,7 +402,7 @@ export default function Apartados() {
                         )}
                         {a.status === 'COMPLETED' && (
                           <>
-                            <span className="text-xs text-gray-400">Venta #{a.saleId}</span>
+                            <span className="text-xs text-gray-400">Venta #{a.saleFolio}</span>
                             <IconButton icon={PrinterIcon} label={printing ? 'Imprimiendo…' : 'Reimprimir'} variant="purple" disabled={printing} onClick={() => printTicket(a.saleId)} />
                           </>
                         )}

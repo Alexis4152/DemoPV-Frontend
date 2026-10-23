@@ -5,6 +5,7 @@ import { applyTiendaBrand } from '../utils/theme'
 import { resolveMediaUrl } from '../utils/media'
 import { useNotify } from '../context/NotifyContext'
 import useEscapeClose from '../hooks/useEscapeClose'
+import PublicFooter from '../components/PublicFooter'
 import defaultLogo from '../assets/logo.png'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
@@ -375,7 +376,7 @@ export default function PublicApartar() {
     setLookupLoading(true)
     setLookupError('')
     try {
-      const res = await lookupPublicApartado(slug, { id: Number(lookupId), phone: lookupPhone })
+      const res = await lookupPublicApartado(slug, { folio: Number(lookupId), phone: lookupPhone })
       setLookupResult(res.data.data)
       setLookupVerifiedPhone(lookupPhone)
     } catch (err) {
@@ -435,7 +436,7 @@ export default function PublicApartar() {
     if (!(await confirmDialog('¿Seguro que quieres cancelar tu apartado?', { confirmText: 'Sí, cancelar' }))) return
     setSelfActionLoading(true)
     try {
-      const res = await selfCancelPublicApartado(slug, { id: lookupResult.id, phone: lookupVerifiedPhone })
+      const res = await selfCancelPublicApartado(slug, { folio: lookupResult.folio, phone: lookupVerifiedPhone })
       setLookupResult(res.data.data)
       notify('Tu apartado fue cancelado', 'success')
     } catch (err) {
@@ -460,7 +461,7 @@ export default function PublicApartar() {
     ))) return
     setSelfActionLoading(true)
     try {
-      await selfCancelPublicApartado(slug, { id: lookupResult.id, phone: lookupVerifiedPhone })
+      await selfCancelPublicApartado(slug, { folio: lookupResult.folio, phone: lookupVerifiedPhone })
       const items = lookupResult.items
         .filter((i) => i.productId != null)
         .map((i) => ({ productId: i.productId, quantity: Number(i.quantity), name: i.productName }))
@@ -497,7 +498,7 @@ export default function PublicApartar() {
         <div className="card max-w-md w-full text-center border-t-2 border-t-purple-400">
           <div className="text-5xl mb-4">✅</div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">¡Apartado registrado!</h2>
-          <p className="text-gray-500 text-sm mb-4">Folio #{success.id}</p>
+          <p className="text-gray-500 text-sm mb-4">Folio #{success.folio}</p>
           <div className="text-left bg-gray-50 border border-gray-100 rounded-lg p-4 mb-4 text-xs text-gray-600 space-y-2">
             <p className="font-semibold text-gray-800 text-sm">¿Qué sigue?</p>
             <p>Tu solicitud queda <span className="font-medium">pendiente de revisión</span>.</p>
@@ -754,7 +755,7 @@ export default function PublicApartar() {
                         onClick={() => { setLookupResult(a); setLookupVerifiedPhone(phoneOnlyPhone) }}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="font-semibold text-sm text-gray-900">Folio #{a.id}</span>
+                          <span className="font-semibold text-sm text-gray-900">Folio #{a.folio}</span>
                           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${STATUS_INFO[a.status]?.color}`}>
                             {STATUS_INFO[a.status]?.icon} {STATUS_INFO[a.status]?.label}
                           </span>
@@ -782,7 +783,7 @@ export default function PublicApartar() {
           {lookupResult && (
             <div className="card border-t-2 border-t-purple-400">
               <div className="flex items-start justify-between gap-2 mb-1">
-                <h3 className="font-bold text-purple-800">Folio #{lookupResult.id}</h3>
+                <h3 className="font-bold text-purple-800">Folio #{lookupResult.folio}</h3>
                 <span className={`text-xs font-semibold px-2 py-1 rounded-full whitespace-nowrap ${STATUS_INFO[lookupResult.status]?.color}`}>
                   {STATUS_INFO[lookupResult.status]?.icon} {STATUS_INFO[lookupResult.status]?.label}
                 </span>
@@ -965,6 +966,8 @@ export default function PublicApartar() {
 
       </div>
       )}
+
+      <PublicFooter tiendaName={tienda?.name} />
 
       {/* Detalle de producto — galería completa (si tiene más de una foto) + descripción
           sin truncar, algo que antes no existía: la tarjeta del catálogo solo mostraba la
