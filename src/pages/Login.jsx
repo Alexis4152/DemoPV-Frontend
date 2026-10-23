@@ -46,7 +46,9 @@ export default function Login() {
     let cancelled = false
     function load() {
       getPublicMaintenanceWindow()
-        .then((r) => { if (!cancelled) setMaintenanceWindow(r.data.data) })
+        // `?? null`: el backend omite la clave `data` del JSON cuando no hay ninguna
+        // ventana (en vez de mandar `"data":null`) — ver el mismo comentario en Maintenance.jsx.
+        .then((r) => { if (!cancelled) setMaintenanceWindow(r.data.data ?? null) })
         .catch(() => {})
     }
     load()

@@ -27,8 +27,15 @@ export default function Maintenance() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  // `?? null`: el backend omite por completo la clave `data` del JSON cuando es null (en
+  // vez de mandar `"data":null`), así que `r.data.data` llegaría como `undefined` — el
+  // mismo valor que usa el estado inicial para decir "todavía cargando". Sin este fallback,
+  // una tienda sin ninguna ventana programada se quedaba pegada en "Cargando..." para
+  // siempre, porque `current` nunca pasaba de `undefined` a `null`.
   function load() {
-    getCurrentMaintenanceWindow().then((r) => setCurrent(r.data.data))
+    getCurrentMaintenanceWindow()
+      .then((r) => setCurrent(r.data.data ?? null))
+      .catch(() => setCurrent(null))
   }
 
   useEffect(() => { load() }, [])
