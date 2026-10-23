@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { changePassword } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
+import { EyeIcon, EyeOffIcon } from '../components/icons'
 import logo from '../assets/logo.png'
 
 /**
@@ -27,6 +28,12 @@ export default function ChangePasswordRequired() {
   const [error, setError] = useState('')
   // Solo al dar clic en "Cambiar contraseña y continuar" — mismo patrón que Login/ResetPassword.
   const [fieldErrors, setFieldErrors] = useState({})
+  // Mostrar/ocultar cada campo de contraseña por separado — el usuario está copiando la
+  // temporal del correo y escribiendo una nueva a ciegas, sin poder verificar que no se
+  // equivocó, a diferencia del resto de la app que si tiene este "ojito".
+  const [showCurrent, setShowCurrent] = useState(false)
+  const [showNew, setShowNew] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -82,35 +89,68 @@ export default function ChangePasswordRequired() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña temporal</label>
             {/* Sin required/minLength nativos a propósito (ver handleSubmit). */}
-            <input
-              type="password"
-              className="input"
-              placeholder="La que recibiste por correo"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-            />
+            <div className="relative">
+              <input
+                type={showCurrent ? 'text' : 'password'}
+                className="input pr-10"
+                placeholder="La que recibiste por correo"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setShowCurrent((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                aria-label={showCurrent ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              >
+                {showCurrent ? <EyeOffIcon className="w-5 h-5" /> : <EyeIcon className="w-5 h-5" />}
+              </button>
+            </div>
             {fieldErrors.currentPassword && <p className="text-red-600 text-xs mt-1">{fieldErrors.currentPassword}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Nueva contraseña</label>
-            <input
-              type="password"
-              className="input"
-              placeholder="••••••••"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-            />
+            <div className="relative">
+              <input
+                type={showNew ? 'text' : 'password'}
+                className="input pr-10"
+                placeholder="••••••••"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setShowNew((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                aria-label={showNew ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              >
+                {showNew ? <EyeOffIcon className="w-5 h-5" /> : <EyeIcon className="w-5 h-5" />}
+              </button>
+            </div>
             {fieldErrors.newPassword && <p className="text-red-600 text-xs mt-1">{fieldErrors.newPassword}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar contraseña</label>
-            <input
-              type="password"
-              className="input"
-              placeholder="••••••••"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-            />
+            <div className="relative">
+              <input
+                type={showConfirm ? 'text' : 'password'}
+                className="input pr-10"
+                placeholder="••••••••"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setShowConfirm((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                aria-label={showConfirm ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              >
+                {showConfirm ? <EyeOffIcon className="w-5 h-5" /> : <EyeIcon className="w-5 h-5" />}
+              </button>
+            </div>
             {fieldErrors.confirmPassword && <p className="text-red-600 text-xs mt-1">{fieldErrors.confirmPassword}</p>}
           </div>
 

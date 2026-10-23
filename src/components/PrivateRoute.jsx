@@ -1,5 +1,18 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { SECTIONS } from '../config/sections'
+
+/**
+ * Primera ruta de {@link SECTIONS} (mismo orden que el sidebar) que el usuario sí tiene
+ * habilitada — reemplazo seguro del antiguo "redirige a `/`" a secas: `/` es la ruta de
+ * DASHBOARD, así que si a alguien le quitan justo esa sección (ver `Roles.jsx`), mandarlo
+ * siempre a `/` lo regresaba a una pantalla que tampoco puede ver → el mismo chequeo la
+ * rechazaba otra vez → loop infinito (pantalla en blanco, con sidebar sí renderizado porque
+ * eso lo pinta `Layout.jsx` sin pasar por este guard). `/my-arco-requests` como último
+ * recurso porque esa ruta no depende de ninguna `AppSection` (ver `ANY_ROLE_PLATFORM_ROUTES`
+ * abajo) — en teoría todo rol activo tiene mínimo una sección, pero por si acaso.
+ */
+const firstAccessibleRoute = (hasSection) => SECTIONS.find((s) => hasSection(s.code))?.to || '/my-arco-requests'
 
 // Pantallas de PLATAFORMA (no de una tienda en particular): se puede entrar directo, sin
 // elegir tienda primero — ver el chequeo 4 de abajo. SUPER_ADMIN_ONLY son las mismas rutas
@@ -54,16 +67,21 @@ const ANY_ROLE_PLATFORM_ROUTES = ['/my-arco-requests']
  *    cuando no hay tienda elegida). Si el usuario después navega a algo sí ligado a una
  *    tienda, este mismo chequeo lo manda a `/select-tienda` en ese momento, normal.
  * 5. Si se pasa `section` (código de `AppSection`) y el usuario no la tiene habilitada
- *    (`hasSection`), redirige a `/`.
- * 6. Si se pasa `adminOnly` y el usuario no es `ADMIN`, redirige a `/`. Se usa para
- *    pantallas de configuración de tienda (Apariencia, Datos de la tienda) que no son una
- *    `AppSection` del catálogo RBAC sino un nivel de acceso aparte reservado al
- *    administrador de esa tienda. `isAdmin` (ver `AuthContext`) ya incluye a SUPER_ADMIN/
- *    SUPERVISOR actuando sobre una tienda — cuentan igual que su ADMIN, sin caso especial aquí.
- * 7. Si se pasa `superAdminOnly` y el usuario no es `SUPER_ADMIN`, redirige a `/`. A
- *    diferencia de `adminOnly`, aquí SUPERVISOR NO cuenta: se usa para infraestructura de
- *    la plataforma entera (ej. la cuenta SMTP con la que sale todo correo del sistema),
- *    no algo por-tienda que un Supervisor administre.
+ *    (`hasSection`), redirige a {@link firstAccessibleRoute} — NO a `/` directo: si la
+ *    sección que le falta es justo DASHBOARD (la de `/`), mandarlo ahí sería mandarlo de
+ *    vuelta a la misma pantalla que no puede ver, y este mismo chequeo lo volvería a
+ *    rechazar — loop infinito.
+ * 6. Si se pasa `adminOnly` y el usuario no es `ADMIN`, redirige a {@link firstAccessibleRoute}
+ *    (mismo motivo que el punto 5). Se usa para pantallas de configuración de tienda
+ *    (Apariencia, Datos de la tienda) que no son una `AppSection` del catálogo RBAC sino un
+ *    nivel de acceso aparte reservado al administrador de esa tienda. `isAdmin` (ver
+ *    `AuthContext`) ya incluye a SUPER_ADMIN/SUPERVISOR actuando sobre una tienda — cuentan
+ *    igual que su ADMIN, sin caso especial aquí.
+ * 7. Si se pasa `superAdminOnly` y el usuario no es `SUPER_ADMIN`, redirige a
+ *    {@link firstAccessibleRoute} (mismo motivo). A diferencia de `adminOnly`, aquí
+ *    SUPERVISOR NO cuenta: se usa para infraestructura de la plataforma entera (ej. la
+ *    cuenta SMTP con la que sale todo correo del sistema), no algo por-tienda que un
+ *    Supervisor administre.
  *
  * @param {{ children: import('react').ReactNode, section?: string, adminOnly?: boolean, superAdminOnly?: boolean }} props
  */
@@ -85,8 +103,8 @@ export default function PrivateRoute({ children, section, adminOnly, superAdminO
       && location.pathname !== '/select-tienda' && !onExemptPlatformRoute) {
     return <Navigate to="/select-tienda" replace />
   }
-  if (section && !hasSection(section)) return <Navigate to="/" replace />
-  if (adminOnly && !isAdmin) return <Navigate to="/" replace />
-  if (superAdminOnly && !isSuperAdmin) return <Navigate to="/" replace />
+  if (section && !hasSection(section)) return <Navigate to={firstAccessibleRoute(hasSection)} replace />
+  if (adminOnly && !isAdmin) return <Navigate to={firstAccessibleRoute(hasSection)} replace />
+  if (superAdminOnly && !isSuperAdmin) return <Navigate to={firstAccessibleRoute(hasSection)} replace />
   return children
 }

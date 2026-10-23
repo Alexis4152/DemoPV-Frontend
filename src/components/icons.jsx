@@ -52,6 +52,15 @@ export const EyeIcon = (props) => (
   </svg>
 )
 
+export const EyeOffIcon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c6 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19" />
+    <path d="M6.6 6.6C3.9 8.4 2 12 2 12s4 7 10 7a9.9 9.9 0 0 0 4.17-.94" />
+    <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+    <path d="M1 1l22 22" />
+  </svg>
+)
+
 export const XCircleIcon = (props) => (
   <svg {...base} {...props}>
     <circle cx="12" cy="12" r="9" />
