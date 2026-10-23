@@ -22,6 +22,7 @@ import Categories from './pages/Categories'
 import Appearance from './pages/Appearance'
 import StoreInfo from './pages/StoreInfo'
 import MailSettings from './pages/MailSettings'
+import Maintenance from './pages/Maintenance'
 import Apartados from './pages/Apartados'
 import PublicApartar from './pages/PublicApartar'
 import ArcoRequest from './pages/ArcoRequest'
@@ -97,6 +98,7 @@ function AppRoutes() {
                 <Route path="/appearance" element={<PrivateRoute adminOnly><Appearance /></PrivateRoute>} />
                 <Route path="/store-info" element={<PrivateRoute adminOnly><StoreInfo /></PrivateRoute>} />
                 <Route path="/mail-config" element={<PrivateRoute superAdminOnly><MailSettings /></PrivateRoute>} />
+                <Route path="/maintenance" element={<PrivateRoute superAdminOnly><Maintenance /></PrivateRoute>} />
                 <Route path="/arco-requests" element={<PrivateRoute superAdminOnly><ArcoRequests /></PrivateRoute>} />
                 <Route path="/my-arco-requests" element={<PrivateRoute><MyArcoRequests /></PrivateRoute>} />
                 <Route path="*" element={<Navigate to="/" replace />} />

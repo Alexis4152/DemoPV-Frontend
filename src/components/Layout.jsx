@@ -27,7 +27,7 @@ const navLinkClass = (collapsed) => ({ isActive }) =>
   }`
 
 // Rutas agrupadas bajo el submenú colapsable "Configuración" del sidebar.
-const CONFIG_ROUTES = ['/roles', '/categories', '/appearance', '/store-info', '/mail-config', '/arco-requests']
+const CONFIG_ROUTES = ['/roles', '/categories', '/appearance', '/store-info', '/mail-config', '/maintenance', '/arco-requests']
 
 /**
  * Shell visual de toda la app autenticada: arma el sidebar de navegación (logo de
@@ -126,6 +126,7 @@ export default function Layout({ children }) {
     isAdmin && { to: '/appearance', icon: '🎨', label: 'Apariencia' },
     isAdmin && { to: '/store-info', icon: '🏬', label: 'Datos de la tienda' },
     isSuperAdmin && { to: '/mail-config', icon: '✉️', label: 'Correo del sistema' },
+    isSuperAdmin && { to: '/maintenance', icon: '🛠️', label: 'Mantenimiento' },
     isSuperAdmin && { to: '/arco-requests', icon: '🛡️', label: 'Solicitudes ARCO', code: 'ARCO' },
   ].filter(Boolean)
   const configActive = CONFIG_ROUTES.includes(location.pathname)

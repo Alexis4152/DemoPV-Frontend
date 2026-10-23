@@ -4,7 +4,13 @@ import { useAuth } from '../context/AuthContext'
 import PasswordInput from '../components/PasswordInput'
 import { applyDefaultBrand } from '../utils/theme'
 import PublicFooter from '../components/PublicFooter'
+import { getPublicMaintenanceWindow } from '../api/maintenance'
+import { scheduledMaintenanceMessage, activeMaintenanceMessage } from '../utils/maintenanceMessages'
 import logo from '../assets/logo.png'
+
+// Cada cuánto se revisa si hay una ventana de mantenimiento nueva/que cambió de fase
+// (programada -> en curso -> terminada) mientras alguien se queda parado en esta pantalla.
+const MAINTENANCE_POLL_MS = 30000
 
 /**
  * Pantalla de login. Es la puerta de entrada a la app: no hay sesión ni tienda todavía,
@@ -24,11 +30,28 @@ export default function Login() {
   // que Usuarios/Roles/Categorías (no en vivo, ver el análisis de todos los módulos).
   const [fieldErrors, setFieldErrors] = useState({})
   const [loading, setLoading] = useState(false)
+  const [maintenanceWindow, setMaintenanceWindow] = useState(null)
 
   // El login siempre es azul Nexora fijo, sin importar el color que haya quedado
   // aplicado de una sesión anterior con una tienda con color propio.
   useEffect(() => {
     applyDefaultBrand()
+  }, [])
+
+  // Aviso de mantenimiento (ver Maintenance.jsx, de plataforma — se ve igual sin importar
+  // la tienda). Se revisa de nuevo cada MAINTENANCE_POLL_MS por si alguien se queda en esta
+  // pantalla el tiempo suficiente para que la ventana cambie de fase (programada -> en
+  // curso) o termine (el aviso debe desaparecer solo, sin recargar la página).
+  useEffect(() => {
+    let cancelled = false
+    function load() {
+      getPublicMaintenanceWindow()
+        .then((r) => { if (!cancelled) setMaintenanceWindow(r.data.data) })
+        .catch(() => {})
+    }
+    load()
+    const interval = setInterval(load, MAINTENANCE_POLL_MS)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
   /**
@@ -75,6 +98,17 @@ export default function Login() {
       />
       <div className="flex-1 flex items-center justify-center p-4">
       <div className="flex flex-col items-center w-full max-w-md relative z-10">
+        {maintenanceWindow && (
+          <div className={`w-full mb-4 rounded-xl px-4 py-3 text-sm text-center ${
+            maintenanceWindow.phase === 'ACTIVE'
+              ? 'bg-red-50 border border-red-200 text-red-700'
+              : 'bg-amber-50 border border-amber-200 text-amber-800'
+          }`}>
+            {maintenanceWindow.phase === 'ACTIVE'
+              ? activeMaintenanceMessage(maintenanceWindow.endAt)
+              : scheduledMaintenanceMessage(maintenanceWindow.startAt, maintenanceWindow.endAt)}
+          </div>
+        )}
         <div className="bg-white rounded-2xl shadow-2xl shadow-[#155dea]/30 w-full p-6 sm:p-8">
           <div className="text-center mb-8">
             <img src={logo} alt="Nexora Systems" className="w-24 h-24 rounded-full mx-auto mb-3 shadow-[0_0_24px_rgba(43,132,245,0.5)]" />
