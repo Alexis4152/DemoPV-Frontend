@@ -25,15 +25,27 @@ const ANY_ROLE_PLATFORM_ROUTES = ['/my-arco-requests']
  * 3.5. Si `user.mustAcceptLegalTerms` (todavía no acepta los Términos y condiciones y/o el
  *    Aviso de privacidad vigentes — ver `AcceptLegalTerms.jsx`), redirige a
  *    `/accept-legal-terms`, con la misma excepción de no loopear esa ruta. Va DESPUÉS del
- *    cambio de contraseña (primero resolver que pueda entrar con una contraseña propia).
+ *    cambio de contraseña (primero resolver que pueda entrar con una contraseña propia) —
+ *    por eso también exceptúa `mustChangePassword`, no solo la ruta `/accept-legal-terms`:
+ *    en un usuario nuevo ambos flags arrancan en `true` a la vez (ver `UserService#create`),
+ *    así que sin este `!user.mustChangePassword` este chequeo sacaba al usuario de
+ *    `/change-password` apenas llegaba (por tener `mustAcceptLegalTerms=true` también) y el
+ *    chequeo 3 lo regresaba de inmediato por tener `mustChangePassword=true` — loop infinito
+ *    entre `/change-password` y `/accept-legal-terms` para CUALQUIER usuario nuevo, de
+ *    cualquier rol, desde el primer login con la temporal (pantalla en blanco, el navegador
+ *    corta el loop con "Throttling navigation to prevent the browser from hanging").
  * 4. Si es SUPER_ADMIN o SUPERVISOR y todavía no eligió con cuál tienda actuar
  *    (`user.tienda` sigue `null` — ver `AuthContext#selectTienda`), redirige a
  *    `/select-tienda`, con la misma excepción de no crear un loop en esa propia ruta. Va
- *    DESPUÉS del chequeo anterior: primero resolver identidad (cambiar contraseña), luego
- *    contexto (elegir tienda) — por eso también exceptúa `mustChangePassword`: sin esto,
- *    un SUPERVISOR nuevo (`mustChangePassword=true` y `tienda=null` a la vez, ver
- *    `UserService#create`) quedaba en un loop infinito entre `/change-password` y
- *    `/select-tienda`, cada chequeo mandando al otro de vuelta. También se exceptúan las
+ *    DESPUÉS de los dos chequeos anteriores: primero resolver identidad (cambiar
+ *    contraseña, aceptar términos), luego contexto (elegir tienda) — por eso también
+ *    exceptúa `mustChangePassword` Y `mustAcceptLegalTerms`: sin esto, un SUPERVISOR nuevo
+ *    (`mustChangePassword=true`/`mustAcceptLegalTerms=true` y `tienda=null` a la vez, ver
+ *    `UserService#create`) quedaba en un loop infinito entre `/accept-legal-terms` y
+ *    `/select-tienda` (este chequeo lo mandaba a elegir tienda por no tener una, y el
+ *    chequeo 3.5 lo regresaba a aceptar términos por no haberlo hecho — pantalla en blanco,
+ *    el navegador corta el loop con "Throttling navigation to prevent the browser from
+ *    hanging"), cada chequeo mandando al otro de vuelta. También se exceptúan las
  *    rutas de plataforma (sin tienda): {@link SUPER_ADMIN_ONLY_PLATFORM_ROUTES} solo para
  *    SUPER_ADMIN (nunca SUPERVISOR), y {@link ANY_ROLE_PLATFORM_ROUTES} para cualquiera de
  *    los dos — ninguna de esas pantallas es de ninguna tienda, así que obligar a elegir una
@@ -63,13 +75,13 @@ export default function PrivateRoute({ children, section, adminOnly, superAdminO
   if (user.mustChangePassword && location.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />
   }
-  if (user.mustAcceptLegalTerms && location.pathname !== '/accept-legal-terms') {
+  if (!user.mustChangePassword && user.mustAcceptLegalTerms && location.pathname !== '/accept-legal-terms') {
     return <Navigate to="/accept-legal-terms" replace />
   }
   const onExemptPlatformRoute =
     (isSuperAdmin && SUPER_ADMIN_ONLY_PLATFORM_ROUTES.includes(location.pathname)) ||
     ANY_ROLE_PLATFORM_ROUTES.includes(location.pathname)
-  if (isPlatformActor && !user.tienda && !user.mustChangePassword
+  if (isPlatformActor && !user.tienda && !user.mustChangePassword && !user.mustAcceptLegalTerms
       && location.pathname !== '/select-tienda' && !onExemptPlatformRoute) {
     return <Navigate to="/select-tienda" replace />
   }
