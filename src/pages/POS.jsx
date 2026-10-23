@@ -6,6 +6,8 @@ import { createSale } from '../api/sales'
 import { getOpenCashCut } from '../api/cashCuts'
 import { printSaleTicket } from '../utils/printer'
 import { resolveMediaUrl } from '../utils/media'
+import { barcodeNotFoundMessage } from '../utils/barcode'
+import Barcode from '../components/Barcode'
 import { useNotify } from '../context/NotifyContext'
 import { useAuth } from '../context/AuthContext'
 
@@ -42,6 +44,13 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 export default function POS() {
   const { notify, confirmDialog } = useNotify()
   const { user } = useAuth()
+  // Para el listener global del lector (se registra una sola vez): la tienda actual, para
+  // avisar si un código escaneado es de otra tienda.
+  const userRef = useRef(user)
+  userRef.current = user
+  // Igual para `addToCart`: el listener global del lector se registra una sola vez y, sin
+  // esto, usaba la versión del primer render (carrito vacío) y no respetaba el tope de stock.
+  const addToCartRef = useRef(null)
   // Límites de descuento por línea que el ADMIN fijó en "Datos de la tienda" (ver
   // `resolveDiscountCap`); llegan como parte de la sesión (`user.tienda`), sin necesitar
   // una llamada aparte — se actualizan solos si el admin los cambia y refresca su sesión.
@@ -133,9 +142,9 @@ export default function POS() {
         e.preventDefault()
         getProductByBarcode(code).then((r) => {
           const product = r?.data?.data
-          if (product) addToCart(product)
-          else notify(`Código "${code}" no encontrado`, 'error')
-        }).catch(() => notify(`Código "${code}" no encontrado`, 'error'))
+          if (product) addToCartRef.current(product)
+          else notify(barcodeNotFoundMessage(code, userRef.current?.tienda?.id), 'error')
+        }).catch(() => notify(barcodeNotFoundMessage(code, userRef.current?.tienda?.id), 'error'))
         return
       }
 
@@ -155,11 +164,14 @@ export default function POS() {
   // chip de categoría aunque `categoryId` no cambie de valor (ver `selectCategory`).
   useEffect(() => {
     const t = setTimeout(() => {
-      searchProducts({ q: query || undefined, categoryId: categoryId || undefined, size: query.trim() ? 8 : 50 })
+      // En la vista "Códigos" sin texto se muestra todo el catálogo (hasta 300), para poder
+      // escanear o tocar cualquier producto desde la pantalla.
+      const size = query.trim() ? 8 : viewMode === 'codes' ? 300 : 50
+      searchProducts({ q: query || undefined, categoryId: categoryId || undefined, size })
         .then((r) => { setResults(r.data.data ?? []); setHighlighted(0) })
     }, 250)
     return () => clearTimeout(t)
-  }, [query, categoryId, browseRefresh])
+  }, [query, categoryId, browseRefresh, viewMode])
 
   // Cierra la lista de resultados/catálogo con un clic afuera o Escape — sobre todo
   // importante navegando por categoría, donde la lista ya no se cierra sola al agregar un
@@ -197,7 +209,7 @@ export default function POS() {
     searchInputRef.current?.focus()
   }
 
-  /** Cambia entre la vista de lista y la de imágenes, recordando la elección para la próxima venta. */
+  /** Cambia entre la vista de lista, imágenes o códigos de barras, recordando la elección para la próxima venta. */
   function changeViewMode(mode) {
     setViewMode(mode)
     localStorage.setItem('pos_view_mode', mode)
@@ -209,8 +221,10 @@ export default function POS() {
    * - Si el producto no tiene existencias (`stock <= 0`), no se agrega y se muestra un
    *   error visible.
    * - Si ya está en el carrito y sumar una unidad más superaría el stock disponible, la
-   *   línea simplemente no cambia (sin mensaje de error) — el buscador ya muestra las
-   *   existencias junto a cada resultado, así que se asume que el cajero puede verlas.
+   *   línea no cambia y se avisa — escaneando con la pistola el cajero no está mirando
+   *   las existencias, así que sin aviso parecía que el escaneo simplemente no funcionó.
+   * En ambos casos de rechazo también se limpia el buscador, para que el código escaneado
+   * no se quede escrito ahí.
    * Al agregar, si el cajero estaba tecleando una búsqueda por texto, la limpia junto con
    * los resultados (buscó un producto puntual, lo agregó, listo para el siguiente). Pero
    * si solo estaba navegando una categoría (sin texto, el buscador funciona como catálogo
@@ -231,14 +245,27 @@ export default function POS() {
    *        (no desde el buscador) se manda `false` para no dispararlo sin que el cajero
    *        vaya a escribir nada.
    */
+  addToCartRef.current = addToCart
   function addToCart(product, { refocus = true } = {}) {
-    if (product.stock <= 0) { setError(`"${product.name}" no tiene stock disponible`); return }
+    const reject = (msg) => {
+      setError(msg)
+      notify(msg, 'error')
+      if (query.trim()) setQuery('')
+      if (refocus) searchInputRef.current?.focus()
+    }
+    if (product.stock <= 0) { reject(`"${product.name}" no tiene stock disponible`); return }
     const existingBefore = cart.find((i) => i.productId === product.id)
-    if (existingBefore && existingBefore.quantity + 1 > product.stock) return
+    if (existingBefore && existingBefore.quantity + 1 > product.stock) {
+      reject(`Ya no hay más "${product.name}": ya tienes en la venta todo lo disponible (${product.stock})`)
+      return
+    }
     setError('')
     setCart((prev) => {
       const existing = prev.find((i) => i.productId === product.id)
       if (existing) {
+        // Tope también aquí: el estado más reciente manda, aunque `cart` de arriba
+        // viniera desfasado (escaneos muy seguidos).
+        if (existing.quantity + 1 > product.stock) return prev
         return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i)
       }
       return [...prev, {
@@ -723,6 +750,12 @@ export default function POS() {
               className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${viewMode === 'images' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               onClick={() => changeViewMode('images')}
             >🖼️ Imágenes</button>
+            <button
+              type="button"
+              title="Vista con códigos de barras"
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${viewMode === 'codes' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              onClick={() => changeViewMode('codes')}
+            >🏷️ Códigos</button>
           </div>
         </div>
 
@@ -745,7 +778,31 @@ export default function POS() {
             // El contenido es el mismo catálogo/búsqueda de siempre en ambos modos — la
             // venta en sí (ticket, correo, descuentos, cobro) no cambia en nada; solo
             // cambia cómo se elige el producto (ver `viewMode`).
-            viewMode === 'images' ? (
+            viewMode === 'codes' ? (
+              // Catálogo con el código de barras de cada producto: se puede escanear de la
+              // pantalla (pistola de imagen) o tocar la tarjeta; ambos agregan a la venta.
+              <div className="bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-[32rem] overflow-y-auto p-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {results.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="flex flex-col items-center text-center rounded-xl border border-gray-200 hover:border-purple-300 hover:shadow-md transition-all bg-white p-3"
+                      onClick={() => addToCart(p, { refocus: false })}
+                    >
+                      <p className="font-medium text-gray-900 text-sm leading-snug line-clamp-2 w-full">{p.name}</p>
+                      <div className="flex items-center justify-between w-full mt-1 mb-2">
+                        <span className="font-bold text-purple-700 text-sm">{fmt(p.price)}</span>
+                        <span className={`text-xs ${p.stock <= p.minStock ? 'text-red-500' : 'text-gray-400'}`}>Disp: {p.stock}</span>
+                      </div>
+                      {p.barcode
+                        ? <Barcode value={p.barcode} height={44} />
+                        : <span className="text-xs text-gray-400 py-6">Sin código</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : viewMode === 'images' ? (
               <div className="bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-[32rem] overflow-y-auto p-3">
                 <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
                   {results.map((p) => (

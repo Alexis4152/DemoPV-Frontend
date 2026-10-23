@@ -4,15 +4,18 @@ import {
   getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductReservedStats,
   getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage, getSiblingStock,
   getBulkImportTemplate, bulkImportProducts, getInventoryCountSheetExcel, getInventoryCountSheetPdf,
+  getBarcodesMissingCount, generateBarcodes, getBarcodeLabelsPdf,
 } from '../api/products'
+import { barcodeNotFoundMessage, foreignTiendaOf } from '../utils/barcode'
 import { getCategories } from '../api/categories'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
 import { openOrDownloadBlob } from '../utils/downloadBlob'
 import { resizeImage } from '../utils/resizeImage'
+import { listPrinters, getLabelPrinterName, setLabelPrinterName, printLabelsPdf } from '../utils/printer'
 import IconButton from '../components/IconButton'
-import { PencilIcon, SlidersIcon, ArchiveIcon } from '../components/icons'
+import { PencilIcon, SlidersIcon, ArchiveIcon, BarcodeIcon } from '../components/icons'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
@@ -25,6 +28,23 @@ const PAGE_SIZES = [10, 20, 50, 100]
 const MAX_IMAGE_MB = 5
 // Tope de fotos por producto — mismo valor que ProductImageService.MAX_IMAGES_PER_PRODUCT.
 const MAX_IMAGES = 3
+
+// Tamaño de etiqueta del PDF de códigos: el del rollo de la impresora de etiquetas. Fijo,
+// no lo elige el usuario; para otro rollo, cambiar aquí por otra clave de
+// BarcodeLabelPdfService.SIZES (50x25, 51x25, 50x30, 40x30, 60x40).
+const LABEL_SIZE = '50x30'
+
+// Con `responseType: 'blob'` un error del backend también llega como Blob — hay que
+// leerlo para sacar el `message` del JSON.
+async function blobErrorMessage(err, fallback) {
+  try {
+    const data = err.response?.data
+    if (data instanceof Blob) return JSON.parse(await data.text()).message ?? fallback
+    return data?.message ?? fallback
+  } catch {
+    return fallback
+  }
+}
 
 // Mensaje de error al subir una foto. Un 413 lo contesta el proxy (no el backend) cuando el
 // cuerpo excede su límite, así que no trae `message` — se explica aquí en vez de dar el
@@ -89,6 +109,18 @@ export default function Inventory() {
   // Menú "Más opciones" del encabezado (descargas de inventario y carga masiva).
   const [moreOpen, setMoreOpen] = useState(false)
   const moreMenuRef = useRef(null)
+  // Productos activos sin código (aviso + botón "Generar códigos").
+  const [missingBarcodes, setMissingBarcodes] = useState(0)
+  const [generatingBarcodes, setGeneratingBarcodes] = useState(false)
+  // Modal de impresión de etiquetas: { product } para uno solo, { product: null } para todos.
+  const [labelModal, setLabelModal] = useState(null)
+  const [labelCopies, setLabelCopies] = useState('1')
+  const [labelLoading, setLabelLoading] = useState(false)
+  // Impresora de etiquetas (QZ Tray): la guardada en esta computadora o la que se está
+  // eligiendo; `labelPrinters` = lista de QZ (null mientras carga, [] si QZ no responde).
+  const [labelPrinter, setLabelPrinter] = useState('')
+  const [labelPrinters, setLabelPrinters] = useState(null)
+  const [choosingPrinter, setChoosingPrinter] = useState(false)
   const [search, setSearch] = useState('')
   const [filterCat, setFilterCat] = useState('')
   // Único filtro de disponibilidad: stock bajo, como botón de encendido/apagado (no un
@@ -197,6 +229,93 @@ export default function Inventory() {
     getCategories().then((r) => setCategories(r.data.data ?? []))
     searchProducts({ lowStock: true, size: 200 }).then((r) => setLowStockItems(r.data.data ?? []))
     getProductReservedStats().then((r) => setReservedStats(new Map((r.data.data ?? []).map(([id, qty]) => [id, Number(qty)]))))
+    getBarcodesMissingCount().then((r) => setMissingBarcodes(Number(r.data.data) || 0)).catch(() => {})
+  }
+
+  /** Asigna el consecutivo de la tienda a todos los productos sin código (orden alfabético). */
+  async function handleGenerateBarcodes() {
+    const msg = `Se asignará un código a ${missingBarcodes} producto${missingBarcodes === 1 ? '' : 's'} sin código, en orden alfabético. Los códigos generados ya no se podrán modificar. ¿Continuar?`
+    if (!(await confirmDialog(msg, { confirmText: 'Generar códigos', danger: false }))) return
+    setGeneratingBarcodes(true)
+    try {
+      const r = await generateBarcodes()
+      notify(r.data.message ?? 'Códigos generados', 'success')
+      reloadAll()
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudieron generar los códigos', 'error')
+    } finally {
+      setGeneratingBarcodes(false)
+    }
+  }
+
+  function openLabels(product) {
+    setLabelCopies('1')
+    setLabelModal({ product })
+    const saved = getLabelPrinterName()
+    setLabelPrinter(saved)
+    setChoosingPrinter(!saved)
+    if (!saved) loadLabelPrinters()
+  }
+
+  /** Impresoras que ve QZ Tray, para elegir la de etiquetas (una vez por computadora). */
+  async function loadLabelPrinters() {
+    setLabelPrinters(null)
+    try {
+      const names = await listPrinters()
+      setLabelPrinters(names)
+      // Sugerir la que parezca de etiquetas, sin guardarla hasta que se imprima.
+      setLabelPrinter((cur) => cur || names.find((n) => /aiyin|ayin|label|etiqueta|zebra|xprinter/i.test(n)) || '')
+    } catch {
+      setLabelPrinters([])
+    }
+  }
+
+  /** Valida las copias y arma el body del PDF; null si no son válidas. */
+  function labelRequestBody() {
+    const copies = Number(labelCopies)
+    if (!Number.isInteger(copies) || copies < 1 || copies > 500) {
+      notify('Las copias deben ser de 1 a 500', 'error')
+      return null
+    }
+    const product = labelModal.product
+    return { productIds: product ? [product.id] : [], copies, size: LABEL_SIZE }
+  }
+
+  /** Genera el PDF de etiquetas y lo manda directo a la impresora de etiquetas (QZ Tray). */
+  async function handlePrintLabels() {
+    const body = labelRequestBody()
+    if (!body) return
+    if (!labelPrinter) { notify('Elige la impresora de etiquetas', 'error'); return }
+    setLabelPrinterName(labelPrinter)
+    setLabelLoading(true)
+    try {
+      const pdf = (await getBarcodeLabelsPdf(body)).data
+      const [widthMm, heightMm] = LABEL_SIZE.split('x').map(Number)
+      await printLabelsPdf(pdf, { widthMm, heightMm })
+      notify('Etiquetas enviadas a la impresora', 'success')
+      setLabelModal(null)
+    } catch (err) {
+      notify(err.response ? await blobErrorMessage(err, 'No se pudieron generar las etiquetas') : err.message, 'error')
+    } finally {
+      setLabelLoading(false)
+    }
+  }
+
+  /** Respaldo sin QZ Tray (ej. celular): abre el PDF para imprimir o compartir. */
+  async function handleDownloadLabels() {
+    const body = labelRequestBody()
+    if (!body) return
+    const product = labelModal.product
+    const filename = `etiquetas-${product ? product.barcode : new Date().toISOString().slice(0, 10)}.pdf`
+    setLabelLoading(true)
+    try {
+      await openOrDownloadBlob(() => getBarcodeLabelsPdf(body), filename, 'application/pdf')
+      setLabelModal(null)
+    } catch (err) {
+      notify(await blobErrorMessage(err, 'No se pudieron generar las etiquetas'), 'error')
+    } finally {
+      setLabelLoading(false)
+    }
   }
 
   useEffect(() => { loadAux() }, [])
@@ -354,6 +473,9 @@ export default function Inventory() {
     if (found) {
       if (hasAction('INVENTORY', 'EDIT') || hasAction('INVENTORY', 'DELETE')) setChoiceModal(found)
       else openAdjust(found, '1')
+    } else if (foreignTiendaOf(code, user?.tienda?.id)) {
+      // Código generado de otra tienda: no se ofrece darlo de alta aquí con ese código.
+      notify(barcodeNotFoundMessage(code, user?.tienda?.id), 'warning')
     } else if (hasAction('INVENTORY', 'CREATE')) {
       notify(`Código "${code}" no encontrado — completa los datos para darlo de alta`, 'info')
       openNew(code)
@@ -854,6 +976,8 @@ export default function Inventory() {
                 {[
                   { label: '📊 Inventario Excel', onClick: () => handleDownloadCountSheet('xlsx'), show: true, disabled: countSheetLoading !== null },
                   { label: '📄 Inventario PDF', onClick: () => handleDownloadCountSheet('pdf'), show: true, disabled: countSheetLoading !== null },
+                  { label: `🏷️ Generar códigos${missingBarcodes > 0 ? ` (${missingBarcodes})` : ''}`, onClick: handleGenerateBarcodes, show: canBulkEdit, disabled: missingBarcodes === 0 || generatingBarcodes },
+                  { label: '🖨️ Imprimir todos los códigos', onClick: () => openLabels(null), show: true },
                   { label: '⬇️ Plantilla de carga masiva', onClick: handleDownloadTemplate, show: canBulkImport },
                   { label: '📤 Carga masiva', onClick: openBulkImport, show: canBulkImport },
                 ].filter((o) => o.show).map((o) => (
@@ -876,6 +1000,17 @@ export default function Inventory() {
         <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg px-4 py-3 mb-4 flex items-center justify-between">
           <span>{adjustNotice}</span>
           <button className="text-red-400 hover:text-red-600 ml-4" onClick={() => setAdjustNotice('')}>✕</button>
+        </div>
+      )}
+
+      {missingBarcodes > 0 && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg px-4 py-3 mb-4 flex flex-wrap items-center justify-between gap-2">
+          <span>🏷️ {missingBarcodes} producto{missingBarcodes > 1 ? 's' : ''} sin código de producto.</span>
+          {canBulkEdit && (
+            <button type="button" className="btn-primary text-sm" disabled={generatingBarcodes} onClick={handleGenerateBarcodes}>
+              {generatingBarcodes ? 'Generando…' : 'Generar códigos'}
+            </button>
+          )}
         </div>
       )}
 
@@ -1030,6 +1165,9 @@ export default function Inventory() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
+                    {p.barcode && (
+                      <IconButton icon={BarcodeIcon} label="Imprimir código" onClick={() => openLabels(p)} />
+                    )}
                     {hasAction('INVENTORY', 'EDIT') && (
                       <IconButton icon={PencilIcon} label="Editar" variant="primary" onClick={() => openEdit(p)} />
                     )}
@@ -1096,9 +1234,17 @@ export default function Inventory() {
                 <div><label className="text-xs font-medium text-gray-600">Nombre <span className={fieldErrors.name ? 'text-red-600' : ''}>*</span></label>
                   <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                   {fieldErrors.name && <p className="text-red-600 text-xs mt-1">{fieldErrors.name}</p>}</div>
-                <div><label className="text-xs font-medium text-gray-600">Código de producto</label>
-                  <input className="input" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
-                  {fieldErrors.barcode && <p className="text-red-600 text-xs mt-1">{fieldErrors.barcode}</p>}</div>
+                {/* Un código generado por el sistema puede estar ya impreso en etiquetas: no
+                    se edita (el backend también lo rechaza). Vacío = se genera al guardar. */}
+                {editProduct?.barcodeGenerated ? (
+                  <div><label className="text-xs font-medium text-gray-600">Código de producto</label>
+                    <input className="input bg-gray-100 text-gray-500 font-mono" value={form.barcode} disabled />
+                    <p className="text-xs text-gray-400 mt-1">Generado por el sistema, no se puede modificar</p></div>
+                ) : (
+                  <div><label className="text-xs font-medium text-gray-600">Código de producto</label>
+                    <input className="input" value={form.barcode} placeholder="Vacío = se genera automáticamente" onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
+                    {fieldErrors.barcode && <p className="text-red-600 text-xs mt-1">{fieldErrors.barcode}</p>}</div>
+                )}
                 <div><label className="text-xs font-medium text-gray-600">Precio venta <span className={fieldErrors.price ? 'text-red-600' : ''}>*</span></label>
                   <input className="input" type="number" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
                   {fieldErrors.price && <p className="text-red-600 text-xs mt-1">{fieldErrors.price}</p>}</div>
@@ -1369,6 +1515,52 @@ export default function Inventory() {
       )}
 
       {showSiblingStock && <SiblingStockModal onClose={() => setShowSiblingStock(false)} />}
+
+      {/* Etiquetas de código de barras: PDF con una etiqueta por página (LABEL_SIZE). En PC
+          "Imprimir" lo manda directo a la impresora de etiquetas vía QZ Tray; "Descargar
+          PDF" es el respaldo (celular: se comparte a la app de la impresora). */}
+      {labelModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !labelLoading && setLabelModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-1">🖨️ Imprimir códigos</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              {labelModal.product
+                ? <>{labelModal.product.name} — <span className="font-mono">{labelModal.product.barcode}</span></>
+                : 'Todos los productos con código, en orden alfabético.'}
+            </p>
+            <label className="text-xs font-medium text-gray-600">{labelModal.product ? 'Cantidad de etiquetas' : 'Etiquetas por producto'}</label>
+            <input className="input" type="number" min="1" max="500" value={labelCopies} onChange={(e) => setLabelCopies(e.target.value)} />
+            {/* Impresora de etiquetas: se elige una vez por computadora y se recuerda. */}
+            {choosingPrinter ? (
+              <div className="mt-3">
+                <label className="text-xs font-medium text-gray-600">Impresora de etiquetas</label>
+                {labelPrinters === null ? (
+                  <p className="text-sm text-gray-400">Buscando impresoras…</p>
+                ) : labelPrinters.length === 0 ? (
+                  <p className="text-sm text-amber-700">No se pudo conectar con QZ Tray en esta computadora. Usa "Descargar PDF".</p>
+                ) : (
+                  <select className="input" value={labelPrinter} onChange={(e) => setLabelPrinter(e.target.value)}>
+                    <option value="">Elige la impresora…</option>
+                    {labelPrinters.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500 mt-3">
+                Impresora: <span className="font-medium">{labelPrinter}</span>{' '}
+                <button type="button" className="text-purple-600 hover:underline" onClick={() => { setChoosingPrinter(true); loadLabelPrinters() }}>Cambiar</button>
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2 justify-end pt-4">
+              <button type="button" className="btn-secondary" disabled={labelLoading} onClick={() => setLabelModal(null)}>Cancelar</button>
+              <button type="button" className="btn-secondary" disabled={labelLoading} onClick={handleDownloadLabels}>Descargar PDF</button>
+              <button type="button" className="btn-primary" disabled={labelLoading || !labelPrinter} onClick={handlePrintLabels}>
+                {labelLoading ? 'Imprimiendo…' : 'Imprimir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Carga masiva de productos por Excel — requiere permiso "Agregar" de Inventario (ver el botón que lo abre). */}
       {bulkImportModal && (

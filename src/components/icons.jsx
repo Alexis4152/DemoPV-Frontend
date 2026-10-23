@@ -179,3 +179,9 @@ export const LandmarkIcon = (props) => (
     <path d="M3 21h18" />
   </svg>
 )
+
+export const BarcodeIcon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M3 5v14M7 5v14M10 5v14M14 5v14M17 5v14M21 5v14" />
+  </svg>
+)

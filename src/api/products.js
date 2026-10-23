@@ -174,3 +174,27 @@ export const getInventoryCountSheetExcel = () => api.get('/products/count-sheet.
  * @returns {Promise} Respuesta de axios con el PDF en `data` (blob).
  */
 export const getInventoryCountSheetPdf = () => api.get('/products/count-sheet.pdf', { responseType: 'blob' })
+
+
+// ── Códigos de producto generados y etiquetas ─────────────────────────────────────────
+
+/**
+ * Cuántos productos activos de la tienda no tienen código todavía.
+ * @returns {Promise} Respuesta de axios con el número en `data.data`.
+ */
+export const getBarcodesMissingCount = () => api.get('/products/barcodes/missing-count')
+
+/**
+ * Asigna el siguiente consecutivo de la tienda a todos los productos sin código, en orden
+ * alfabético. Requiere permiso de editar en Inventario.
+ * @returns {Promise} Respuesta de axios con cuántos se generaron en `data.data`.
+ */
+export const generateBarcodes = () => api.post('/products/barcodes/generate')
+
+/**
+ * PDF de etiquetas de código de barras (una por página, del tamaño de la etiqueta).
+ * @param {{ productIds?: number[], copies?: number, size?: string }} body `productIds`
+ *        vacío = todos los productos con código; `size` "50x25", "51x25", "50x30", "40x30" o "60x40".
+ * @returns {Promise} Respuesta de axios con el PDF en `data` (blob).
+ */
+export const getBarcodeLabelsPdf = (body) => api.post('/products/barcode-labels', body, { responseType: 'blob' })
