@@ -205,3 +205,16 @@ export const getBarcodeLabelsPdf = (body) => api.post('/products/barcode-labels'
  * @returns {Promise} Respuesta de axios con el PDF en `data` (blob).
  */
 export const getBarcodeSheetPdf = () => api.get('/products/barcode-sheet.pdf', { responseType: 'blob' })
+
+/**
+ * "Actualizar existencias": sube la hoja de inventario en Excel con la columna "Cantidad
+ * real" llenada; el stock de cada producto queda en esa cantidad (con su movimiento de
+ * inventario). Bajar stock solo lo puede hacer admin/supervisor.
+ * @param {File} file Excel descargado de "Inventario Excel", ya llenado.
+ * @returns {Promise} Respuesta de axios con el resumen (`updated`, `unchanged`, `errors`...).
+ */
+export const importStockFile = (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post('/products/stock-import', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+}

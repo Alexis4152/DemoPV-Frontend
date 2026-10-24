@@ -4,7 +4,7 @@ import {
   getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductReservedStats,
   getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage, getSiblingStock,
   getBulkImportTemplate, bulkImportProducts, getInventoryCountSheetExcel, getInventoryCountSheetPdf,
-  getBarcodesMissingCount, generateBarcodes, getBarcodeLabelsPdf, getBarcodeSheetPdf,
+  getBarcodesMissingCount, generateBarcodes, getBarcodeLabelsPdf, getBarcodeSheetPdf, importStockFile,
 } from '../api/products'
 import { barcodeNotFoundMessage, foreignTiendaOf } from '../utils/barcode'
 import { getCategories } from '../api/categories'
@@ -185,6 +185,11 @@ export default function Inventory() {
   // null mientras no se ha subido nada; una vez subido, se queda con el resumen (creados/
   // errores) para mostrarlo dentro del mismo modal hasta que lo cierren.
   const [bulkImportModal, setBulkImportModal] = useState(false)
+  // "Actualizar existencias" (hoja de inventario con "Cantidad real" → stock).
+  const [stockImportModal, setStockImportModal] = useState(false)
+  const [stockImportFile, setStockImportFile] = useState(null)
+  const [stockImporting, setStockImporting] = useState(false)
+  const [stockImportResult, setStockImportResult] = useState(null)
   const [bulkImportFile, setBulkImportFile] = useState(null)
   const [bulkImporting, setBulkImporting] = useState(false)
   const [bulkImportResult, setBulkImportResult] = useState(null)
@@ -958,6 +963,28 @@ export default function Inventory() {
     }
   }
 
+  function openStockImport() {
+    setStockImportFile(null)
+    setStockImportResult(null)
+    setStockImportModal(true)
+  }
+
+  /** Sube la hoja de inventario llenada; el stock queda en la "Cantidad real" de cada fila. */
+  async function handleStockImportSubmit(e) {
+    e.preventDefault()
+    if (!stockImportFile) return
+    setStockImporting(true)
+    try {
+      const r = await importStockFile(stockImportFile)
+      setStockImportResult(r.data.data)
+      if (r.data.data?.updated > 0) reloadAll()
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudo procesar el archivo', 'error')
+    } finally {
+      setStockImporting(false)
+    }
+  }
+
   function openBulkImport() {
     setBulkImportModal(true)
     setBulkImportFile(null)
@@ -1021,6 +1048,7 @@ export default function Inventory() {
                   { label: '📑 Hoja de códigos (PDF)', onClick: handleDownloadBarcodeSheet, show: true, disabled: countSheetLoading !== null },
                   { label: '⬇️ Plantilla de carga masiva', onClick: handleDownloadTemplate, show: canBulkImport },
                   { label: '📤 Carga masiva', onClick: openBulkImport, show: canBulkImport },
+                  { label: '📥 Actualizar existencias (Excel)', onClick: openStockImport, show: canBulkEdit },
                 ].filter((o) => o.show).map((o) => (
                   <button
                     key={o.label} type="button" role="menuitem"
@@ -1661,6 +1689,75 @@ export default function Inventory() {
                   )}
                   <button type="button" className="btn-secondary" onClick={openBulkImport}>Cargar otro archivo</button>
                   <button type="button" className="btn-primary" onClick={() => setBulkImportModal(false)}>Cerrar</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Actualizar existencias: la hoja de inventario en Excel, con "Cantidad real" llenada,
+          deja el stock de cada producto en esa cantidad (ver StockImportService). */}
+      {stockImportModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !stockImporting && setStockImportModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-1">Actualizar existencias</h3>
+
+            {!stockImportResult ? (
+              <>
+                <ol className="text-sm text-gray-600 mb-4 list-decimal pl-5 space-y-1">
+                  <li>
+                    Descarga la hoja de inventario:{' '}
+                    <button type="button" className="text-purple-600 hover:underline font-medium" disabled={countSheetLoading !== null} onClick={() => handleDownloadCountSheet('xlsx')}>
+                      {countSheetLoading === 'xlsx' ? 'Generando…' : 'Inventario Excel'}
+                    </button>
+                  </li>
+                  <li>Escribe en <span className="font-medium">"Cantidad real"</span> lo que contaste. Deja vacíos los productos que no quieras cambiar.</li>
+                  <li>Sube el archivo: cada producto queda con su cantidad real.</li>
+                </ol>
+                {!isAdmin && (
+                  <p className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-2 mb-3">Solo un administrador o supervisor puede bajar existencias; esas filas se marcarán como error.</p>
+                )}
+                {missingBarcodes > 0 && (
+                  <p className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-2 mb-3">Hay {missingBarcodes} producto{missingBarcodes > 1 ? 's' : ''} sin código: genera los códigos antes de descargar la hoja, o esas filas no se podrán actualizar.</p>
+                )}
+                <form onSubmit={handleStockImportSubmit} className="space-y-3">
+                  <input type="file" accept=".xlsx" onChange={(e) => setStockImportFile(e.target.files?.[0] || null)} className="text-sm" />
+                  <div className="flex gap-2 justify-end pt-2">
+                    <button type="button" className="btn-secondary" onClick={() => setStockImportModal(false)} disabled={stockImporting}>Cancelar</button>
+                    <button type="submit" className="btn-primary" disabled={!stockImportFile || stockImporting}>
+                      {stockImporting ? 'Procesando...' : 'Subir archivo'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-700 mb-1">
+                  <span className="font-semibold text-green-700">{stockImportResult.updated}</span> actualizado{stockImportResult.updated === 1 ? '' : 's'}
+                  {' · '}<span className="font-semibold">{stockImportResult.unchanged}</span> sin cambio
+                  {stockImportResult.errorCount > 0 && (
+                    <> · <span className="font-semibold text-red-600">{stockImportResult.errorCount}</span> con error</>
+                  )}
+                </p>
+                {stockImportResult.totalRows === 0 && (
+                  <p className="text-sm text-gray-500">El archivo no tenía ninguna "Cantidad real" capturada.</p>
+                )}
+                {stockImportResult.errorCount > 0 && (
+                  <div className="mt-3 space-y-1.5 max-h-64 overflow-y-auto">
+                    {stockImportResult.errors.map((e, i) => (
+                      <div key={i} className="text-xs bg-red-50 text-red-700 rounded px-3 py-2">
+                        <span className="font-semibold">Fila {e.row}:</span> {e.message}
+                      </div>
+                    ))}
+                    {stockImportResult.errorCount > stockImportResult.errors.length && (
+                      <p className="text-xs text-gray-400 pt-1">y {stockImportResult.errorCount - stockImportResult.errors.length} error(es) más.</p>
+                    )}
+                  </div>
+                )}
+                <div className="flex gap-2 justify-end pt-4">
+                  <button type="button" className="btn-secondary" onClick={openStockImport}>Cargar otro archivo</button>
+                  <button type="button" className="btn-primary" onClick={() => setStockImportModal(false)}>Cerrar</button>
                 </div>
               </>
             )}
