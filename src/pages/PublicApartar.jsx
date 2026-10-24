@@ -941,15 +941,22 @@ export default function PublicApartar() {
                     {p.stock} pieza{p.stock === 1 ? '' : 's'}
                   </p>
                   {p.discountPercent > 0 ? (
-                    <div className="mt-1">
+                    <div className="mt-1 mb-2">
                       <span className="text-xs text-gray-400 line-through mr-1">{fmt(p.price)}</span>
                       <span className="text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded">-{Number(p.discountPercent)}%</span>
                       <p className="font-bold text-purple-700">{fmt(p.finalPrice)}</p>
                     </div>
                   ) : (
-                    <p className="font-bold text-purple-700 mt-1">{fmt(p.price)}</p>
+                    <p className="font-bold text-purple-700 mt-1 mb-2">{fmt(p.price)}</p>
                   )}
-                  <button className="btn-primary text-xs mt-2 py-1.5" onClick={() => addToCart(p)}>+ Apartar</button>
+                  {/* `mt-auto` (no `mt-2`) empuja el botón al fondo de la tarjeta — las tarjetas
+                      de una misma fila de grid se estiran todas a la altura de la más alta
+                      (comportamiento normal de `align-items: stretch` en grid), así que sin
+                      esto el botón quedaba justo después del precio y a alturas distintas
+                      entre tarjetas con descripción larga/corta o con/sin descuento. El `mb-2`
+                      de arriba, al ser margen fijo (no se "aplana" como el `mt-auto`), es lo
+                      que sigue dejando un respiro mínimo incluso en la tarjeta más alta de la fila. */}
+                  <button className="btn-primary text-xs mt-auto py-1.5" onClick={() => addToCart(p)}>+ Apartar</button>
                 </div>
               ))}
             </div>
