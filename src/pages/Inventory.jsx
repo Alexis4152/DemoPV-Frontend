@@ -4,7 +4,7 @@ import {
   getProductsPage, createProduct, updateProduct, adjustStock, deleteProduct, searchProducts, getProductByBarcode, getProductReservedStats,
   getProductImages, uploadProductImage, setPrimaryProductImage, deleteProductImage, getSiblingStock,
   getBulkImportTemplate, bulkImportProducts, getInventoryCountSheetExcel, getInventoryCountSheetPdf,
-  getBarcodesMissingCount, generateBarcodes, getBarcodeLabelsPdf,
+  getBarcodesMissingCount, generateBarcodes, getBarcodeLabelsPdf, getBarcodeSheetPdf,
 } from '../api/products'
 import { barcodeNotFoundMessage, foreignTiendaOf } from '../utils/barcode'
 import { getCategories } from '../api/categories'
@@ -946,6 +946,18 @@ export default function Inventory() {
     }
   }
 
+  /** Hoja tamaño carta con nombre + código de barras de cada producto, en orden alfabético. */
+  async function handleDownloadBarcodeSheet() {
+    setCountSheetLoading('sheet')
+    try {
+      await openOrDownloadBlob(getBarcodeSheetPdf, `codigos-${new Date().toISOString().slice(0, 10)}.pdf`, 'application/pdf')
+    } catch (err) {
+      notify(await blobErrorMessage(err, 'No se pudo generar la hoja de códigos'), 'error')
+    } finally {
+      setCountSheetLoading(null)
+    }
+  }
+
   function openBulkImport() {
     setBulkImportModal(true)
     setBulkImportFile(null)
@@ -1006,6 +1018,7 @@ export default function Inventory() {
                   { label: '📄 Inventario PDF', onClick: () => handleDownloadCountSheet('pdf'), show: true, disabled: countSheetLoading !== null },
                   { label: `🏷️ Generar códigos${missingBarcodes > 0 ? ` (${missingBarcodes})` : ''}`, onClick: handleGenerateBarcodes, show: canBulkEdit, disabled: missingBarcodes === 0 || generatingBarcodes },
                   { label: '🖨️ Imprimir todos los códigos', onClick: () => openLabels(null), show: true },
+                  { label: '📑 Hoja de códigos (PDF)', onClick: handleDownloadBarcodeSheet, show: true, disabled: countSheetLoading !== null },
                   { label: '⬇️ Plantilla de carga masiva', onClick: handleDownloadTemplate, show: canBulkImport },
                   { label: '📤 Carga masiva', onClick: openBulkImport, show: canBulkImport },
                 ].filter((o) => o.show).map((o) => (

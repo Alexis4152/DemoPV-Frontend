@@ -198,3 +198,10 @@ export const generateBarcodes = () => api.post('/products/barcodes/generate')
  * @returns {Promise} Respuesta de axios con el PDF en `data` (blob).
  */
 export const getBarcodeLabelsPdf = (body) => api.post('/products/barcode-labels', body, { responseType: 'blob' })
+
+/**
+ * Hoja tamaño carta con nombre y código de barras de todos los productos con código, en
+ * orden alfabético (para imprimirla y escanear desde ella en caja).
+ * @returns {Promise} Respuesta de axios con el PDF en `data` (blob).
+ */
+export const getBarcodeSheetPdf = () => api.get('/products/barcode-sheet.pdf', { responseType: 'blob' })
