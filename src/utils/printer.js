@@ -1,5 +1,5 @@
 import qz from 'qz-tray'
-import { getSaleTicketEscPos } from '../api/sales'
+import { getSaleTicketEscPos, getSaleDrawerKick } from '../api/sales'
 import { getQzCertificate, signQzData } from '../api/qz'
 
 /**
@@ -129,6 +129,46 @@ export async function printSaleTicket(saleId) {
   } catch (err) {
     throw new Error(
       `No se pudo imprimir el ticket (¿está encendida y conectada la impresora "${printer}"?): ${err?.message || err}`
+    )
+  }
+}
+
+/**
+ * Abre el cajón de dinero SIN imprimir el ticket completo — para una venta en efectivo
+ * cuyo ticket se mandó Digital (o no se imprimió): el pulso que abre la caja normalmente
+ * solo viaja pegado al final del ticket físico (ver `printSaleTicket`), así que si ese
+ * nunca se manda a imprimir, el cajón tampoco se abre solo. Misma impresora configurada
+ * (el cajón está cableado a ella, no es un dispositivo aparte).
+ *
+ * @param {number|string} saleId Id de la venta (debe ser en efectivo; el backend rechaza otras).
+ * @throws {Error} con un mensaje en español listo para mostrarle al cajero, si QZ Tray
+ *   no está disponible o el envío falla.
+ */
+export async function openCashDrawer(saleId) {
+  const res = await getSaleDrawerKick(saleId)
+  const hex = res.data?.data
+  if (!hex) throw new Error('El servidor no devolvió el comando de apertura del cajón.')
+
+  await ensureConnected()
+
+  const configuredName = getConfiguredPrinterName()
+  const printer = configuredName || (await qz.printers.getDefault())
+  const config = qz.configs.create(printer)
+
+  const data = [
+    {
+      type: 'raw',
+      format: 'command',
+      flavor: 'hex',
+      data: hex,
+    },
+  ]
+
+  try {
+    await qz.print(config, data)
+  } catch (err) {
+    throw new Error(
+      `No se pudo abrir el cajón (¿está encendida y conectada la impresora "${printer}"?): ${err?.message || err}`
     )
   }
 }

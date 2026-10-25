@@ -31,4 +31,5 @@ export const SECTIONS = [
   { code: 'REPORTS', label: 'Reportes', icon: '📈', to: '/reports' },
   { code: 'USERS', label: 'Usuarios', icon: '👥', to: '/users' },
   { code: 'ROLES', label: 'Roles y Permisos', icon: '🔑', to: '/roles' },
+  { code: 'OFFERS', label: 'Ofertas', icon: '🏷️', to: '/offers' },
 ]

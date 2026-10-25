@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { getApartados, getApartado, confirmApartado, completeApartado, cancelApartado, removeApartadoItem } from '../api/apartados'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
-import { printSaleTicket } from '../utils/printer'
+import { printSaleTicket, openCashDrawer } from '../utils/printer'
 import useEscapeClose from '../hooks/useEscapeClose'
 import usePolling from '../hooks/usePolling'
 import IconButton from '../components/IconButton'
@@ -65,6 +65,15 @@ export default function Apartados() {
     const fromUrl = searchParams.get('status')
     return STATUS_VALUES.includes(fromUrl) ? fromUrl : ''
   })
+  // "En línea" (solicitados desde la tienda pública, de siempre) vs "Con anticipo"
+  // (registrados por un cajero en persona — ver POS.jsx "Registrar anticipo").
+  const [origin, setOrigin] = useState('')
+  // Llega de "apartado #N" en el historial de ventas (Sales.jsx), igual patrón que
+  // `?status=` desde el Dashboard — filtro EXACTO por folio, no texto libre.
+  const [folio, setFolio] = useState(() => {
+    const fromUrl = Number(searchParams.get('folio'))
+    return Number.isInteger(fromUrl) && fromUrl > 0 ? fromUrl : null
+  })
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [search, setSearch] = useState('')
@@ -105,7 +114,7 @@ export default function Apartados() {
 
   function load() {
     setLoading(true)
-    getApartados({ status: status || undefined, from: from || undefined, to: to || undefined, q: search.trim() || undefined, page, size })
+    getApartados({ status: status || undefined, origin: origin || undefined, folio: folio || undefined, from: from || undefined, to: to || undefined, q: search.trim() || undefined, page, size })
       .then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
       .finally(() => setLoading(false))
   }
@@ -115,7 +124,7 @@ export default function Apartados() {
   useEffect(() => {
     const t = setTimeout(load, 250)
     return () => clearTimeout(t)
-  }, [status, from, to, search, page, size])
+  }, [status, origin, folio, from, to, search, page, size])
 
   // Refresca solo, cada Tienda.pollingIntervalSeconds (ajustable en "Datos de la
   // tienda"), y también al recuperar el foco de la pestaña — así un apartado nuevo o
@@ -237,10 +246,24 @@ export default function Apartados() {
     }
   }
 
+  /**
+   * Abre el cajón de una venta en efectivo cuyo ticket no se imprimió físicamente (ver
+   * `handleComplete`, mismo patrón que `openDrawerSilently` en POS.jsx) — el pulso que
+   * abre la caja normalmente viaja pegado al ticket físico completo, así que en Digital
+   * nunca se manda a imprimir y el cajón no se abriría solo. Nunca bloquea el flujo.
+   */
+  async function openDrawerSilently(saleId) {
+    try {
+      await openCashDrawer(saleId)
+    } catch (err) {
+      notify(err.message ?? 'No se pudo abrir el cajón', 'error')
+    }
+  }
+
   async function handleComplete(e) {
     e.preventDefault()
     if (!canComplete) return
-    if (!(await confirmDialog(`¿Registrar el cobro de "${completeModal.customerName}" por ${fmt(completeModal.total)}?`, { confirmText: 'Completar', danger: false }))) return
+    if (!(await confirmDialog(`¿Registrar el cobro de "${completeModal.customerName}" por ${fmt(completeTotal)}?`, { confirmText: 'Completar', danger: false }))) return
     try {
       const res = await completeApartado(completeModal.id, {
         paymentMethod,
@@ -252,6 +275,10 @@ export default function Apartados() {
       load()
       if (ticketType === 'digital') {
         notify(`Apartado completado — ticket enviado a ${completeEmail.trim()}`, 'success')
+        // El pulso del cajón normalmente viaja pegado al ticket físico — en Digital ese
+        // ticket nunca se imprime, así que si fue en efectivo se pide aparte (en
+        // silencio, sin bloquear nada si falla), igual que en POS.jsx.
+        if (saleId && paymentMethod === 'CASH') openDrawerSilently(saleId)
       } else {
         notify('Apartado completado, se generó la venta', 'success')
         // Igual que en POS.jsx: se imprime "al vuelo" SOLO en modo físico, y si falla
@@ -292,7 +319,13 @@ export default function Apartados() {
     }
   }
 
-  const completeTotal = completeModal?.total ?? 0
+  // Para un apartado con anticipo, lo que de verdad falta cobrar es el saldo (total -
+  // anticipo), no el total completo — el anticipo ya se cobró aparte (ver `Sale kind=DEPOSIT`).
+  const completeTotal = completeModal
+    ? (completeModal.origin === 'DEPOSIT' && completeModal.depositAmount > 0
+        ? completeModal.total - completeModal.depositAmount
+        : completeModal.total)
+    : 0
   const amountReceivedNum = amountReceived === '' ? null : Number(amountReceived)
   const change = paymentMethod === 'CASH' && amountReceivedNum != null ? amountReceivedNum - completeTotal : null
   // Ticket digital exige correo (igual que en POS.jsx) — a diferencia de POS, aquí suele
@@ -323,6 +356,31 @@ export default function Apartados() {
         )}
       </div>
 
+      <div className="flex gap-1 bg-gray-100 rounded-full p-1 mb-4 w-fit">
+        <button
+          type="button"
+          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${origin === '' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          onClick={() => { setOrigin(''); setPage(0) }}
+        >Todos</button>
+        <button
+          type="button"
+          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${origin === 'ONLINE' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          onClick={() => { setOrigin('ONLINE'); setPage(0) }}
+        >🌐 En línea</button>
+        <button
+          type="button"
+          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${origin === 'DEPOSIT' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          onClick={() => { setOrigin('DEPOSIT'); setPage(0) }}
+        >💰 Con anticipo</button>
+      </div>
+
+      {folio != null && (
+        <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-purple-50 border border-purple-200 w-fit text-sm">
+          <span className="text-purple-700">Filtrando por <strong>apartado #{folio}</strong></span>
+          <button type="button" className="text-purple-500 hover:text-purple-700 font-medium" onClick={() => { setFolio(null); setPage(0) }}>✕ Quitar</button>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3 items-end mb-4">
         <div>
           <label className="text-xs font-medium text-gray-600 block mb-1">Estado</label>
@@ -351,10 +409,10 @@ export default function Apartados() {
             onChange={(e) => { setSearch(e.target.value); setPage(0) }}
           />
         </div>
-        {(status || from || to || search) && (
+        {(status || origin || folio != null || from || to || search) && (
           <button
             type="button" className="btn-secondary text-sm"
-            onClick={() => { setStatus(''); setFrom(''); setTo(''); setSearch(''); setPage(0) }}
+            onClick={() => { setStatus(''); setOrigin(''); setFolio(null); setFrom(''); setTo(''); setSearch(''); setPage(0) }}
           >
             Limpiar filtros
           </button>
@@ -383,9 +441,19 @@ export default function Apartados() {
                     <td className="px-4 py-3 text-gray-600">
                       {a.items.map((i) => `${Number(i.quantity)} x ${i.productName}`).join(', ')}
                     </td>
-                    <td className="px-4 py-3 font-semibold text-gray-800">{fmt(a.total)}</td>
+                    <td className="px-4 py-3 font-semibold text-gray-800">
+                      {fmt(a.total)}
+                      {a.origin === 'DEPOSIT' && a.depositAmount > 0 && (
+                        <span className="block text-xs font-normal text-amber-600 mt-0.5">
+                          Anticipo {fmt(a.depositAmount)} · Saldo {fmt(a.total - a.depositAmount)}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${st.color}`}>{st.label}</span>
+                      {a.origin === 'DEPOSIT' && (
+                        <span className="block mt-1 text-xs text-amber-700">💰 Anticipo</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{fmtDate(a.requestedAt)}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{a.status === 'ACTIVE' ? fmtDate(a.expiresAt) : '—'}</td>
@@ -507,7 +575,13 @@ export default function Apartados() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setCompleteModal(null)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-1">Completar apartado</h3>
-            <p className="text-sm text-gray-500 mb-4">{completeModal.customerName} — Total: {fmt(completeModal.total)}</p>
+            {completeModal.origin === 'DEPOSIT' && completeModal.depositAmount > 0 ? (
+              <p className="text-sm text-gray-500 mb-4">
+                {completeModal.customerName} — Total {fmt(completeModal.total)}, ya pagó {fmt(completeModal.depositAmount)} de anticipo · Saldo a cobrar: <strong className="text-gray-800">{fmt(completeTotal)}</strong>
+              </p>
+            ) : (
+              <p className="text-sm text-gray-500 mb-4">{completeModal.customerName} — Total: {fmt(completeModal.total)}</p>
+            )}
             <form onSubmit={handleComplete} className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-gray-600">Ticket</label>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { getSales, cancelSale } from '../api/sales'
 import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
@@ -203,10 +203,23 @@ export default function Sales() {
               <tr key={s.id} className="hover:bg-gray-50">
                 <td className="px-4 py-3 text-gray-400 font-mono text-xs">#{s.folio}</td>
                 <td className="px-4 py-3 text-gray-600">{fmtDate(s.createdAt)}</td>
-                <td className="px-4 py-3 text-gray-700">{s.customerName ?? '—'}</td>
+                <td className="px-4 py-3 text-gray-700">
+                  {s.customerName ?? '—'}
+                  {s.kind === 'DEPOSIT' && (
+                    <Link to={`/apartados?folio=${s.apartadoFolio}`} className="block text-xs font-medium text-amber-600 hover:text-amber-800 hover:underline mt-0.5">💰 Anticipo · apartado #{s.apartadoFolio}</Link>
+                  )}
+                  {s.kind === 'BALANCE' && (
+                    <Link to={`/apartados?folio=${s.apartadoFolio}`} className="block text-xs font-medium text-amber-600 hover:text-amber-800 hover:underline mt-0.5">Saldo de apartado #{s.apartadoFolio}</Link>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-gray-600">{s.user?.name ?? '—'}</td>
                 <td className="px-4 py-3 text-gray-600">{METHOD_LABELS[s.paymentMethod]}</td>
-                <td className="px-4 py-3 font-semibold text-gray-900">{fmt(s.total)}</td>
+                <td className="px-4 py-3 font-semibold text-gray-900">
+                  {fmt(s.total)}
+                  {s.kind === 'DEPOSIT' && s.pendingBalance > 0 && (
+                    <span className="block text-xs font-normal text-gray-400 mt-0.5">Saldo pendiente: {fmt(s.pendingBalance)}</span>
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   <span className={`text-xs font-medium px-2 py-1 rounded-full ${
                     s.status === 'COMPLETED' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'

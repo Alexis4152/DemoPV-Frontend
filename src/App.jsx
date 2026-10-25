@@ -18,6 +18,7 @@ import Reports from './pages/Reports'
 import CashCuts from './pages/CashCuts'
 import Users from './pages/Users'
 import Roles from './pages/Roles'
+import Offers from './pages/Offers'
 import Categories from './pages/Categories'
 import Appearance from './pages/Appearance'
 import StoreInfo from './pages/StoreInfo'
@@ -94,6 +95,7 @@ function AppRoutes() {
                 <Route path="/reports" element={<PrivateRoute section="REPORTS"><Reports /></PrivateRoute>} />
                 <Route path="/users" element={<PrivateRoute section="USERS"><Users /></PrivateRoute>} />
                 <Route path="/roles" element={<PrivateRoute section="ROLES"><Roles /></PrivateRoute>} />
+                <Route path="/offers" element={<PrivateRoute section="OFFERS"><Offers /></PrivateRoute>} />
                 <Route path="/categories" element={<PrivateRoute adminOnly><Categories /></PrivateRoute>} />
                 <Route path="/appearance" element={<PrivateRoute adminOnly><Appearance /></PrivateRoute>} />
                 <Route path="/store-info" element={<PrivateRoute adminOnly><StoreInfo /></PrivateRoute>} />

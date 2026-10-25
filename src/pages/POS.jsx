@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { searchProducts, getProductByBarcode } from '../api/products'
 import { getCategories } from '../api/categories'
+import { getOffers } from '../api/offers'
 import { createSale } from '../api/sales'
+import { createDepositApartado } from '../api/apartados'
 import { getOpenCashCut } from '../api/cashCuts'
-import { printSaleTicket } from '../utils/printer'
+import { printSaleTicket, openCashDrawer } from '../utils/printer'
 import { resolveMediaUrl } from '../utils/media'
 import { barcodeNotFoundMessage } from '../utils/barcode'
 import Barcode from '../components/Barcode'
@@ -68,6 +70,37 @@ export default function POS() {
   const [catalogVisible, setCatalogVisible] = useState(true)
   const [highlighted, setHighlighted] = useState(0)
   const [categories, setCategories] = useState([])
+  // Modal "Registrar anticipo" (ver handleRegisterDeposit más abajo): usa el carrito tal
+  // cual (mismo buscador/catálogo de siempre) para elegir qué se encarga, y solo pide
+  // aparte los datos del anticipo — no es una venta normal, crea un Apartado con
+  // origin=DEPOSIT directamente ACTIVE + una Sale kind=DEPOSIT por lo que se cobra ahora.
+  const [showDepositModal, setShowDepositModal] = useState(false)
+  const [depositForm, setDepositForm] = useState({
+    customerName: '', customerPhone: '', customerEmail: '', notes: '',
+    depositAmount: '', paymentMethod: 'CASH', amountReceived: '', durationHours: '',
+  })
+  const [depositLoading, setDepositLoading] = useState(false)
+  const [depositFieldErrors, setDepositFieldErrors] = useState({})
+
+  // Modal "Agregar por concepto" (ver handleAddConcept más abajo): para algo que se
+  // vende pero nunca está en el catálogo/inventario (ej. "2 jitomates"). Solo captura
+  // nombre/cantidad/precio y agrega UNA línea al carrito de siempre — se puede mezclar
+  // libremente con productos normales y el cobro sigue siendo el mismo de siempre
+  // (botón "Cobrar" de Resumen), a diferencia del anticipo que sí es un flujo aparte.
+  const [showConceptModal, setShowConceptModal] = useState(false)
+  // `isWeighed`: para lo que se vende por peso en una báscula (ej. azúcar, cecina) — ahí
+  // el cajero no sabe ni le interesa el precio por gramo, solo pesa y lee cuánto marcó la
+  // báscula, así que captura el peso (solo informativo, se imprime junto al nombre) y el
+  // TOTAL que cobró directamente, en vez de cantidad × precio unitario.
+  const [conceptForm, setConceptForm] = useState({ name: '', quantity: '1', unitPrice: '', isWeighed: false, weightGrams: '', totalAmount: '' })
+  const [conceptFieldErrors, setConceptFieldErrors] = useState({})
+
+  // Ofertas vigentes de la tienda ("compra X paga Y"), con sus productos ya incluidos —
+  // ver `activeOfferFor`/`offerBreakdown` más abajo, y `OfferService#findActiveOfferForProduct`
+  // en el backend (misma lógica, espejada aquí solo para mostrar el precio correcto en
+  // vivo mientras se arma el carrito; el backend vuelve a calcular todo al cobrar, nunca
+  // se confía en lo que mande el navegador).
+  const [offers, setOffers] = useState([])
   const [categoryId, setCategoryId] = useState('')
   // Se incrementa cada vez que se hace clic en un chip de categoría (incluso el que ya
   // está activo) para forzar una recarga del catálogo — ver `selectCategory` y el
@@ -81,6 +114,10 @@ export default function POS() {
   // productos. Se recuerda entre sesiones porque es una preferencia del cajero, no de la
   // venta en curso.
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('pos_view_mode') || 'list')
+  // Filtro "Solo en oferta": oculta del catálogo (las 3 vistas) los productos que no
+  // tengan una oferta vigente ligada — se aplica sobre `results` ya cargado (ver
+  // `displayResults`), sin pedirle nada aparte al backend.
+  const [onlyOffers, setOnlyOffers] = useState(false)
   const [cart, setCart] = useState([])
   // Ids de las líneas del carrito marcadas con su checkbox, para quitar varias a la vez
   // sin tener que darle ✕ una por una (ver `toggleSelectAll`/`removeSelected`).
@@ -107,6 +144,7 @@ export default function POS() {
   useEffect(() => {
     getOpenCashCut().then((r) => setCashCut(r.data.data)).catch(() => {})
     getCategories().then((r) => setCategories(r.data.data ?? []))
+    getOffers().then((r) => setOffers(r.data.data ?? [])).catch(() => {})
   }, [])
 
   useEffect(() => { successRef.current = success }, [success])
@@ -253,27 +291,47 @@ export default function POS() {
       if (query.trim()) setQuery('')
       if (refocus) searchInputRef.current?.focus()
     }
-    if (product.stock <= 0) { reject(`"${product.name}" no tiene stock disponible`); return }
+    // "Por pedido" (ver Product#isMadeToOrder): no hay inventario real que validar —
+    // se puede agregar sin importar `stock`, siempre.
+    const madeToOrder = !!product.isMadeToOrder
+    if (!madeToOrder && product.stock <= 0) { reject(`"${product.name}" no tiene stock disponible`); return }
+    // Si el producto tiene oferta vigente, cada "agregar" se lleva una promoción completa
+    // (`offer.buyQuantity` piezas), no una sola — ver `qtyStep`/`displayQty`: la Cantidad
+    // que ve el cajero son promociones, nunca piezas sueltas, cuando hay oferta.
+    const offer = activeOfferFor(product.id)
+    const step = offer ? offer.buyQuantity : 1
     const existingBefore = cart.find((i) => i.productId === product.id)
-    if (existingBefore && existingBefore.quantity + 1 > product.stock) {
+    if (!madeToOrder && existingBefore && existingBefore.quantity + step > product.stock) {
       reject(`Ya no hay más "${product.name}": ya tienes en la venta todo lo disponible (${product.stock})`)
+      return
+    }
+    if (!madeToOrder && !existingBefore && step > product.stock) {
+      reject(`"${product.name}" no tiene suficiente stock para una promoción completa (necesita ${step}, disponible: ${product.stock})`)
       return
     }
     setError('')
     setCart((prev) => {
       const existing = prev.find((i) => i.productId === product.id)
       if (existing) {
+        // Si esa línea ya tiene la oferta desactivada ("No aplicar oferta", ver
+        // `toggleSkipOffer`), vuelve a agregar de a 1 pieza, no de a 1 promoción —
+        // respeta lo que el cajero ya eligió para esta línea en particular.
+        const existingStep = existing.skipOffer ? 1 : step
         // Tope también aquí: el estado más reciente manda, aunque `cart` de arriba
-        // viniera desfasado (escaneos muy seguidos).
-        if (existing.quantity + 1 > product.stock) return prev
-        return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i)
+        // viniera desfasado (escaneos muy seguidos). Sin tope si es "por pedido".
+        if (!madeToOrder && existing.quantity + existingStep > product.stock) return prev
+        return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + existingStep } : i)
       }
       return [...prev, {
-        productId: product.id, productName: product.name, unitPrice: product.price, quantity: 1,
-        stock: product.stock, minStock: product.minStock,
+        productId: product.id, productName: product.name, unitPrice: product.price, quantity: step,
+        stock: product.stock, minStock: product.minStock, isMadeToOrder: madeToOrder,
         // Descuento por línea: 'amount' ($ fijo) o 'percent' (%) sobre esta línea — ver
         // `lineDiscount`/`lineSubtotal` para cómo se resuelve a un monto en pesos.
         discountType: 'amount', discountValue: '',
+        // "No aplicar oferta" (ver `toggleSkipOffer`): el cajero puede desactivar, línea
+        // por línea, una oferta que SÍ está vigente para el producto — para un cliente
+        // que no quiere/necesita aprovecharla y solo quiere llevarse piezas sueltas.
+        skipOffer: false,
       }]
     })
     notify(`"${product.name}" agregado al carrito`, 'success')
@@ -292,21 +350,88 @@ export default function POS() {
   }
 
   /**
+   * Resuelve la oferta vigente AHORA para un producto, si hay alguna — mismo criterio que
+   * `OfferService#findActiveOfferForProduct` en el backend: activa, dentro de su rango de
+   * fechas (si tiene), y si hubiera más de una, la que más piezas de regalo da.
+   */
+  function activeOfferFor(productId) {
+    const now = new Date()
+    const candidates = offers.filter((o) => {
+      if (!o.isActive) return false
+      if (!o.products?.some((p) => p.id === productId)) return false
+      if (o.startsAt && now < new Date(o.startsAt)) return false
+      if (o.endsAt && now > new Date(o.endsAt)) return false
+      return true
+    })
+    if (candidates.length === 0) return null
+    return candidates.reduce((best, o) =>
+      (o.buyQuantity - o.payQuantity) > (best.buyQuantity - best.payQuantity) ? o : best
+    )
+  }
+
+  /**
+   * Cuántas piezas físicas representa "1" en el cuadro de Cantidad de esta línea. Si el
+   * producto tiene oferta vigente, la Cantidad que captura el cajero son PROMOCIONES, no
+   * piezas sueltas — captura "1" y se lleva {@link Offer#buyQuantity} piezas, captura "5"
+   * y se lleva 5 veces esas piezas — así que el paso es `offer.buyQuantity`. Sin oferta,
+   * el paso de siempre: 1 pieza = 1 pieza. `item.quantity` (el campo que de verdad se
+   * manda al backend) SIEMPRE son piezas físicas, nunca promociones — ver `displayQty`,
+   * que es la única que convierte entre lo que el cajero teclea y lo que se guarda.
+   */
+  function qtyStep(item) {
+    if (item.skipOffer) return 1
+    return activeOfferFor(item.productId)?.buyQuantity || 1
+  }
+
+  /** Lo que se le muestra al cajero en el cuadro de Cantidad — piezas físicas ÷ paso de
+   *  la oferta (ver `qtyStep`), o las piezas tal cual si no hay oferta. */
+  function displayQty(item) {
+    if (item.quantity === '') return ''
+    return item.quantity / qtyStep(item)
+  }
+
+  /**
+   * Reparte la cantidad de una línea del carrito entre piezas "pagadas" (a precio normal)
+   * y piezas "gratis" de la promoción, exactamente igual que `SaleService#applyOffer` en
+   * el backend — misma fórmula, espejada aquí solo para que el cajero vea el total
+   * correcto MIENTRAS arma la venta, no hasta que el backend responda al cobrar.
+   *
+   * @returns {null|{offer: object, piezasPagadas: number, piezasGratis: number, paidGross: number}}
+   *          `null` si el producto no tiene oferta vigente, o la cantidad no alcanza a
+   *          formar ni una promoción completa (se vende igual que sin oferta).
+   */
+  function offerBreakdown(item) {
+    if (item.skipOffer) return null
+    const offer = activeOfferFor(item.productId)
+    if (!offer) return null
+    const promosPosibles = Math.floor(item.quantity / offer.buyQuantity)
+    const promosAplicados = offer.maxPromosPerSale != null ? Math.min(promosPosibles, offer.maxPromosPerSale) : promosPosibles
+    if (promosAplicados <= 0) return null
+    const piezasGratis = promosAplicados * (offer.buyQuantity - offer.payQuantity)
+    const piezasPagadas = item.quantity - piezasGratis
+    return { offer, piezasPagadas, piezasGratis, paidGross: item.unitPrice * piezasPagadas }
+  }
+
+  /**
    * Resuelve el descuento de una línea del carrito a un monto en pesos, sin importar si
    * el cajero lo capturó como monto fijo o como porcentaje. Siempre queda acotado entre 0
-   * y el importe bruto de la línea (`unitPrice * quantity`), para que nunca pueda dejar
-   * esa línea en subtotal negativo ni un porcentaje mayor a 100 la deje en negativo.
+   * y el importe bruto FACTURABLE de la línea (`unitPrice * piezasPagadas` si hay oferta
+   * vigente, `unitPrice * quantity` si no) — las piezas gratis de una promoción nunca
+   * entran en esta cuenta, ya están a $0.00.
    */
   function lineDiscount(item) {
-    const gross = item.unitPrice * item.quantity
+    const breakdown = offerBreakdown(item)
+    const gross = breakdown ? breakdown.paidGross : item.unitPrice * item.quantity
     const raw = Number(item.discountValue) || 0
     const amount = item.discountType === 'percent' ? gross * (raw / 100) : raw
     return Math.min(Math.max(amount, 0), gross)
   }
 
-  /** Importe final de una línea del carrito, ya con su descuento aplicado. */
+  /** Importe final de una línea del carrito, ya con su descuento (y oferta, si aplica) aplicados. */
   function lineSubtotal(item) {
-    return item.unitPrice * item.quantity - lineDiscount(item)
+    const breakdown = offerBreakdown(item)
+    const gross = breakdown ? breakdown.paidGross : item.unitPrice * item.quantity
+    return gross - lineDiscount(item)
   }
 
   /**
@@ -323,7 +448,8 @@ export default function POS() {
    * @returns {{ capAmount: number, reason: 'amount'|'percent'|'disabled'|null, maxAmount: number|null, maxPercent: number|null }}
    */
   function resolveDiscountCap(item) {
-    const gross = item.unitPrice * item.quantity
+    const breakdown = offerBreakdown(item)
+    const gross = breakdown ? breakdown.paidGross : item.unitPrice * item.quantity
     const maxAmount = tienda?.maxDiscountAmount != null ? Number(tienda.maxDiscountAmount) : null
     const maxPercent = tienda?.maxDiscountPercent != null ? Number(tienda.maxDiscountPercent) : null
 
@@ -345,6 +471,27 @@ export default function POS() {
   }
 
   /**
+   * Prende/apaga "No aplicar oferta" para una línea: el producto puede tener una
+   * promoción vigente, pero este cliente en particular no la quiere (ej. solo se lleva 1
+   * pieza suelta de un 2x1) — ver `skipOffer` en `SaleItemRequest.java`, que es lo que de
+   * verdad le indica al backend que no aplique la oferta en esta línea.
+   *
+   * Al prenderlo, la cantidad vuelve a 1 pieza física (el caso típico: "solo quiero una").
+   * Al apagarlo (vuelve a querer la oferta), regresa a 1 promoción completa — mismo valor
+   * inicial que al agregar el producto por primera vez (ver `addToCart`).
+   */
+  function toggleSkipOffer(productId) {
+    setCart((prev) => prev.map((i) => {
+      if (i.productId !== productId) return i
+      const skipOffer = !i.skipOffer
+      const newStep = skipOffer ? 1 : (activeOfferFor(i.productId)?.buyQuantity || 1)
+      let qty = newStep
+      if (i.stock != null && qty > i.stock) qty = Math.floor(i.stock / newStep) * newStep || newStep
+      return { ...i, skipOffer, quantity: qty }
+    }))
+  }
+
+  /**
    * Cambia el valor de descuento capturado para una línea (interpretado según su
    * discountType). Si el monto que implica supera el límite configurado por el ADMIN (ver
    * `resolveDiscountCap`), se avisa con un toast y el valor se ajusta al máximo permitido
@@ -356,7 +503,8 @@ export default function POS() {
       const num = Number(rawValue)
       if (rawValue === '' || Number.isNaN(num)) return { ...i, discountValue: rawValue }
 
-      const gross = i.unitPrice * i.quantity
+      const breakdown = offerBreakdown(i)
+      const gross = breakdown ? breakdown.paidGross : i.unitPrice * i.quantity
       const attemptedAmount = i.discountType === 'percent' ? gross * num / 100 : num
       const { capAmount, reason, maxAmount, maxPercent } = resolveDiscountCap(i)
 
@@ -428,9 +576,14 @@ export default function POS() {
   function bumpQty(productId, delta) {
     setCart((prev) => prev.map((i) => {
       if (i.productId !== productId) return i
-      let qty = Number(i.quantity || 0) + delta
-      if (qty < 1) qty = 1
-      if (i.stock != null && qty > i.stock) qty = i.stock
+      const step = qtyStep(i)
+      let qty = Number(i.quantity || 0) + delta * step
+      if (qty < step) qty = step
+      // Topa al stock disponible sin partir una promoción a la mitad: redondea hacia
+      // abajo al múltiplo de `step` más cercano (si hay oferta, el stock siempre alcanza
+      // para al menos una promoción completa — ver el guard en `addToCart`). Sin tope si
+      // es "por pedido" (`isMadeToOrder`): no hay inventario real que respetar.
+      if (!i.isMadeToOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
   }
@@ -447,8 +600,12 @@ export default function POS() {
     setCart((prev) => prev.map((i) => {
       if (i.productId !== productId) return i
       if (digits === '') return { ...i, quantity: '' }
-      let qty = Number(digits)
-      if (i.stock != null && qty > i.stock) qty = i.stock
+      // Lo tecleado es lo que se ve en el cuadro (promociones si hay oferta, piezas si
+      // no — ver `displayQty`); se guarda convertido a piezas físicas, que es lo único
+      // que entiende el resto del carrito y lo que se manda al backend.
+      const step = qtyStep(i)
+      let qty = Number(digits) * step
+      if (!i.isMadeToOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
   }
@@ -458,9 +615,10 @@ export default function POS() {
   function commitQtyInput(productId) {
     setCart((prev) => prev.map((i) => {
       if (i.productId !== productId) return i
+      const step = qtyStep(i)
       let qty = Number(i.quantity) || 0
-      if (qty < 1) qty = 1
-      if (i.stock != null && qty > i.stock) qty = i.stock
+      if (qty < step) qty = step
+      if (!i.isMadeToOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
   }
@@ -557,6 +715,26 @@ export default function POS() {
   // `lineSubtotal`). `totalDiscount` es solo para mostrarlo desglosado en el resumen y en
   // el ticket (que también reciben este mismo total agregado, calculado por el backend a
   // partir del descuento de cada línea que se manda en `handleCheckout`).
+  // Si no hay NINGUNA oferta vigente ahora mismo (sin importar a qué producto aplique),
+  // el botón "🏷️ Ofertas" no tiene nada que filtrar — se oculta en vez de dejarlo ahí sin
+  // efecto. No usa `activeOfferFor` (que necesita un producto) porque aquí basta con
+  // saber si existe al menos una oferta activa y dentro de su vigencia.
+  const hasActiveOffers = offers.some((o) => {
+    if (!o.isActive) return false
+    const now = new Date()
+    if (o.startsAt && now < new Date(o.startsAt)) return false
+    if (o.endsAt && now > new Date(o.endsAt)) return false
+    return true
+  })
+
+  // Catálogo a mostrar (las 3 vistas): `results` tal cual, o solo los que tengan oferta
+  // vigente si el cajero prendió el filtro "🏷️ Ofertas" — filtrado en el navegador sobre
+  // lo que ya se cargó, sin pedirle nada aparte al backend. `&& hasActiveOffers`: sin
+  // esto, si las ofertas vigentes desaparecieran (se desactivaron/vencieron) mientras el
+  // filtro seguía prendido, el botón se esconde pero el catálogo se quedaría vacío sin
+  // ninguna forma de apagarlo.
+  const displayResults = onlyOffers && hasActiveOffers ? results.filter((p) => activeOfferFor(p.id)) : results
+
   const subtotal = cart.reduce((s, i) => s + lineSubtotal(i), 0)
   const totalDiscount = cart.reduce((s, i) => s + lineDiscount(i), 0)
 
@@ -612,7 +790,29 @@ export default function POS() {
   async function handleCheckout() {
     if (cart.length === 0 || !cashCut || cashAmountMissing || amountExceedsLimit
       || customerNameTooLong || customerEmailTooLong || customerEmailInvalid) return
-    if (!(await confirmDialog(`¿Deseas realizar esta venta por ${fmt(subtotal)}?`, { confirmText: 'Realizar venta', danger: false }))) return
+
+    // Líneas con oferta vigente a las que el cajero ADEMÁS les metió un descuento manual:
+    // se le pregunta una sola vez, aquí, si quiere apilar los dos descuentos o quedarse
+    // solo con el de la oferta — nunca se decide solo, ni se pregunta por cada tecleo del
+    // campo de descuento (ver `updateDiscountValue`, que solo acota el monto máximo).
+    const stackedLines = cart.filter((i) => offerBreakdown(i) && (Number(i.discountValue) || 0) > 0)
+    let effectiveCart = cart
+    if (stackedLines.length > 0) {
+      const names = stackedLines.map((i) => i.productName).join(', ')
+      const applyBoth = await confirmDialog(
+        `"${names}" ya trae una oferta aplicada. ¿Quieres aplicar TAMBIÉN tu descuento manual encima de la oferta, o solo dejar la oferta?`,
+        { confirmText: 'Aplicar ambos', cancelText: 'Solo la oferta', danger: false }
+      )
+      if (!applyBoth) {
+        effectiveCart = cart.map((i) =>
+          stackedLines.some((s) => s.productId === i.productId) ? { ...i, discountValue: '' } : i
+        )
+        setCart(effectiveCart)
+      }
+    }
+
+    const effectiveSubtotal = effectiveCart.reduce((s, i) => s + lineSubtotal(i), 0)
+    if (!(await confirmDialog(`¿Deseas realizar esta venta por ${fmt(effectiveSubtotal)}?`, { confirmText: 'Realizar venta', danger: false }))) return
     setLoading(true)
     setError('')
     try {
@@ -623,7 +823,9 @@ export default function POS() {
         // Solo se manda en efectivo; el backend lo exige ahí y lo ignora para los demás
         // métodos, pero no tiene sentido enviarlo si el cajero ni lo capturó.
         amountReceived: paymentMethod === 'CASH' ? amountReceivedNum : undefined,
-        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice, discount: lineDiscount(i) })),
+        items: effectiveCart.map((i) => i.isConcept
+          ? { productId: null, conceptName: i.productName, quantity: i.quantity, unitPrice: i.unitPrice, discount: lineDiscount(i) }
+          : { productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice, discount: lineDiscount(i), skipOffer: i.skipOffer || undefined }),
       })
       const lowStockWarnings = cart.filter((i) => i.minStock != null && (i.stock - i.quantity) <= i.minStock)
       setSuccess({ ...res.data.data, lowStockWarnings, ticketType })
@@ -636,11 +838,149 @@ export default function POS() {
       // Se imprime "al vuelo" SOLO en modo físico: si la caja no tiene QZ Tray instalado/
       // corriendo, o la impresora está apagada, no debe tumbar la venta ya registrada —
       // solo se avisa para que el cajero pueda usar "Reimprimir ticket" en cuanto lo resuelva.
-      if (ticketType === 'physical') printTicket(res.data.data.id)
+      if (ticketType === 'physical') {
+        printTicket(res.data.data.id)
+      } else if (paymentMethod === 'CASH') {
+        // El pulso que abre el cajón normalmente viaja pegado al ticket físico completo —
+        // en Digital ese ticket nunca se manda a imprimir, así que el cajón tampoco se
+        // abriría solo. Se pide aparte, en silencio (sin el estado "Imprimiendo..." del
+        // botón de ticket): si falla (QZ Tray no instalado, impresora apagada) solo se
+        // avisa, nunca tumba la venta ya registrada.
+        openDrawerSilently(res.data.data.id)
+      }
     } catch (err) {
       setError(err.response?.data?.message ?? 'Error al registrar venta')
     } finally {
       setLoading(false)
+    }
+  }
+
+  /**
+   * Abre el modal de anticipo, precargando nombre/correo con lo que el cajero ya haya
+   * tecleado en el panel de "Resumen" (campos `customerName`/`customerEmail` de la venta
+   * normal) — si ya los escribió ahí antes de darse cuenta de que era un anticipo, no
+   * tiene que volver a escribirlos. El teléfono no se precarga porque el panel normal no
+   * lo pide (no es parte de una venta de mostrador, solo de un apartado).
+   */
+  function openDepositModal() {
+    setDepositForm((prev) => ({ ...prev, customerName: customerName || prev.customerName, customerEmail: customerEmail || prev.customerEmail }))
+    setShowDepositModal(true)
+  }
+
+  /** Abre el modal "Agregar por concepto", siempre con el formulario en blanco. */
+  function openConceptModal() {
+    setConceptForm({ name: '', quantity: '1', unitPrice: '', isWeighed: false, weightGrams: '', totalAmount: '' })
+    setConceptFieldErrors({})
+    setShowConceptModal(true)
+  }
+
+  /**
+   * Agrega al carrito la línea "por concepto" capturada en el modal — misma validación
+   * de campos marcados en rojo que el resto de la app (Inventario/Usuarios/Anticipo), solo
+   * al dar clic en "Agregar". `productId` es un id sintético único (string, nunca choca con
+   * un id real de producto) para que todo lo demás del carrito (cantidad, quitar línea,
+   * selección) funcione sin tener que distinguir el caso en cada función.
+   *
+   * Si `isWeighed`, el peso es solo informativo (se anexa al nombre para el ticket, ej.
+   * "Cecina (350 g)") — la línea se manda con cantidad 1 y el precio unitario es el TOTAL
+   * que capturó el cajero, nunca un precio por gramo calculado a la inversa.
+   */
+  function handleAddConcept() {
+    const errors = {}
+    const name = conceptForm.name.trim()
+    if (!name) errors.name = 'Captura el nombre de lo que vendes'
+
+    let qty, price, finalName
+    if (conceptForm.isWeighed) {
+      const grams = Number(conceptForm.weightGrams)
+      if (!grams || grams <= 0) errors.weightGrams = 'Captura el peso marcado por la báscula'
+      const total = Number(conceptForm.totalAmount)
+      if (conceptForm.totalAmount === '' || Number.isNaN(total) || total < 0) errors.totalAmount = 'Captura cuánto cobraste en total'
+      qty = 1
+      price = total
+      finalName = grams > 0 ? `${name} (${grams} g)` : name
+    } else {
+      qty = Number(conceptForm.quantity)
+      if (!qty || qty <= 0) errors.quantity = 'La cantidad debe ser mayor a 0'
+      price = Number(conceptForm.unitPrice)
+      if (conceptForm.unitPrice === '' || Number.isNaN(price) || price < 0) errors.unitPrice = 'Captura un precio válido'
+      finalName = name
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setConceptFieldErrors(errors)
+      return
+    }
+    setCart((prev) => [...prev, {
+      productId: `concept-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      productName: finalName, unitPrice: price, quantity: qty,
+      stock: null, minStock: null, isMadeToOrder: false,
+      discountType: 'amount', discountValue: '', skipOffer: false,
+      isConcept: true,
+    }])
+    notify(`"${finalName}" agregado al carrito`, 'success')
+    setShowConceptModal(false)
+  }
+
+  /** Valida el formulario del modal de anticipo del lado del cliente, antes de pedir
+   *  confirmación — mismo criterio que `ApartadoDepositRequest` en el backend. */
+  function validateDepositForm() {
+    const errors = {}
+    if (!depositForm.customerName.trim()) errors.customerName = 'El nombre es obligatorio'
+    if (!/^[0-9]{10}$/.test(depositForm.customerPhone)) errors.customerPhone = 'El teléfono debe tener 10 dígitos'
+    if (depositForm.customerEmail && !EMAIL_RE.test(depositForm.customerEmail)) errors.customerEmail = 'Correo inválido'
+    const amount = Number(depositForm.depositAmount)
+    if (!depositForm.depositAmount || amount <= 0) errors.depositAmount = 'Captura cuánto dejó de anticipo'
+    else if (amount >= subtotal) errors.depositAmount = `Debe ser menor al total del pedido (${fmt(subtotal)})`
+    if (depositForm.paymentMethod === 'CASH') {
+      const received = Number(depositForm.amountReceived)
+      if (!depositForm.amountReceived || received < amount) errors.amountReceived = 'Debe alcanzar para cubrir el anticipo'
+    }
+    return errors
+  }
+
+  /**
+   * Registra el apartado con anticipo usando el carrito actual (mismo buscador/catálogo
+   * de siempre para elegir qué se encarga) — ver `createDepositApartado` en `api/apartados.js`.
+   * A diferencia de `handleCheckout`, esto NO es una venta normal: crea el Apartado ya
+   * `ACTIVE` y una venta aparte (`kind=DEPOSIT`) solo por el anticipo.
+   */
+  async function handleRegisterDeposit() {
+    if (cart.length === 0) return
+    const errors = validateDepositForm()
+    if (Object.keys(errors).length > 0) {
+      setDepositFieldErrors(errors)
+      notify('Revisa los campos marcados en rojo', 'error')
+      return
+    }
+    if (!(await confirmDialog(
+      `¿Registrar un anticipo de ${fmt(Number(depositForm.depositAmount))} para "${depositForm.customerName}"?`,
+      { confirmText: 'Registrar anticipo', danger: false }
+    ))) return
+    setDepositLoading(true)
+    setDepositFieldErrors({})
+    try {
+      await createDepositApartado({
+        customerName: depositForm.customerName,
+        customerPhone: depositForm.customerPhone,
+        customerEmail: depositForm.customerEmail || null,
+        notes: depositForm.notes || null,
+        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+        durationHours: depositForm.durationHours ? Number(depositForm.durationHours) : null,
+        depositAmount: Number(depositForm.depositAmount),
+        paymentMethod: depositForm.paymentMethod,
+        amountReceived: depositForm.paymentMethod === 'CASH' ? Number(depositForm.amountReceived) : undefined,
+      })
+      notify('Anticipo registrado — el apartado ya quedó activo', 'success')
+      setShowDepositModal(false)
+      setCart([])
+      setSelectedIds(new Set())
+      setDepositForm({ customerName: '', customerPhone: '', customerEmail: '', notes: '',
+        depositAmount: '', paymentMethod: 'CASH', amountReceived: '', durationHours: '' })
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudo registrar el anticipo', 'error')
+    } finally {
+      setDepositLoading(false)
     }
   }
 
@@ -658,6 +998,19 @@ export default function POS() {
       notify(err.message ?? 'No se pudo imprimir el ticket', 'error')
     } finally {
       setPrinting(false)
+    }
+  }
+
+  /**
+   * Abre el cajón de una venta en efectivo cuyo ticket no se imprimió físicamente (ver
+   * `handleCheckout`) — sin tocar `printing` (no es "imprimir un ticket", es solo el
+   * pulso del cajón) y sin bloquear nada si falla, solo avisa.
+   */
+  async function openDrawerSilently(saleId) {
+    try {
+      await openCashDrawer(saleId)
+    } catch (err) {
+      notify(err.message ?? 'No se pudo abrir el cajón', 'error')
     }
   }
 
@@ -744,6 +1097,15 @@ export default function POS() {
               >{c.name}</button>
             ))}
           </div>
+          <div className="flex items-center gap-2 shrink-0">
+          {hasActiveOffers && (
+            <button
+              type="button"
+              title="Mostrar solo productos con oferta vigente"
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${onlyOffers ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+              onClick={() => setOnlyOffers((v) => !v)}
+            >🏷️ Ofertas</button>
+          )}
           <div className="flex gap-1 bg-gray-100 rounded-full p-1 shrink-0">
             <button
               type="button"
@@ -764,6 +1126,7 @@ export default function POS() {
               onClick={() => changeViewMode('codes')}
             >🏷️ Códigos</button>
           </div>
+          </div>
         </div>
 
         <div className="relative mb-4">
@@ -776,7 +1139,7 @@ export default function POS() {
             onFocus={() => setCatalogVisible(true)}
             onKeyDown={handleSearchKeyDown}
           />
-          {catalogVisible && results.length > 0 && (
+          {catalogVisible && displayResults.length > 0 && (
             // No es "absolute": si flotara sobre el carrito de abajo, con la lista de
             // resultados abierta se llegaba a tapar productos que el cajero ya había
             // agregado. Al quedar en el flujo normal, empuja el carrito hacia abajo en
@@ -790,13 +1153,20 @@ export default function POS() {
               // pantalla (pistola de imagen) o tocar la tarjeta; ambos agregan a la venta.
               <div className="bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-[32rem] overflow-y-auto p-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {results.map((p) => (
+                  {displayResults.map((p) => {
+                    const offer = activeOfferFor(p.id)
+                    return (
                     <button
                       key={p.id}
                       type="button"
-                      className="flex flex-col items-center text-center rounded-xl border border-gray-200 hover:border-purple-300 hover:shadow-md transition-all bg-white p-3"
+                      className="relative flex flex-col items-center text-center rounded-xl border border-gray-200 hover:border-purple-300 hover:shadow-md transition-all bg-white p-3"
                       onClick={() => addToCart(p, { refocus: false })}
                     >
+                      {offer && (
+                        <span className="absolute top-1.5 left-1.5 bg-purple-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                          {offer.buyQuantity}x{offer.payQuantity}
+                        </span>
+                      )}
                       <p className="font-medium text-gray-900 text-sm leading-snug line-clamp-2 w-full">{p.name}</p>
                       <div className="flex items-center justify-between w-full mt-1 mb-2">
                         <span className="font-bold text-purple-700 text-sm">{fmt(p.price)}</span>
@@ -806,19 +1176,27 @@ export default function POS() {
                         ? <Barcode value={p.barcode} height={44} />
                         : <span className="text-xs text-gray-400 py-6">Sin código</span>}
                     </button>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             ) : viewMode === 'images' ? (
               <div className="bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-[32rem] overflow-y-auto p-3">
                 <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
-                  {results.map((p) => (
+                  {displayResults.map((p) => {
+                    const offer = activeOfferFor(p.id)
+                    return (
                     <button
                       key={p.id}
                       type="button"
-                      className="flex flex-col text-left rounded-xl border border-gray-200 hover:border-purple-300 hover:shadow-md transition-all overflow-hidden bg-white"
+                      className="relative flex flex-col text-left rounded-xl border border-gray-200 hover:border-purple-300 hover:shadow-md transition-all overflow-hidden bg-white"
                       onClick={() => addToCart(p, { refocus: false })}
                     >
+                      {offer && (
+                        <span className="absolute top-1.5 left-1.5 z-10 bg-purple-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                          {offer.buyQuantity}x{offer.payQuantity}
+                        </span>
+                      )}
                       <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
                         {p.primaryImage ? (
                           <img src={resolveMediaUrl(p.primaryImage)} alt="" className="w-full h-full object-cover" />
@@ -836,12 +1214,15 @@ export default function POS() {
                         </div>
                       </div>
                     </button>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             ) : (
               <div className="bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-80 overflow-y-auto">
-                {results.map((p, idx) => (
+                {displayResults.map((p, idx) => {
+                  const offer = activeOfferFor(p.id)
+                  return (
                   <button
                     key={p.id}
                     type="button"
@@ -850,7 +1231,14 @@ export default function POS() {
                     onClick={() => addToCart(p, { refocus: false })}
                   >
                     <div>
-                      <p className="font-medium text-gray-900 text-sm">{p.name}</p>
+                      <p className="font-medium text-gray-900 text-sm flex items-center gap-1.5">
+                        {p.name}
+                        {offer && (
+                          <span className="bg-purple-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                            {offer.buyQuantity}x{offer.payQuantity}
+                          </span>
+                        )}
+                      </p>
                       <p className="text-xs text-gray-400">{p.barcode} · Categoría: {p.category?.name ?? '—'}</p>
                     </div>
                     <div className="text-right">
@@ -860,7 +1248,8 @@ export default function POS() {
                       </span>
                     </div>
                   </button>
-                ))}
+                  )
+                })}
               </div>
             )
           )}
@@ -916,6 +1305,8 @@ export default function POS() {
               <tbody className="divide-y divide-gray-50">
                 {cart.map((item) => {
                   const discount = lineDiscount(item)
+                  const breakdown = offerBreakdown(item)
+                  const offer = activeOfferFor(item.productId)
                   return (
                   <tr key={item.productId} className={selectedIds.has(item.productId) ? 'bg-purple-50/50' : undefined}>
                     <td className="px-4 py-3">
@@ -926,9 +1317,33 @@ export default function POS() {
                         aria-label={`Seleccionar ${item.productName}`}
                       />
                     </td>
-                    <td className="px-4 py-3 font-medium text-gray-900">{item.productName}</td>
+                    <td className="px-4 py-3 font-medium text-gray-900">
+                      {item.productName}
+                      {item.isConcept && (
+                        <span className="block text-xs font-normal text-amber-600 mt-0.5">📋 Por concepto</span>
+                      )}
+                      {offer && (
+                        <span
+                          className={`block text-xs font-normal mt-0.5 ${item.skipOffer ? 'text-gray-400 line-through' : 'text-purple-600'}`}
+                          title={offer.name}
+                        >
+                          🏷️ Lleva {offer.buyQuantity}, paga {offer.payQuantity}
+                          {breakdown ? ` — ${breakdown.piezasGratis} gratis` : ''}
+                        </span>
+                      )}
+                      {offer && (
+                        <label className="flex items-center gap-1 mt-1 text-xs text-gray-500 font-normal cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!item.skipOffer}
+                            onChange={() => toggleSkipOffer(item.productId)}
+                          />
+                          No aplicar oferta
+                        </label>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-gray-600">{fmt(item.unitPrice)}</td>
-                    <td className="px-4 py-3 text-gray-400">{item.stock}</td>
+                    <td className="px-4 py-3 text-gray-400">{item.isConcept ? '—' : item.isMadeToOrder ? <span className="italic text-xs">Por pedido</span> : item.stock}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <button className="w-6 h-6 rounded border text-gray-600 hover:bg-gray-100 select-none touch-manipulation"
@@ -942,14 +1357,15 @@ export default function POS() {
                         <input
                           type="text" inputMode="numeric"
                           className="input w-12 !px-1 py-0.5 text-center"
-                          value={item.quantity}
+                          value={displayQty(item)}
                           onChange={(e) => handleQtyInputChange(item.productId, e.target.value)}
                           onBlur={() => commitQtyInput(item.productId)}
                           onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-                          aria-label={`Cantidad de ${item.productName}`}
+                          aria-label={`${offer ? 'Promociones' : 'Cantidad'} de ${item.productName}`}
+                          title={offer ? `Cada promoción son ${offer.buyQuantity} piezas` : undefined}
                         />
                         <button className="w-6 h-6 rounded border text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed select-none touch-manipulation"
-                          disabled={item.stock != null && item.quantity >= item.stock}
+                          disabled={!item.isMadeToOrder && item.stock != null && item.quantity + qtyStep(item) > item.stock}
                           onMouseDown={() => startQtyHold(item.productId, 1)}
                           onMouseUp={() => endQtyHold(item.productId, 1)}
                           onMouseLeave={clearQtyHold}
@@ -989,7 +1405,7 @@ export default function POS() {
                     </td>
                     <td className="px-4 py-3 font-semibold text-gray-900">
                       {fmt(lineSubtotal(item))}
-                      {discount > 0 && (
+                      {(discount > 0 || breakdown) && (
                         <span className="block text-xs font-normal text-gray-400 line-through">{fmt(item.unitPrice * item.quantity)}</span>
                       )}
                     </td>
@@ -1012,6 +1428,22 @@ export default function POS() {
           <h3 className="font-bold text-gray-900 mb-4">Resumen</h3>
 
           <div className="space-y-3 mb-4">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="py-2 rounded-lg text-sm font-semibold border-2 border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled={!cashCut}
+                title={!cashCut ? 'Abre un corte de caja para poder cobrar' : 'Para algo que vendes pero no está en tu inventario, ej. 2 jitomates'}
+                onClick={openConceptModal}
+              >📋 Por concepto</button>
+              <button
+                type="button"
+                className="py-2 rounded-lg text-sm font-semibold border-2 border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled={cart.length === 0 || !cashCut}
+                title={cart.length === 0 ? 'Agrega primero lo que el cliente va a encargar' : !cashCut ? 'Abre un corte de caja para poder cobrar' : undefined}
+                onClick={openDepositModal}
+              >💰 Anticipo</button>
+            </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Ticket</label>
               <div className="grid grid-cols-2 gap-2 mt-1">
@@ -1131,6 +1563,166 @@ export default function POS() {
           </button>
         </div>
       </div>
+
+      {showConceptModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowConceptModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-1">Agregar por concepto</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Para algo que vendes pero que no está en tu catálogo/inventario, ej. "2 jitomates" o "3 huevos". Se agrega como una línea más del carrito — puedes seguir agregando productos normales después.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600">Nombre del producto <span className={conceptFieldErrors.name ? 'text-red-600' : ''}>*</span></label>
+                <input
+                  className="input" placeholder="Ej. Jitomates" autoFocus
+                  value={conceptForm.name}
+                  onChange={(e) => setConceptForm({ ...conceptForm, name: e.target.value })}
+                />
+                {conceptFieldErrors.name && <p className="text-red-600 text-xs mt-1">{conceptFieldErrors.name}</p>}
+              </div>
+
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={conceptForm.isWeighed}
+                  onChange={(e) => setConceptForm({ ...conceptForm, isWeighed: e.target.checked })}
+                />
+                Se vende por peso (ej. azúcar, cecina)
+              </label>
+
+              {conceptForm.isWeighed ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Peso (gramos) <span className={conceptFieldErrors.weightGrams ? 'text-red-600' : ''}>*</span></label>
+                    <input
+                      type="number" min="0" step="any" className="input" placeholder="Ej. 350"
+                      value={conceptForm.weightGrams}
+                      onChange={(e) => setConceptForm({ ...conceptForm, weightGrams: e.target.value })}
+                    />
+                    {conceptFieldErrors.weightGrams && <p className="text-red-600 text-xs mt-1">{conceptFieldErrors.weightGrams}</p>}
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Total cobrado <span className={conceptFieldErrors.totalAmount ? 'text-red-600' : ''}>*</span></label>
+                    <input
+                      type="number" min="0" step="0.01" className="input" placeholder="0.00"
+                      value={conceptForm.totalAmount}
+                      onChange={(e) => setConceptForm({ ...conceptForm, totalAmount: e.target.value })}
+                    />
+                    {conceptFieldErrors.totalAmount && <p className="text-red-600 text-xs mt-1">{conceptFieldErrors.totalAmount}</p>}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Cantidad <span className={conceptFieldErrors.quantity ? 'text-red-600' : ''}>*</span></label>
+                    <input
+                      type="number" min="0" step="any" className="input"
+                      value={conceptForm.quantity}
+                      onChange={(e) => setConceptForm({ ...conceptForm, quantity: e.target.value })}
+                    />
+                    {conceptFieldErrors.quantity && <p className="text-red-600 text-xs mt-1">{conceptFieldErrors.quantity}</p>}
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Precio unitario <span className={conceptFieldErrors.unitPrice ? 'text-red-600' : ''}>*</span></label>
+                    <input
+                      type="number" min="0" step="0.01" className="input" placeholder="0.00"
+                      value={conceptForm.unitPrice}
+                      onChange={(e) => setConceptForm({ ...conceptForm, unitPrice: e.target.value })}
+                    />
+                    {conceptFieldErrors.unitPrice && <p className="text-red-600 text-xs mt-1">{conceptFieldErrors.unitPrice}</p>}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button type="button" className="btn-secondary flex-1" onClick={() => setShowConceptModal(false)}>Cancelar</button>
+              <button type="button" className="btn-primary flex-1" onClick={handleAddConcept}>Agregar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDepositModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowDepositModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-1">Registrar anticipo</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              El cliente deja un anticipo de lo que trae en el carrito ({fmt(subtotal)} en total) — se registra como un apartado activo y una venta aparte solo por el anticipo.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600">Nombre del cliente <span className={depositFieldErrors.customerName ? 'text-red-600' : ''}>*</span></label>
+                <input className="input" value={depositForm.customerName} onChange={(e) => setDepositForm({ ...depositForm, customerName: e.target.value })} />
+                {depositFieldErrors.customerName && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerName}</p>}
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Teléfono <span className={depositFieldErrors.customerPhone ? 'text-red-600' : ''}>*</span></label>
+                <input className="input" inputMode="numeric" placeholder="10 dígitos" value={depositForm.customerPhone}
+                  onChange={(e) => setDepositForm({ ...depositForm, customerPhone: e.target.value.replace(/\D/g, '').slice(0, 10) })} />
+                {depositFieldErrors.customerPhone && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerPhone}</p>}
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Correo (opcional)</label>
+                <input className="input" value={depositForm.customerEmail} onChange={(e) => setDepositForm({ ...depositForm, customerEmail: e.target.value })} />
+                {depositFieldErrors.customerEmail && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerEmail}</p>}
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Notas (opcional)</label>
+                <textarea className="input" rows={2} value={depositForm.notes} onChange={(e) => setDepositForm({ ...depositForm, notes: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Anticipo <span className={depositFieldErrors.depositAmount ? 'text-red-600' : ''}>*</span></label>
+                  <input className="input" type="number" min="0" step="0.01" value={depositForm.depositAmount}
+                    onChange={(e) => setDepositForm({ ...depositForm, depositAmount: e.target.value })} />
+                  {depositFieldErrors.depositAmount && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.depositAmount}</p>}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Vigencia (horas)</label>
+                  <input className="input" type="number" min="1" placeholder="Default de la tienda" value={depositForm.durationHours}
+                    onChange={(e) => setDepositForm({ ...depositForm, durationHours: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Método de pago del anticipo</label>
+                <select className="input" value={depositForm.paymentMethod} onChange={(e) => setDepositForm({ ...depositForm, paymentMethod: e.target.value })}>
+                  <option value="CASH">💵 Efectivo</option>
+                  <option value="CARD">💳 Tarjeta</option>
+                  <option value="TRANSFER">🏦 Transferencia</option>
+                </select>
+              </div>
+              {depositForm.paymentMethod === 'CASH' && (
+                <div>
+                  <label className="text-xs font-medium text-gray-600">¿Con cuánto pagó el anticipo?</label>
+                  <input className="input" type="number" min="0" step="0.01" value={depositForm.amountReceived}
+                    onChange={(e) => setDepositForm({ ...depositForm, amountReceived: e.target.value })} />
+                  {depositFieldErrors.amountReceived && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.amountReceived}</p>}
+                  {depositForm.amountReceived !== '' && depositForm.depositAmount !== '' && !Number.isNaN(Number(depositForm.amountReceived)) && (
+                    Number(depositForm.amountReceived) - Number(depositForm.depositAmount) >= 0 ? (
+                      <div className="mt-2 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 text-center overflow-hidden">
+                        <p className="text-xs font-semibold text-green-700 uppercase tracking-wide">Cambio a entregar</p>
+                        <p className="font-bold text-green-700 text-3xl mt-0.5 break-words">{fmt(Number(depositForm.amountReceived) - Number(depositForm.depositAmount))}</p>
+                      </div>
+                    ) : (
+                      <div className="mt-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-center overflow-hidden">
+                        <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Falta por cobrar</p>
+                        <p className="font-bold text-red-600 text-3xl mt-0.5 break-words">{fmt(Number(depositForm.depositAmount) - Number(depositForm.amountReceived))}</p>
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 justify-end pt-4">
+              <button type="button" className="btn-secondary" onClick={() => setShowDepositModal(false)}>Cancelar</button>
+              <button type="button" className="btn-primary" disabled={depositLoading} onClick={handleRegisterDeposit}>
+                {depositLoading ? 'Guardando...' : 'Registrar anticipo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

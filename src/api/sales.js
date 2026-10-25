@@ -40,3 +40,13 @@ export const cancelSale = (id) => api.delete(`/sales/${id}`)
  * @returns {Promise} Respuesta de axios con el ticket completo en hexadecimal (`data.data`).
  */
 export const getSaleTicketEscPos = (id) => api.get(`/sales/${id}/ticket-escpos`)
+
+/**
+ * Arma SOLO el pulso ESC/POS que abre el cajón de dinero, sin el ticket completo —
+ * para una venta en efectivo cuyo ticket se mandó Digital (o no se imprimió): el pulso
+ * normalmente solo viaja pegado al final del ticket físico (ver `getSaleTicketEscPos`),
+ * así que si ese nunca se manda a imprimir, el cajón tampoco se abre solo.
+ * @param {number|string} id Id de la venta (debe ser en efectivo; el backend rechaza otras).
+ * @returns {Promise} Respuesta de axios con el comando en hexadecimal (`data.data`).
+ */
+export const getSaleDrawerKick = (id) => api.get(`/sales/${id}/drawer-kick`)

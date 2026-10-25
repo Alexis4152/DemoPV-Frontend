@@ -19,7 +19,7 @@ import { PencilIcon, SlidersIcon, ArchiveIcon, BarcodeIcon } from '../components
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
-const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '', stock: '', minStock: 5, unit: 'pieza', categoryId: '', isReservable: false, apartadoDiscountPercent: '' }
+const emptyForm = { name: '', description: '', barcode: '', price: '', cost: '', stock: '', minStock: 5, unit: 'pieza', categoryId: '', isReservable: false, isMadeToOrder: false, apartadoDiscountPercent: '' }
 const PAGE_SIZES = [10, 20, 50, 100]
 
 // Mismo límite que ProductImageService en el backend (ver ese archivo) — validarlo aquí
@@ -396,6 +396,7 @@ export default function Inventory() {
       price: p.price, cost: p.cost ?? '', stock: p.stock,
       minStock: p.minStock, unit: p.unit, categoryId: p.category?.id ?? '',
       isReservable: !!p.isReservable,
+      isMadeToOrder: !!p.isMadeToOrder,
       apartadoDiscountPercent: p.apartadoDiscountPercent ?? '',
     })
     setProductImages([])
@@ -628,8 +629,9 @@ export default function Inventory() {
     else if (Number(form.price) > 9999999999.99) errors.price = 'El precio no puede ser mayor a 9,999,999,999.99'
     if (form.cost !== '' && Number(form.cost) > 9999999999.99) errors.cost = 'El costo no puede ser mayor a 9,999,999,999.99'
     // Al crear se exige stock inicial (mínimo 1); al editar el campo ni se envía como
-    // cambio (ver "Stock actual" en el modal), así que no se valida.
-    if (!editProduct && (form.stock === '' || Number(form.stock) < 1)) errors.stock = 'Captura el stock inicial (mínimo 1)'
+    // cambio (ver "Stock actual" en el modal), así que no se valida. Un producto "por
+    // pedido" tampoco exige stock — nunca se fabrica/trae hasta que alguien lo pide.
+    if (!editProduct && !form.isMadeToOrder && (form.stock === '' || Number(form.stock) < 1)) errors.stock = 'Captura el stock inicial (mínimo 1)'
     else if (form.stock !== '' && Number(form.stock) > 2147483647) errors.stock = 'El stock no puede ser mayor a 2,147,483,647'
     if (form.minStock !== '' && Number(form.minStock) > 2147483647) errors.minStock = 'El stock mínimo no puede ser mayor a 2,147,483,647'
     if (!form.categoryId) errors.categoryId = 'Selecciona una categoría'
@@ -1207,14 +1209,23 @@ export default function Inventory() {
                     <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelect(p.id)} aria-label={`Seleccionar ${p.name}`} />
                   </td>
                 )}
-                <td className="px-4 py-3 font-medium text-gray-900">{p.name}</td>
+                <td className="px-4 py-3 font-medium text-gray-900">
+                  {p.name}
+                  {p.isMadeToOrder && (
+                    <span className="block text-xs font-normal text-amber-600 mt-0.5">🛠️ Por pedido</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-gray-500">{p.category?.name}</td>
                 <td className="px-4 py-3 text-gray-400 font-mono text-xs">{p.barcode}</td>
                 <td className="px-4 py-3 text-gray-700">{fmt(p.price)}</td>
                 <td className="px-4 py-3">
-                  <span className={`font-semibold ${p.stock <= p.minStock ? 'text-red-600' : 'text-green-600'}`}>
-                    {p.stock} {p.unit}
-                  </span>
+                  {p.isMadeToOrder ? (
+                    <span className="text-xs text-gray-400 italic">Sin inventario</span>
+                  ) : (
+                    <span className={`font-semibold ${p.stock <= p.minStock ? 'text-red-600' : 'text-green-600'}`}>
+                      {p.stock} {p.unit}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-gray-400">{p.minStock}</td>
                 <td className="px-2 py-3 bg-purple-50/30 border-l-2 border-purple-100">
@@ -1361,6 +1372,15 @@ export default function Inventory() {
                   onChange={(e) => setForm({ ...form, isReservable: e.target.checked })}
                 />
                 <span className="text-sm text-gray-700">📷 Mostrar en la tienda pública de apartados</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.isMadeToOrder}
+                  onChange={(e) => setForm({ ...form, isMadeToOrder: e.target.checked })}
+                />
+                <span className="text-sm text-gray-700">🛠️ Por pedido (se vende/aparta sin importar el stock, nunca descuenta inventario)</span>
               </label>
 
               {form.isReservable && (

@@ -2,9 +2,10 @@ import api from './axios'
 
 /**
  * Lista paginada de apartados de la tienda del usuario, con filtros opcionales.
- * @param {Object} [params] `{ status, from, to, q, page, size }` — `q` busca por nombre o
- *   teléfono del cliente, o por el nombre de algún producto en sus líneas (parcial, sin
- *   distinguir mayúsculas).
+ * @param {Object} [params] `{ status, origin, folio, from, to, q, page, size }` — `q` busca
+ *   por nombre o teléfono del cliente, o por el nombre de algún producto en sus líneas
+ *   (parcial, sin distinguir mayúsculas); `folio` filtra por coincidencia EXACTA (lo usa el
+ *   enlace "apartado #N" del historial de ventas).
  * @returns {Promise} Respuesta de axios con `{content, page, size, totalElements, totalPages}`.
  */
 export const getApartados = (params) => api.get('/apartados', { params })
@@ -49,6 +50,16 @@ export const removeApartadoItem = (apartadoId, itemId) => api.delete(`/apartados
  * @returns {Promise} Respuesta de axios con el apartado ya `COMPLETED` (incluye `saleId`).
  */
 export const completeApartado = (id, data) => api.post(`/apartados/${id}/complete`, data)
+
+/**
+ * Registra, en persona, un apartado con anticipo — el cajero ya está confirmando el
+ * apartado ahí mismo (nace `ACTIVE` directo) y cobra el anticipo de una vez (genera una
+ * venta `kind=DEPOSIT` que cuenta en su corte de caja).
+ * @param {Object} data `{ customerName, customerPhone, customerEmail, notes, items: [{productId, quantity}],
+ *   durationHours, depositAmount, paymentMethod, amountReceived }`.
+ * @returns {Promise} Respuesta de axios con el apartado ya `ACTIVE` y su anticipo registrado.
+ */
+export const createDepositApartado = (data) => api.post('/apartados/deposit', data)
 
 /**
  * Cancela un apartado `PENDING` o `ACTIVE`.
