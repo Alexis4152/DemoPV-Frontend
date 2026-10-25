@@ -15,7 +15,12 @@ import { openOrDownloadBlob } from '../utils/downloadBlob'
 import { resizeImage } from '../utils/resizeImage'
 import { listPrinters, getLabelPrinterName, setLabelPrinterName, printLabelsPdf } from '../utils/printer'
 import IconButton from '../components/IconButton'
+import InventoryMovements from './inventory/InventoryMovements'
 import { PencilIcon, SlidersIcon, ArchiveIcon, BarcodeIcon } from '../components/icons'
+import ModalCloseButton from '../components/ModalCloseButton'
+import useEscapeClose from '../hooks/useEscapeClose'
+import useTableSort from '../hooks/useTableSort'
+import SortableTh from '../components/SortableTh'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
@@ -33,6 +38,21 @@ const MAX_IMAGES = 3
 // no lo elige el usuario; para otro rollo, cambiar aquí por otra clave de
 // BarcodeLabelPdfService.SIZES (50x25, 51x25, 50x30, 40x30, 60x40).
 const LABEL_SIZE = '50x30'
+// Aviso de stock bajo: hasta este número de productos se listan los nombres; arriba de
+// eso solo se muestra la cantidad.
+const LOW_STOCK_NAMES_LIMIT = 10
+
+// Motivos al quitar piezas (mismos valores que StockOutReason en el backend). Las tres
+// primeras cuentan como merma en Movimientos.
+const OUT_REASONS = [
+  { value: 'MERMA_DANADO', label: 'Merma – dañado' },
+  { value: 'MERMA_CADUCADO', label: 'Merma – caducado' },
+  { value: 'MERMA_ROBO', label: 'Merma – robo/extravío' },
+  { value: 'COUNT_DIFFERENCE', label: 'Diferencia de conteo' },
+  { value: 'RETURN_TO_SUPPLIER', label: 'Devolución a proveedor' },
+  { value: 'INTERNAL_USE', label: 'Uso interno' },
+  { value: 'OTHER', label: 'Otro' },
+]
 // Nombres que parecen de impresora de etiquetas, para sugerirla/detectarla en QZ Tray.
 const LABEL_PRINTER_PATTERN = /aiyin|ayin|label|etiqueta|zebra|xprinter/i
 
@@ -79,19 +99,18 @@ function availabilityParams(lowStockOnly) {
  * búsqueda lleva un debounce de 250ms (ver el `useEffect` que llama a `loadPage`) para no
  * pegarle a la API en cada tecla.
  *
- * Control de acceso (vía `isAdmin`, solo frontend — el backend es quien realmente lo hace
- * cumplir): crear/editar/desactivar productos y registrar salidas de stock (ajuste "OUT",
- * es decir reducir stock manualmente fuera de una venta) están reservados a ADMIN. Cualquier
- * usuario con acceso a esta pantalla puede registrar entradas de stock ("IN").
+ * Control de acceso (vía `hasAction`, solo frontend — el backend es quien realmente lo
+ * hace cumplir): permisos de Inventario en Roles y Permisos — "Agregar" (alta), "Editar"
+ * (datos del producto), "Eliminar" (desactivar) y "Ajustar stock" (agregar/quitar piezas
+ * y "Actualizar existencias"). Admin/supervisor/super admin los tienen todos.
  *
  * Lector de código de barras (altas/bajas): el escaneo se captura a nivel de documento
  * (no hace falta tener el foco en ningún campo en particular — ver el `useEffect` de
  * `onKeyDown` más abajo, que distingue un escaneo de tecleo humano por la velocidad entre
- * teclas) y hace una búsqueda EXACTA por código. Si el código ya existe, le pregunta al
- * usuario (solo ADMIN, que es quien puede editar) si quiere "Editar producto" o "Ajustar
- * stock" — un usuario sin ese permiso va directo a "Ajustar stock" (modo "Agregar piezas"),
- * la única opción que puede hacer de todas formas. Si no existe, abre el modal de "Nuevo
- * producto" con el código ya precargado, para dar de alta sin volver a teclearlo.
+ * teclas) y hace una búsqueda EXACTA por código. Si el código ya existe y el usuario puede
+ * editar o desactivar, le pregunta qué quiere hacer (editar, ajustar stock, desactivar);
+ * si solo puede ajustar stock, va directo a "Ajustar stock" (modo "Agregar piezas"). Si no
+ * existe, abre el modal de "Nuevo producto" con el código ya precargado.
  */
 export default function Inventory() {
   const { user, isAdmin, isSuperAdmin, hasAction } = useAuth()
@@ -110,6 +129,8 @@ export default function Inventory() {
   const [countSheetLoading, setCountSheetLoading] = useState(null)
   // Menú "Más opciones" del encabezado (descargas de inventario y carga masiva).
   const [moreOpen, setMoreOpen] = useState(false)
+  // Pestaña activa: 'products' (catálogo) o 'movements' (solo admin/supervisor).
+  const [tab, setTab] = useState('products')
   const moreMenuRef = useRef(null)
   // Productos activos sin código (aviso + botón "Generar códigos").
   const [missingBarcodes, setMissingBarcodes] = useState(0)
@@ -129,6 +150,9 @@ export default function Inventory() {
   // combo — ver `availabilityParams`).
   const [lowStockOnly, setLowStockOnly] = useState(() => searchParams.get('availability') === 'lowStock')
   const [page, setPage] = useState(0)
+  // Orden de la tabla por encabezado (se aplica en el servidor; ver useTableSort).
+  const tableSort = useTableSort('sort:inventory')
+  const onSort = (k) => { tableSort.toggle(k); setPage(0) }
   const [size, setSize] = useState(20)
   // Map productId -> piezas actualmente descontadas del stock por apartados ACTIVE (ya
   // confirmados), para la columna "Apartados" — a propósito NO incluye PENDING, que
@@ -158,6 +182,8 @@ export default function Inventory() {
   const [adjustDirection, setAdjustDirection] = useState('IN')
   const [adjustQty, setAdjustQty] = useState('')
   const [adjustReason, setAdjustReason] = useState('')
+  // Motivo obligatorio al quitar piezas (ver OUT_REASONS); define si cuenta como merma.
+  const [adjustOutReason, setAdjustOutReason] = useState('')
   // Errores de validación por campo del modal "Ajustar stock" ({ quantity/reason: mensaje })
   // — aparte de `fieldErrors` del modal de producto, son formularios distintos.
   const [adjustFieldErrors, setAdjustFieldErrors] = useState({})
@@ -209,6 +235,7 @@ export default function Inventory() {
       q: search.trim() || undefined,
       categoryId: filterCat || undefined,
       ...availabilityParams(lowStockOnly),
+      ...tableSort.params,
       page,
       size,
     }).then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
@@ -221,7 +248,7 @@ export default function Inventory() {
   useEffect(() => {
     const t = setTimeout(loadPage, 250)
     return () => clearTimeout(t)
-  }, [search, filterCat, lowStockOnly, page, size])
+  }, [search, filterCat, lowStockOnly, page, size, tableSort.sort])
 
   /**
    * Recarga las fuentes de datos "auxiliares" que no dependen de la página/filtro actual:
@@ -478,6 +505,7 @@ export default function Inventory() {
     setAdjustDirection('IN')
     setAdjustQty(initialQty)
     setAdjustReason('')
+    setAdjustOutReason('')
     setAdjustFieldErrors({})
   }
 
@@ -504,8 +532,10 @@ export default function Inventory() {
     }
     const found = (await getProductByBarcode(code).catch(() => null))?.data?.data
     if (found) {
+      const canAdjust = hasAction('INVENTORY', 'ADJUST_STOCK')
       if (hasAction('INVENTORY', 'EDIT') || hasAction('INVENTORY', 'DELETE')) setChoiceModal(found)
-      else openAdjust(found, '1')
+      else if (canAdjust) openAdjust(found, '1')
+      else notify(`"${found.name}" — stock actual: ${found.stock} ${found.unit}`, 'info')
     } else if (foreignTiendaOf(code, user?.tienda?.id)) {
       // Código generado de otra tienda: no se ofrece darlo de alta aquí con ese código.
       notify(barcodeNotFoundMessage(code, user?.tienda?.id), 'warning')
@@ -583,10 +613,12 @@ export default function Inventory() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // Cierra con ESC el modal que esté abierto (producto, ajuste, elección o descuento
-  // masivo), descartando lo capturado — mismo comportamiento que el botón "Cancelar" de cada uno.
+  // Cierra con ESC el modal que esté abierto, descartando lo capturado — mismo
+  // comportamiento que su X / "Cancelar". Etiquetas y Actualizar existencias no se cierran
+  // mientras procesan (igual que su X).
   useEffect(() => {
-    if (!showModal && !adjustModal && !choiceModal && !bulkDiscountModal && !bulkImportModal) return
+    if (!showModal && !adjustModal && !choiceModal && !bulkDiscountModal && !bulkImportModal
+        && !labelModal && !stockImportModal) return
     function onKeyDown(e) {
       if (e.key !== 'Escape') return
       if (showModal) setShowModal(false)
@@ -594,10 +626,12 @@ export default function Inventory() {
       else if (choiceModal) setChoiceModal(null)
       else if (bulkDiscountModal) setBulkDiscountModal(false)
       else if (bulkImportModal) setBulkImportModal(false)
+      else if (labelModal && !labelLoading) setLabelModal(null)
+      else if (stockImportModal && !stockImporting) setStockImportModal(false)
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [showModal, adjustModal, choiceModal, bulkDiscountModal, bulkImportModal])
+  }, [showModal, adjustModal, choiceModal, bulkDiscountModal, bulkImportModal, labelModal, labelLoading, stockImportModal, stockImporting])
 
   /**
    * Valida el formulario de producto del lado del cliente, replicando exactamente los
@@ -765,7 +799,8 @@ export default function Inventory() {
     else if (adjustPreviewExceedsLimit) {
       validationErrors.quantity = 'El número es excesivamente grande — el máximo permitido es 2,147,483,647'
     }
-    if (adjustReason.length > 255) validationErrors.reason = 'El motivo no puede tener más de 255 caracteres'
+    if (adjustReason.length > 200) validationErrors.reason = 'El comentario no puede tener más de 200 caracteres'
+    if (adjustDirection === 'OUT' && !adjustOutReason) validationErrors.outReason = 'Elige el motivo de la salida'
     if (Object.keys(validationErrors).length > 0) {
       setAdjustFieldErrors(validationErrors)
       notify('Revisa los campos marcados en rojo', 'error')
@@ -778,7 +813,11 @@ export default function Inventory() {
     if (!(await confirmDialog(confirmMsg, { confirmText: 'Confirmar', danger: adjustDirection === 'OUT' }))) return
     setLoading(true)
     try {
-      const res = await adjustStock(adjustModal.id, { quantity: adjustSignedQty, reason: adjustReason })
+      const res = await adjustStock(adjustModal.id, {
+        quantity: adjustSignedQty,
+        reason: adjustReason,
+        outReason: adjustDirection === 'OUT' ? adjustOutReason : null,
+      })
       const updated = res.data.data
       setAdjustModal(null)
       setAdjustQty('')
@@ -1023,6 +1062,33 @@ export default function Inventory() {
   // isAdmin/isSuperAdmin; ahora respetan actionGrants de roles personalizados también.
   const canBulkImport = hasAction('INVENTORY', 'CREATE')
   const canBulkEdit = hasAction('INVENTORY', 'EDIT')
+  // Agregar/quitar piezas y "Actualizar existencias": permiso "Ajustar stock", separado de
+  // "Editar" (mismo criterio que ProductService#canAdjustStock en el backend).
+  const canAdjustStock = hasAction('INVENTORY', 'ADJUST_STOCK')
+
+  // Pestañas Productos | Movimientos: Movimientos solo para admin/supervisor/super admin
+  // (el backend también lo exige, ver InventoryActivityService).
+  const tabs = isAdmin && (
+    <div className="flex gap-1 bg-gray-100 rounded-full p-1 w-fit mb-4">
+      {[{ id: 'products', label: '📦 Productos' }, { id: 'movements', label: '📜 Movimientos' }].map((t) => (
+        <button
+          key={t.id} type="button"
+          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${tab === t.id ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          onClick={() => setTab(t.id)}
+        >{t.label}</button>
+      ))}
+    </div>
+  )
+
+  if (isAdmin && tab === 'movements') {
+    return (
+      <div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-6">Inventario</h2>
+        {tabs}
+        <InventoryMovements categories={categories} />
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -1048,7 +1114,7 @@ export default function Inventory() {
                   { label: '📑 Hoja de códigos (PDF)', onClick: handleDownloadBarcodeSheet, show: true, disabled: countSheetLoading !== null },
                   { label: '⬇️ Plantilla de carga masiva', onClick: handleDownloadTemplate, show: canBulkImport },
                   { label: '📤 Carga masiva', onClick: openBulkImport, show: canBulkImport },
-                  { label: '📥 Actualizar existencias (Excel)', onClick: openStockImport, show: canBulkEdit },
+                  { label: '📥 Actualizar existencias (Excel)', onClick: openStockImport, show: canAdjustStock },
                 ].filter((o) => o.show).map((o) => (
                   <button
                     key={o.label} type="button" role="menuitem"
@@ -1064,6 +1130,8 @@ export default function Inventory() {
           </div>
         </div>
       </div>
+
+      {tabs}
 
       {adjustNotice && (
         <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg px-4 py-3 mb-4 flex items-center justify-between">
@@ -1083,10 +1151,12 @@ export default function Inventory() {
         </div>
       )}
 
+      {/* Con más de LOW_STOCK_NAMES_LIMIT productos solo se indica la cantidad: la lista de
+          nombres se volvía un bloque enorme. El detalle se ve con el filtro "Stock bajo". */}
       {lowStockItems.length > 0 && (
         <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded-lg px-4 py-3 mb-4">
-          ⚠️ {lowStockItems.length} producto{lowStockItems.length > 1 ? 's' : ''} en stock mínimo o por debajo: {' '}
-          {lowStockItems.map((p) => p.name).join(', ')}
+          ⚠️ {lowStockItems.length} producto{lowStockItems.length > 1 ? 's' : ''} en stock mínimo o por debajo
+          {lowStockItems.length <= LOW_STOCK_NAMES_LIMIT && <>: {lowStockItems.map((p) => p.name).join(', ')}</>}
         </div>
       )}
 
@@ -1190,9 +1260,12 @@ export default function Inventory() {
                   <input type="checkbox" checked={products.length > 0 && selectedIds.size === products.length} onChange={toggleSelectAll} aria-label="Seleccionar todos" />
                 </th>
               )}
-              {['Producto', 'Categoría', 'Código', 'Precio', 'Stock', 'Mín.'].map((h) => (
-                <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
-              ))}
+              <SortableTh label="Producto" sortKey="name" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Categoría" sortKey="category" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Código" sortKey="barcode" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Precio" sortKey="price" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Stock" sortKey="stock" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Mín." sortKey="minStock" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
               <th className="text-left px-2 py-3 w-20 font-medium text-purple-700 bg-purple-50/60 border-l-2 border-purple-200">En línea</th>
               <th className="text-left px-2 py-3 w-20 font-medium text-purple-700 bg-purple-50/60">Descuento</th>
               <th className="text-left px-4 py-3 font-medium text-purple-700 bg-purple-50/60">Apartados</th>
@@ -1240,7 +1313,7 @@ export default function Inventory() {
                     {hasAction('INVENTORY', 'EDIT') && (
                       <IconButton icon={PencilIcon} label="Editar" variant="primary" onClick={() => openEdit(p)} />
                     )}
-                    {hasAction('INVENTORY', 'EDIT') && (
+                    {canAdjustStock && (
                       <IconButton icon={SlidersIcon} label="Ajustar stock" variant="purple" onClick={() => openAdjust(p)} />
                     )}
                     {hasAction('INVENTORY', 'DELETE') && (
@@ -1292,9 +1365,10 @@ export default function Inventory() {
 
       {/* Product modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-4">{editProduct ? 'Editar producto' : 'Nuevo producto'}</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => setShowModal(false)} />
+            <h3 className="text-lg font-bold mb-4 pr-8">{editProduct ? 'Editar producto' : 'Nuevo producto'}</h3>
             <form onSubmit={handleSave} className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {/* Sin `required` nativo en Nombre/Precio/Categoría a propósito (ver
@@ -1326,11 +1400,13 @@ export default function Inventory() {
                 {editProduct ? (
                   <div><label className="text-xs font-medium text-gray-600">Stock actual</label>
                     <input className="input bg-gray-100 text-gray-500" type="number" value={form.stock} disabled />
-                    <button
-                      type="button"
-                      className="text-xs text-blue-600 hover:underline mt-1"
-                      onClick={() => { const p = editProduct; setShowModal(false); openAdjust(p) }}
-                    >Cambiar con "Ajustar stock"</button></div>
+                    {canAdjustStock && (
+                      <button
+                        type="button"
+                        className="text-xs text-blue-600 hover:underline mt-1"
+                        onClick={() => { const p = editProduct; setShowModal(false); openAdjust(p) }}
+                      >Cambiar con "Ajustar stock"</button>
+                    )}</div>
                 ) : (
                   <div><label className="text-xs font-medium text-gray-600">Stock inicial <span className={fieldErrors.stock ? 'text-red-600' : ''}>*</span></label>
                     <input className="input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
@@ -1450,9 +1526,10 @@ export default function Inventory() {
 
       {/* Choice modal: tras un escaneo de un código ya existente, pregunta qué hacer (solo ADMIN llega aquí) */}
       {choiceModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setChoiceModal(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Producto encontrado</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <ModalCloseButton onClick={() => setChoiceModal(null)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Producto encontrado</h3>
             <p className="text-sm text-gray-500 mb-4">{choiceModal.name} — código {choiceModal.barcode}</p>
             <div className="grid grid-cols-1 gap-2">
               {hasAction('INVENTORY', 'EDIT') && (
@@ -1462,11 +1539,13 @@ export default function Inventory() {
                   onClick={() => { const p = choiceModal; setChoiceModal(null); openEdit(p) }}
                 >✏️ Editar producto</button>
               )}
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => { const p = choiceModal; setChoiceModal(null); openAdjust(p, '1') }}
-              >➕ Ajustar stock</button>
+              {canAdjustStock && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => { const p = choiceModal; setChoiceModal(null); openAdjust(p, '1') }}
+                >➕ Ajustar stock</button>
+              )}
               {hasAction('INVENTORY', 'DELETE') && (
                 <button
                   type="button"
@@ -1482,26 +1561,25 @@ export default function Inventory() {
 
       {/* Adjust modal */}
       {adjustModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setAdjustModal(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Ajustar stock</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => setAdjustModal(null)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Ajustar stock</h3>
             <p className="text-sm text-gray-500 mb-4">{adjustModal.name} — actual: {adjustModal.stock} {adjustModal.unit} · mínimo: {adjustModal.minStock} {adjustModal.unit}</p>
             <form onSubmit={handleAdjust} className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">¿Qué quieres hacer? *</label>
-                <div className={`grid gap-2 ${isAdmin ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                <div className="grid gap-2 grid-cols-2">
                   <button type="button"
                     className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
                       adjustDirection === 'IN' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
                     onClick={() => { setAdjustDirection('IN'); setAdjustFieldErrors({}) }}
                   >➕ Agregar piezas</button>
-                  {isAdmin && (
-                    <button type="button"
-                      className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
-                        adjustDirection === 'OUT' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                      onClick={() => { setAdjustDirection('OUT'); setAdjustFieldErrors({}) }}
-                    >➖ Quitar piezas</button>
-                  )}
+                  <button type="button"
+                    className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                      adjustDirection === 'OUT' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                    onClick={() => { setAdjustDirection('OUT'); setAdjustFieldErrors({}) }}
+                  >➖ Quitar piezas</button>
                 </div>
               </div>
               {/* Sin `min`/`required` nativos a propósito (ver handleAdjust): el globo del
@@ -1534,9 +1612,20 @@ export default function Inventory() {
                   )}
                 </div>
               )}
+              {adjustDirection === 'OUT' && (
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Motivo de la salida <span className={adjustFieldErrors.outReason ? 'text-red-600' : ''}>*</span></label>
+                  <select className="input" value={adjustOutReason} onChange={(e) => setAdjustOutReason(e.target.value)}>
+                    <option value="">Elige el motivo…</option>
+                    {OUT_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                  </select>
+                  {adjustFieldErrors.outReason && <p className="text-red-600 text-xs mt-1">{adjustFieldErrors.outReason}</p>}
+                </div>
+              )}
               <div>
-                <label className="text-xs font-medium text-gray-600">Motivo</label>
-                <input className="input" value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder="Compra, merma, corrección..." />
+                <label className="text-xs font-medium text-gray-600">{adjustDirection === 'OUT' ? 'Comentario (opcional)' : 'Motivo'}</label>
+                <input className="input" value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)}
+                  placeholder={adjustDirection === 'OUT' ? 'Ej. se rompió al acomodar' : 'Compra, corrección...'} />
                 {adjustFieldErrors.reason && <p className="text-red-600 text-xs mt-1">{adjustFieldErrors.reason}</p>}
               </div>
               <div className="flex gap-2 justify-end pt-2">
@@ -1552,9 +1641,10 @@ export default function Inventory() {
 
       {/* Bulk discount modal */}
       {bulkDiscountModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setBulkDiscountModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Aplicar descuento de oferta</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <ModalCloseButton onClick={() => setBulkDiscountModal(false)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Aplicar descuento de oferta</h3>
             <p className="text-sm text-gray-500 mb-4">
               A {selectedIds.size} producto{selectedIds.size === 1 ? '' : 's'} seleccionado{selectedIds.size === 1 ? '' : 's'} — se le muestra al cliente en la tienda pública.
             </p>
@@ -1589,9 +1679,10 @@ export default function Inventory() {
           "Imprimir" lo manda directo a la impresora de etiquetas vía QZ Tray; "Descargar
           PDF" es el respaldo (celular: se comparte a la app de la impresora). */}
       {labelModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !labelLoading && setLabelModal(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">🖨️ Imprimir códigos</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <ModalCloseButton onClick={() => !labelLoading && setLabelModal(null)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">🖨️ Imprimir códigos</h3>
             <p className="text-sm text-gray-500 mb-4">
               {labelModal.product
                 ? <>{labelModal.product.name} — <span className="font-mono">{labelModal.product.barcode}</span></>
@@ -1634,9 +1725,10 @@ export default function Inventory() {
 
       {/* Carga masiva de productos por Excel — requiere permiso "Agregar" de Inventario (ver el botón que lo abre). */}
       {bulkImportModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setBulkImportModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Carga masiva de productos</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => setBulkImportModal(false)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Carga masiva de productos</h3>
 
             {!bulkImportResult ? (
               <>
@@ -1699,9 +1791,10 @@ export default function Inventory() {
       {/* Actualizar existencias: la hoja de inventario en Excel, con "Cantidad real" llenada,
           deja el stock de cada producto en esa cantidad (ver StockImportService). */}
       {stockImportModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !stockImporting && setStockImportModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Actualizar existencias</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => !stockImporting && setStockImportModal(false)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Actualizar existencias</h3>
 
             {!stockImportResult ? (
               <>
@@ -1715,9 +1808,6 @@ export default function Inventory() {
                   <li>Escribe en <span className="font-medium">"Cantidad real"</span> lo que contaste. Deja vacíos los productos que no quieras cambiar.</li>
                   <li>Sube el archivo: cada producto queda con su cantidad real.</li>
                 </ol>
-                {!isAdmin && (
-                  <p className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-2 mb-3">Solo un administrador o supervisor puede bajar existencias; esas filas se marcarán como error.</p>
-                )}
                 {missingBarcodes > 0 && (
                   <p className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-2 mb-3">Hay {missingBarcodes} producto{missingBarcodes > 1 ? 's' : ''} sin código: genera los códigos antes de descargar la hoja, o esas filas no se podrán actualizar.</p>
                 )}
@@ -1781,6 +1871,7 @@ export default function Inventory() {
  * regresa una página vacía en vez de un error — se muestra igual que "sin resultados".
  */
 function SiblingStockModal({ onClose }) {
+  useEscapeClose(true, onClose)
   const [q, setQ] = useState('')
   const [results, setResults] = useState([])
   const [searched, setSearched] = useState(false)
@@ -1805,9 +1896,10 @@ function SiblingStockModal({ onClose }) {
   }, [q])
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-lg font-bold mb-1">🏬 Buscar en tiendas asociadas</h3>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto">
+        <ModalCloseButton onClick={onClose} />
+        <h3 className="text-lg font-bold mb-1 pr-8">🏬 Buscar en tiendas asociadas</h3>
         <p className="text-sm text-gray-500 mb-4">
           Busca un producto por nombre o código para ver si hay existencias en otras sucursales de tu mismo grupo.
         </p>

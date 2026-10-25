@@ -90,6 +90,14 @@ api.interceptors.response.use(
     const isRefreshRequest = url.includes('/auth/refresh')
     const status = err.response?.status
 
+    // Ventana de mantenimiento activa (backend 503 con data.maintenance): se cierra la sesión
+    // y se manda al login, que muestra la pantalla de mantenimiento. No en el propio login:
+    // ahí el formulario de /login?admin muestra el mensaje como cualquier otro error.
+    if (status === 503 && err.response?.data?.data?.maintenance && !isLoginRequest) {
+      clearSessionAndRedirect()
+      return Promise.reject(err)
+    }
+
     if (status !== 401 || isLoginRequest || isRefreshRequest) {
       return Promise.reject(err)
     }

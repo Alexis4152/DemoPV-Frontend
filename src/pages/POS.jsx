@@ -142,7 +142,7 @@ export default function POS() {
         e.preventDefault()
         getProductByBarcode(code).then((r) => {
           const product = r?.data?.data
-          if (product) addToCartRef.current(product)
+          if (product) addToCartRef.current(product, { fromScan: true })
           else notify(barcodeNotFoundMessage(code, userRef.current?.tienda?.id), 'error')
         }).catch(() => notify(barcodeNotFoundMessage(code, userRef.current?.tienda?.id), 'error'))
         return
@@ -244,14 +244,29 @@ export default function POS() {
    *        el teclado en pantalla — al agregar con un tap en la imagen/fila del producto
    *        (no desde el buscador) se manda `false` para no dispararlo sin que el cajero
    *        vaya a escribir nada.
+   * @param fromScan `true` cuando viene del lector (o de un código exacto + Enter): cierra
+   *        el catálogo en cualquier vista para mostrar el desglose, sin regresar el foco.
    */
   addToCartRef.current = addToCart
-  function addToCart(product, { refocus = true } = {}) {
+  function addToCart(product, { refocus = true, fromScan = false } = {}) {
+    // Con lector (o código exacto + Enter) el catálogo no debe quedarse abierto en ninguna
+    // vista: se cierra y se deja ver el desglose de la venta. El foco NO regresa al
+    // buscador, porque su onFocus lo volvería a abrir; el lector global sigue funcionando
+    // sin foco en el buscador. Lo mismo al tocar un producto en la vista "Códigos".
+    const closeCatalog = fromScan || viewMode === 'codes'
+    const finish = () => {
+      if (closeCatalog) {
+        setCatalogVisible(false)
+        if (document.activeElement === searchInputRef.current) searchInputRef.current?.blur()
+      } else if (refocus) {
+        searchInputRef.current?.focus()
+      }
+    }
     const reject = (msg) => {
       setError(msg)
       notify(msg, 'error')
       if (query.trim()) setQuery('')
-      if (refocus) searchInputRef.current?.focus()
+      finish()
     }
     if (product.stock <= 0) { reject(`"${product.name}" no tiene stock disponible`); return }
     const existingBefore = cart.find((i) => i.productId === product.id)
@@ -281,14 +296,7 @@ export default function POS() {
       setQuery('')
       setResults([])
     }
-    // En la vista "Códigos" el catálogo ocupa la pantalla: al agregar se cierra para que
-    // se vea el desglose de la venta. Sin regresar el foco al buscador, porque su onFocus
-    // lo volvería a abrir; el lector global sigue funcionando sin foco en el buscador.
-    if (viewMode === 'codes') {
-      setCatalogVisible(false)
-      return
-    }
-    if (refocus) searchInputRef.current?.focus()
+    finish()
   }
 
   /**
@@ -395,7 +403,7 @@ export default function POS() {
       const code = query.trim()
       if (code && !code.includes(' ')) {
         const exact = (await getProductByBarcode(code).catch(() => null))?.data?.data
-        if (exact) { addToCart(exact); return }
+        if (exact) { addToCart(exact, { fromScan: true }); return }
       }
       const product = results[highlighted]
       if (product) addToCart(product)

@@ -6,6 +6,7 @@ import { useNotify } from '../context/NotifyContext'
 import { resolveMediaUrl } from '../utils/media'
 import logo from '../assets/logo.png'
 import useEscapeClose from '../hooks/useEscapeClose'
+import ModalCloseButton from '../components/ModalCloseButton'
 
 // Mismo límite que Inventory.jsx para fotos de producto — evita el viaje redondo al
 // servidor solo para enterarse de que pesa de más.
@@ -259,12 +260,12 @@ function PurgeTiendaModal({ tienda, onClose, onPurged }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20" onClick={() => !purging && onClose()}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20">
       <div
-        onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4 border-t-4 border-t-red-500"
+        className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4 border-t-4 border-t-red-500"
       >
-        <h2 className="text-lg font-bold text-red-700">⚠️ Borrar "{tienda.name}" para siempre</h2>
+        <ModalCloseButton onClick={() => !purging && onClose()} />
+        <h2 className="text-lg font-bold text-red-700 pr-8">⚠️ Borrar "{tienda.name}" para siempre</h2>
         <p className="text-sm text-gray-600">
           Esto borra <span className="font-semibold">permanentemente</span> esta tienda y TODO lo relacionado:
           usuarios, productos, categorías, ventas, apartados, cortes de caja, cajas, materia prima, faltantes
@@ -340,13 +341,13 @@ function CreateTiendaModal({ onClose, onCreated }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20">
       <form
         onSubmit={handleSubmit}
-        onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4"
+        className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4"
       >
-        <h2 className="text-lg font-bold text-gray-900">Nueva tienda</h2>
+        <ModalCloseButton onClick={onClose} />
+        <h2 className="text-lg font-bold text-gray-900 pr-8">Nueva tienda</h2>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
@@ -456,13 +457,13 @@ function EditTiendaModal({ tienda, onClose, onSaved }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20">
       <form
         onSubmit={handleSave}
-        onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4"
+        className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4"
       >
-        <h2 className="text-lg font-bold text-gray-900">Editar tienda</h2>
+        <ModalCloseButton onClick={onClose} />
+        <h2 className="text-lg font-bold text-gray-900 pr-8">Editar tienda</h2>
 
         <div className="flex items-center gap-4">
           {logoPath ? (

@@ -7,6 +7,9 @@ import { printSaleTicket } from '../utils/printer'
 import useEscapeClose from '../hooks/useEscapeClose'
 import IconButton from '../components/IconButton'
 import { EyeIcon, PrinterIcon, XCircleIcon } from '../components/icons'
+import ModalCloseButton from '../components/ModalCloseButton'
+import useTableSort from '../hooks/useTableSort'
+import SortableTh from '../components/SortableTh'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
@@ -51,6 +54,9 @@ export default function Sales() {
   })
   const [filters, setFilters] = useState(initialFilters)
   const [page, setPage] = useState(0)
+  // Orden de la tabla por encabezado (se aplica en el servidor; ver useTableSort).
+  const tableSort = useTableSort('sort:sales')
+  const onSort = (k) => { tableSort.toggle(k); setPage(0) }
   const [size, setSize] = useState(20)
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [detail, setDetail] = useState(null)
@@ -72,6 +78,7 @@ export default function Sales() {
   function load() {
     setLoading(true)
     const params = {
+      ...tableSort.params,
       page,
       size,
       customerName: filters.customerName || undefined,
@@ -90,7 +97,7 @@ export default function Sales() {
   useEffect(() => {
     const t = setTimeout(load, 250)
     return () => clearTimeout(t)
-  }, [page, size, filters])
+  }, [page, size, filters, tableSort.sort])
 
   /** Actualiza un filtro y reinicia a la primera página, para no quedar "atorado" en una
    *  página que ya no existe con el nuevo filtro. */
@@ -193,9 +200,14 @@ export default function Sales() {
         <table className="w-full text-sm min-w-[800px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              {['#', 'Fecha', 'Cliente', 'Vendedor', 'Método', 'Total', 'Estado', ''].map((h) => (
-                <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
-              ))}
+              <SortableTh label="#" sortKey="folio" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Fecha" sortKey="date" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Cliente" sortKey="customer" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Vendedor" sortKey="seller" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Método" sortKey="method" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Total" sortKey="total" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Estado" sortKey="status" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <th className="text-left px-4 py-3 font-medium text-gray-600"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -270,14 +282,12 @@ export default function Sales() {
 
       {/* Detail modal */}
       {detail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDetail(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-lg font-bold">Venta #{detail.folio}</h3>
-                <p className="text-sm text-gray-500">{fmtDate(detail.createdAt)}</p>
-              </div>
-              <button className="text-gray-400 hover:text-gray-600 text-xl" onClick={() => setDetail(null)}>✕</button>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => setDetail(null)} />
+            <div className="mb-4 pr-8">
+              <h3 className="text-lg font-bold">Venta #{detail.folio}</h3>
+              <p className="text-sm text-gray-500">{fmtDate(detail.createdAt)}</p>
             </div>
 
             <div className="space-y-1 text-sm mb-4">

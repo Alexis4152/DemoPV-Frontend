@@ -9,6 +9,7 @@ import {
   ARCO_TYPES, ARCO_TYPE_LABELS, ARCO_STATUS_LABELS, ARCO_CHANNEL_LABELS,
   ARCO_TYPE_GUIDANCE, ARCO_STRONG_IDENTITY_TYPES,
 } from '../utils/arcoTypes'
+import ModalCloseButton from '../components/ModalCloseButton'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 const fmtDay = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('es-MX', { dateStyle: 'long' }) : '—'
@@ -436,9 +437,10 @@ function InPersonModal({ notify, onClose, onCreated }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20" onClick={onClose}>
-      <form onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()} className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-        <div>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-20">
+      <form onSubmit={handleSubmit} className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <ModalCloseButton onClick={onClose} />
+        <div className="pr-8">
           <h2 className="text-lg font-bold text-gray-900">Registrar solicitud en mostrador</h2>
           <p className="text-xs text-gray-400 mt-1">Para alguien que verificaste físicamente — con o sin cuenta en el sistema.</p>
         </div>

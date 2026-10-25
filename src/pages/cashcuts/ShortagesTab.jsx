@@ -4,6 +4,8 @@ import { getPendingShortageTotal, getShortagePayments, getShortages, payShortage
 import { useNotify } from '../../context/NotifyContext'
 import { resolveMediaUrl } from '../../utils/media'
 import { AmountField, Modal, Pagination, ReceiptInput, SummaryRow, fmt, fmtDate, toAmount, MAX_AMOUNT } from './common'
+import useTableSort from '../../hooks/useTableSort'
+import SortableTh from '../../components/SortableTh'
 
 export const SHORTAGE_METHOD_LABELS = {
   CASH_REGISTER: 'Efectivo a la caja',
@@ -21,6 +23,9 @@ export const SHORTAGE_METHOD_LABELS = {
 export default function ShortagesTab({ onChanged }) {
   const [paid, setPaid] = useState(false)
   const [page, setPage] = useState(0)
+  // Orden de la tabla por encabezado (se aplica en el servidor; ver useTableSort).
+  const tableSort = useTableSort('sort:shortages')
+  const onSort = (k) => { tableSort.toggle(k); setPage(0) }
   const [size, setSize] = useState(20)
   const [data, setData] = useState({ content: [], totalPages: 0, totalElements: 0 })
   const [pendingTotal, setPendingTotal] = useState(0)
@@ -29,12 +34,12 @@ export default function ShortagesTab({ onChanged }) {
   const [history, setHistory] = useState(null)
 
   function load() {
-    getShortages({ paid, page, size })
+    getShortages({ paid, ...tableSort.params, page, size })
       .then((r) => setData(r.data.data ?? { content: [], totalPages: 0, totalElements: 0 }))
       .catch(() => setData({ content: [], totalPages: 0, totalElements: 0 }))
     getPendingShortageTotal().then((r) => setPendingTotal(Number(r.data.data ?? 0))).catch(() => {})
   }
-  useEffect(() => { load() }, [paid, page, size])
+  useEffect(() => { load() }, [paid, page, size, tableSort.sort])
 
   const rows = data.content ?? []
 
@@ -61,9 +66,13 @@ export default function ShortagesTab({ onChanged }) {
           <table className="w-full text-sm min-w-[960px]">
             <thead className="bg-gray-50">
               <tr>
-                {['Responsable', 'Origen', 'Motivo', 'Faltante', 'Abonado', 'Resta', ''].map((h, i) => (
-                  <th key={i} className={`px-4 py-2 font-medium text-gray-600 ${['Faltante', 'Abonado', 'Resta'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>
-                ))}
+                <SortableTh label="Responsable" sortKey="person" sort={tableSort.sort} onSort={onSort} className="px-4 py-2 font-medium text-gray-600 text-left" align="left" />
+                <SortableTh label="Origen" sortKey="origin" sort={tableSort.sort} onSort={onSort} className="px-4 py-2 font-medium text-gray-600 text-left" align="left" />
+                <th className="px-4 py-2 font-medium text-gray-600 text-left">Motivo</th>
+                <SortableTh label="Faltante" sortKey="amount" sort={tableSort.sort} onSort={onSort} className="px-4 py-2 font-medium text-gray-600 text-right" align="right" />
+                <SortableTh label="Abonado" sortKey="paid" sort={tableSort.sort} onSort={onSort} className="px-4 py-2 font-medium text-gray-600 text-right" align="right" />
+                <th className="px-4 py-2 font-medium text-gray-600 text-right">Resta</th>
+                <th className="px-4 py-2 font-medium text-gray-600 text-left"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
