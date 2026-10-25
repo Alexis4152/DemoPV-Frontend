@@ -8,7 +8,31 @@ import { resolveMediaUrl } from '../../utils/media'
 import CloseCutModal from './CloseCutModal'
 import { EntryModal, ExitModal } from './MovementModals'
 import { ChooseRegisterModal, ReceiveModal } from './OpenCutModals'
-import { MovementBadge, Pagination, SignedAmount, fmt, fmtDate, fmtTime } from './common'
+import { MovementBadge, Pagination, SignedAmount, fmt, fmtDate, fmtTime, isOutflow } from './common'
+import useTableSort from '../../hooks/useTableSort'
+import SortableTh from '../../components/SortableTh'
+
+// Valor por el que se ordena cada columna de los movimientos del turno. El monto va con
+// signo (salidas negativas), igual que se muestra.
+const MOVEMENT_SORT_VALUE = {
+  time: (m) => m.createdAt ?? '',
+  type: (m) => m.type ?? '',
+  concept: (m) => (m.concept ?? '').toLowerCase(),
+  by: (m) => (m.registeredBy?.name ?? '').toLowerCase(),
+  amount: (m) => Number(m.amount ?? 0) * (isOutflow(m.type) ? -1 : 1),
+}
+
+/** Movimientos ordenados por la columna elegida; sin orden elegido, del más reciente al más antiguo. */
+function sortMovements(movements, sort) {
+  if (!sort || !MOVEMENT_SORT_VALUE[sort.key]) return [...movements].reverse()
+  const value = MOVEMENT_SORT_VALUE[sort.key]
+  const factor = sort.dir === 'desc' ? -1 : 1
+  return [...movements].sort((a, b) => {
+    const va = value(a)
+    const vb = value(b)
+    return (va < vb ? -1 : va > vb ? 1 : 0) * factor
+  })
+}
 
 /**
  * Pestaña "Mi caja": el corte del usuario en sesión. Sin corte abierto, ofrece abrir uno
@@ -29,6 +53,10 @@ export default function MyCashTab({ onChanged }) {
   // Paginación de los movimientos del turno: vienen todos juntos (un turno tiene pocos),
   // así que se pagina aquí mismo, con los más recientes primero.
   const [movPage, setMovPage] = useState(0)
+  // Orden de los movimientos del turno: aquí sí es en pantalla, porque ya están todos
+  // cargados (se ordena la lista completa y luego se pagina).
+  const movSort = useTableSort('sort:myCashMovements')
+  const onMovSort = (k) => { movSort.toggle(k); setMovPage(0) }
   const [movSize, setMovSize] = useState(10)
   const [pendingReimbursements, setPendingReimbursements] = useState([])
   const [people, setPeople] = useState([])
@@ -92,7 +120,7 @@ export default function MyCashTab({ onChanged }) {
   const pendingIds = new Set(pendingReimbursements.map((r) => r.id))
   const movTotalPages = Math.ceil(movements.length / movSize)
   const safeMovPage = Math.min(movPage, Math.max(movTotalPages - 1, 0))
-  const pagedMovements = [...movements].reverse().slice(safeMovPage * movSize, (safeMovPage + 1) * movSize)
+  const pagedMovements = sortMovements(movements, movSort.sort).slice(safeMovPage * movSize, (safeMovPage + 1) * movSize)
   const outflows = Number(summary?.expensesTotal ?? 0) + Number(summary?.withdrawalsTotal ?? 0) + Number(summary?.reimbursementsTotal ?? 0)
     + Number(summary?.loansOutTotal ?? 0)
 
@@ -184,9 +212,14 @@ export default function MyCashTab({ onChanged }) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[720px]">
                 <thead className="bg-gray-50">
-                  <tr>{['Hora', 'Tipo', 'Concepto', 'Registró', 'Comprobante', 'Monto'].map((h) => (
-                    <th key={h} className={`px-4 py-2 font-medium text-gray-600 ${h === 'Monto' ? 'text-right' : 'text-left'}`}>{h}</th>
-                  ))}</tr>
+                  <tr>
+                    <SortableTh label="Hora" sortKey="time" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
+                    <SortableTh label="Tipo" sortKey="type" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
+                    <SortableTh label="Concepto" sortKey="concept" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
+                    <SortableTh label="Registró" sortKey="by" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
+                    <th className="px-4 py-2 font-medium text-gray-600 text-left">Comprobante</th>
+                    <SortableTh label="Monto" sortKey="amount" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-right" align="right" />
+                  </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {pagedMovements.map((m) => (

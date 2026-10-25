@@ -3,6 +3,8 @@ import { getCashPeople, getCashRegisters, getHandovers, reopenCashRegisterDay } 
 import { useNotify } from '../../context/NotifyContext'
 import { ClosedMovementModal, ForceCloseModal, RegisterFormModal, ResolveHandoverModal } from './RegisterModals'
 import { CountBadge, Pagination, PendingBreakdown, fmt, fmtDate, fmtTime } from './common'
+import useTableSort from '../../hooks/useTableSort'
+import SortableTh from '../../components/SortableTh'
 
 
 const STATUS_BADGE = {
@@ -25,6 +27,9 @@ export default function RegistersTab({ onChanged }) {
   const [handovers, setHandovers] = useState({ content: [], totalPages: 0 })
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(10)
+  // Orden de "Últimas entregas de caja" (se aplica en el servidor; ver useTableSort).
+  const tableSort = useTableSort('sort:handovers')
+  const onSort = (k) => { tableSort.toggle(k); setPage(0) }
   // { kind: 'form'|'closed'|'force'|'resolve', register?, handover?, type? }
   const [modal, setModal] = useState(null)
 
@@ -34,13 +39,13 @@ export default function RegistersTab({ onChanged }) {
       .catch((err) => notify(err.response?.data?.message ?? 'No se pudieron cargar las cajas', 'error'))
   }
   function loadHandovers() {
-    getHandovers({ page, size })
+    getHandovers({ ...tableSort.params, page, size })
       .then((r) => setHandovers(r.data.data ?? { content: [], totalPages: 0 }))
       .catch(() => setHandovers({ content: [], totalPages: 0 }))
   }
 
   useEffect(() => { loadRegisters() }, [])
-  useEffect(() => { loadHandovers() }, [page, size])
+  useEffect(() => { loadHandovers() }, [page, size, tableSort.sort])
   useEffect(() => { getCashPeople().then((r) => setPeople(r.data.data ?? [])).catch(() => setPeople([])) }, [])
 
   async function reopenDay(r) {
@@ -132,9 +137,14 @@ export default function RegistersTab({ onChanged }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[860px]">
             <thead className="bg-gray-50">
-              <tr>{['Caja', 'Entregó', 'Recibió', 'Debía recibir', 'Recibió', 'Estado'].map((h, i) => (
-                <th key={i} className={`px-4 py-2 font-medium text-gray-600 ${i === 3 || i === 4 ? 'text-right' : 'text-left'}`}>{h}</th>
-              ))}</tr>
+              <tr>
+                <SortableTh label="Caja" sortKey="register" sort={tableSort.sort} onSort={onSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
+                <SortableTh label="Entregó" sortKey="from" sort={tableSort.sort} onSort={onSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
+                <SortableTh label="Recibió" sortKey="to" sort={tableSort.sort} onSort={onSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
+                <SortableTh label="Debía recibir" sortKey="expected" sort={tableSort.sort} onSort={onSort} className="px-4 py-2 font-medium text-gray-600 text-right" align="right" />
+                <th className="px-4 py-2 font-medium text-gray-600 text-right">Recibió</th>
+                <SortableTh label="Estado" sortKey="status" sort={tableSort.sort} onSort={onSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
+              </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {handovers.content.map((h) => {

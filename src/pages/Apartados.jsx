@@ -8,6 +8,9 @@ import useEscapeClose from '../hooks/useEscapeClose'
 import usePolling from '../hooks/usePolling'
 import IconButton from '../components/IconButton'
 import { CheckCircleIcon, CreditCardIcon, XCircleIcon, PrinterIcon } from '../components/icons'
+import ModalCloseButton from '../components/ModalCloseButton'
+import useTableSort from '../hooks/useTableSort'
+import SortableTh from '../components/SortableTh'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
@@ -78,6 +81,9 @@ export default function Apartados() {
   const [to, setTo] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
+  // Orden de la tabla por encabezado (se aplica en el servidor; ver useTableSort).
+  const tableSort = useTableSort('sort:apartados')
+  const onSort = (k) => { tableSort.toggle(k); setPage(0) }
   const [size, setSize] = useState(20)
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [loading, setLoading] = useState(true)
@@ -114,7 +120,7 @@ export default function Apartados() {
 
   function load() {
     setLoading(true)
-    getApartados({ status: status || undefined, origin: origin || undefined, folio: folio || undefined, from: from || undefined, to: to || undefined, q: search.trim() || undefined, page, size })
+    getApartados({ status: status || undefined, origin: origin || undefined, folio: folio || undefined, from: from || undefined, to: to || undefined, q: search.trim() || undefined, ...tableSort.params, page, size })
       .then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
       .finally(() => setLoading(false))
   }
@@ -124,7 +130,7 @@ export default function Apartados() {
   useEffect(() => {
     const t = setTimeout(load, 250)
     return () => clearTimeout(t)
-  }, [status, origin, folio, from, to, search, page, size])
+  }, [status, origin, folio, from, to, search, page, size, tableSort.sort])
 
   // Refresca solo, cada Tienda.pollingIntervalSeconds (ajustable en "Datos de la
   // tienda"), y también al recuperar el foco de la pestaña — así un apartado nuevo o
@@ -424,9 +430,13 @@ export default function Apartados() {
           <table className="w-full text-sm min-w-[820px]">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                {['Cliente', 'Productos', 'Total', 'Estado', 'Solicitado', 'Vence', ''].map((h) => (
-                  <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
-                ))}
+                <SortableTh label="Cliente" sortKey="customer" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Productos</th>
+                <SortableTh label="Total" sortKey="total" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <SortableTh label="Estado" sortKey="status" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <SortableTh label="Solicitado" sortKey="requested" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <SortableTh label="Vence" sortKey="expires" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <th className="text-left px-4 py-3 font-medium text-gray-600"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -504,9 +514,10 @@ export default function Apartados() {
 
       {/* Confirm modal */}
       {confirmModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setConfirmModal(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Confirmar apartado</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => setConfirmModal(null)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Confirmar apartado</h3>
             <p className="text-sm text-gray-500 mb-4">{confirmModal.customerName} — {confirmModal.customerPhone}</p>
             {confirmModal.items.some((i) => i.availableStock === 0) && (
               <p className="text-xs text-red-700 bg-red-50 rounded px-3 py-2 mb-4">
@@ -572,9 +583,10 @@ export default function Apartados() {
 
       {/* Complete modal */}
       {completeModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setCompleteModal(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Completar apartado</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <ModalCloseButton onClick={() => setCompleteModal(null)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Completar apartado</h3>
             {completeModal.origin === 'DEPOSIT' && completeModal.depositAmount > 0 ? (
               <p className="text-sm text-gray-500 mb-4">
                 {completeModal.customerName} — Total {fmt(completeModal.total)}, ya pagó {fmt(completeModal.depositAmount)} de anticipo · Saldo a cobrar: <strong className="text-gray-800">{fmt(completeTotal)}</strong>
@@ -660,9 +672,10 @@ export default function Apartados() {
 
       {/* Cancel modal */}
       {cancelModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setCancelModal(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Cancelar apartado</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <ModalCloseButton onClick={() => setCancelModal(null)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Cancelar apartado</h3>
             <p className="text-sm text-gray-500 mb-4">
               {cancelModal.customerName}{cancelModal.status === 'ACTIVE' ? ' — se restituirá el stock.' : ''}
             </p>

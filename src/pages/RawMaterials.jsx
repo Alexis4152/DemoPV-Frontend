@@ -9,6 +9,10 @@ import { useAuth } from '../context/AuthContext'
 import { useNotify } from '../context/NotifyContext'
 import IconButton from '../components/IconButton'
 import { PencilIcon, SlidersIcon, ArchiveIcon, ClockHistoryIcon, BoxesIcon } from '../components/icons'
+import ModalCloseButton from '../components/ModalCloseButton'
+import useEscapeClose from '../hooks/useEscapeClose'
+import useTableSort from '../hooks/useTableSort'
+import SortableTh from '../components/SortableTh'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
@@ -40,6 +44,9 @@ export default function RawMaterials() {
   const [filterCat, setFilterCat] = useState('')
   const [lowStockOnly, setLowStockOnly] = useState(false)
   const [page, setPage] = useState(0)
+  // Orden de la tabla por encabezado (se aplica en el servidor; ver useTableSort).
+  const tableSort = useTableSort('sort:rawMaterials')
+  const onSort = (k) => { tableSort.toggle(k); setPage(0) }
   const [size, setSize] = useState(20)
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(null) // { kind: 'form'|'adjust'|'transfer'|'history', item }
@@ -52,7 +59,7 @@ export default function RawMaterials() {
 
   function loadPage() {
     setLoading(true)
-    getRawMaterialsPage({ q: search.trim() || undefined, categoryId: filterCat || undefined, lowStock: lowStockOnly || undefined, page, size })
+    getRawMaterialsPage({ q: search.trim() || undefined, categoryId: filterCat || undefined, lowStock: lowStockOnly || undefined, ...tableSort.params, page, size })
       .then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
       .catch((err) => notify(err.response?.data?.message ?? 'No se pudo cargar la materia prima', 'error'))
       .finally(() => setLoading(false))
@@ -65,7 +72,7 @@ export default function RawMaterials() {
   useEffect(() => {
     const t = setTimeout(loadPage, 250)
     return () => clearTimeout(t)
-  }, [search, filterCat, lowStockOnly, page, size]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, filterCat, lowStockOnly, page, size, tableSort.sort]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     getCategories().then((r) => setCategories((r.data.data ?? []).filter((c) => c.isActive !== false))).catch(() => {})
@@ -137,9 +144,13 @@ export default function RawMaterials() {
           <table className="w-full text-sm min-w-[760px]">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                {['Materia prima', 'Categoría', 'Código', 'Costo', 'Stock', 'Mín.', 'Se pasa a'].map((h) => (
-                  <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
-                ))}
+                <SortableTh label="Materia prima" sortKey="name" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <SortableTh label="Categoría" sortKey="category" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <SortableTh label="Código" sortKey="barcode" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <SortableTh label="Costo" sortKey="cost" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <SortableTh label="Stock" sortKey="stock" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <SortableTh label="Mín." sortKey="minStock" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Se pasa a</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
@@ -208,10 +219,12 @@ export default function RawMaterials() {
 }
 
 function Modal({ title, subtitle, onClose, children, wide = false }) {
+  useEscapeClose(true, onClose)
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className={`bg-white rounded-xl shadow-xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} p-6 max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-lg font-bold">{title}</h3>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className={`relative bg-white rounded-xl shadow-xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} p-6 max-h-[90vh] overflow-y-auto`}>
+        <ModalCloseButton onClick={onClose} />
+        <h3 className="text-lg font-bold pr-8">{title}</h3>
         {subtitle && <p className="text-sm text-gray-500 mt-0.5">{subtitle}</p>}
         <div className="mt-4">{children}</div>
       </div>

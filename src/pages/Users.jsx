@@ -9,6 +9,9 @@ import PasswordInput from '../components/PasswordInput'
 import IconButton from '../components/IconButton'
 import { PencilIcon, ArchiveIcon, LogOutIcon } from '../components/icons'
 import { roleLabel } from '../utils/roleLabels'
+import ModalCloseButton from '../components/ModalCloseButton'
+import useTableSort from '../hooks/useTableSort'
+import SortableTh from '../components/SortableTh'
 
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
@@ -72,6 +75,9 @@ export default function Users() {
   const [allTiendas, setAllTiendas] = useState([])
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [page, setPage] = useState(0)
+  // Orden de la tabla por encabezado (se aplica en el servidor; ver useTableSort).
+  const tableSort = useTableSort('sort:users')
+  const onSort = (k) => { tableSort.toggle(k); setPage(0) }
   const [size, setSize] = useState(20)
   const [showModal, setShowModal] = useState(false)
   const [editUser, setEditUser] = useState(null)
@@ -94,6 +100,7 @@ export default function Users() {
    */
   function load() {
     const params = {
+      ...tableSort.params,
       page,
       size,
       name: filters.name || undefined,
@@ -114,7 +121,7 @@ export default function Users() {
   useEffect(() => {
     const t = setTimeout(load, 250)
     return () => clearTimeout(t)
-  }, [page, size, filters])
+  }, [page, size, filters, tableSort.sort])
 
   // Cierra con ESC el modal de usuario (mismo efecto que "Cancelar"), descartando lo capturado.
   useEscapeClose(showModal, () => setShowModal(false))
@@ -385,9 +392,13 @@ export default function Users() {
         <table className="w-full text-sm min-w-[720px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              {['Nombre', 'Email', 'Rol', 'Fecha de registro', 'Estado', 'Sesión', ''].map((h) => (
-                <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
-              ))}
+              <SortableTh label="Nombre" sortKey="name" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Email" sortKey="email" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Rol" sortKey="role" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Fecha de registro" sortKey="createdAt" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <SortableTh label="Estado" sortKey="status" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <th className="text-left px-4 py-3 font-medium text-gray-600">Sesión</th>
+              <th className="text-left px-4 py-3 font-medium text-gray-600"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -476,9 +487,10 @@ export default function Users() {
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-4">{editUser ? 'Editar usuario' : 'Nuevo usuario'}</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => setShowModal(false)} />
+            <h3 className="text-lg font-bold mb-4 pr-8">{editUser ? 'Editar usuario' : 'Nuevo usuario'}</h3>
             {/* Sin `required`/`type="email"` nativos a propósito (ver validateUserForm):
                 el globo del navegador se disparaba antes de que este formulario corriera,
                 tapando nuestro propio manejo de errores. */}

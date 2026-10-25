@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useState } from 'react'
 import useEscapeClose from '../hooks/useEscapeClose'
+import ModalCloseButton from '../components/ModalCloseButton'
 
 const NotifyContext = createContext(null)
 
@@ -107,10 +108,11 @@ export function NotifyProvider({ children }) {
       </div>
 
       {confirmState && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[101] p-4" onClick={() => handleConfirm(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
-            {confirmState.opts.title && <h3 className="text-lg font-bold text-gray-900 mb-2">{confirmState.opts.title}</h3>}
-            <p className="text-sm text-gray-700 mb-6">{confirmState.message}</p>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[101] p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <ModalCloseButton onClick={() => handleConfirm(false)} />
+            {confirmState.opts.title && <h3 className="text-lg font-bold text-gray-900 mb-2 pr-8">{confirmState.opts.title}</h3>}
+            <p className={`text-sm text-gray-700 mb-6 ${confirmState.opts.title ? '' : 'pr-8'}`}>{confirmState.message}</p>
             <div className="flex gap-2 justify-end">
               <button className="btn-secondary" onClick={() => handleConfirm(false)}>
                 {confirmState.opts.cancelText ?? 'Cancelar'}

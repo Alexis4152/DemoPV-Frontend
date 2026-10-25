@@ -7,6 +7,8 @@ import useEscapeClose from '../hooks/useEscapeClose'
 import { roleLabel, MANAGEMENT_ROLE_NAMES } from '../utils/roleLabels'
 import IconButton from '../components/IconButton'
 import { TrashIcon } from '../components/icons'
+import useTableSort from '../hooks/useTableSort'
+import SortableTh from '../components/SortableTh'
 
 const emptyForm = { name: '', description: '', sections: [], actionGrants: [] }
 const PAGE_SIZES = [10, 20, 50, 100]
@@ -16,6 +18,10 @@ const CRUD_COLUMNS = [
   { action: 'CREATE', label: 'Agregar' },
   { action: 'EDIT', label: 'Editar' },
   { action: 'DELETE', label: 'Eliminar' },
+  // Solo Inventario: agregar y quitar piezas (merma, devolución...) y cargar existencias
+  // por Excel. Separado de "Editar", que solo edita los datos del producto. Admin/
+  // supervisor lo tienen siempre (ver ProductService#canAdjustStock).
+  { action: 'ADJUST_STOCK', label: 'Ajustar stock' },
 ]
 
 // Acciones de mutación configurables por sección (ver SectionAccessService#checkAction en
@@ -28,7 +34,7 @@ const CRUD_COLUMNS = [
 // jerarquía de UserService#assertCanManage sigue sin dejarlo tocar cuentas ADMIN/SUPERVISOR
 // /SUPER_ADMIN — solo otras cuentas sin rango.
 const CRUD_SECTIONS = {
-  INVENTORY: ['CREATE', 'EDIT', 'DELETE'],
+  INVENTORY: ['CREATE', 'EDIT', 'DELETE', 'ADJUST_STOCK'],
   RAW_MATERIALS: ['CREATE', 'EDIT', 'DELETE'],
   SALES: ['DELETE'],
   APARTADOS: ['EDIT', 'DELETE'],
@@ -64,6 +70,9 @@ export default function Roles() {
   const { isSuperAdmin } = useAuth()
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [page, setPage] = useState(0)
+  // Orden de la tabla por encabezado (se aplica en el servidor; ver useTableSort).
+  const tableSort = useTableSort('sort:roles')
+  const onSort = (k) => { tableSort.toggle(k); setPage(0) }
   const [size, setSize] = useState(20)
   // Qué fila está expandida: el `id` del rol en edición, el literal 'new' (alta de un rol
   // nuevo, se muestra como fila extra arriba de la lista), o `null` si todo está cerrado.
@@ -82,10 +91,10 @@ export default function Roles() {
   // Recarga la página actual de roles (tras crear/editar/eliminar, cambiar de página/tamaño,
   // o al montar).
   function load() {
-    getRolesPage({ page, size }).then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
+    getRolesPage({ ...tableSort.params, page, size }).then((r) => setPageData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
   }
 
-  useEffect(() => { load() }, [page, size])
+  useEffect(() => { load() }, [page, size, tableSort.sort])
 
   // Cierra con ESC el panel expandido (mismo efecto que "Cancelar"), descartando lo capturado.
   useEscapeClose(expandedId !== null, () => setExpandedId(null))
@@ -287,7 +296,7 @@ export default function Roles() {
             Permisos <span className={fieldErrors.sections ? 'text-red-600' : ''}>*</span>
           </label>
           <div className="mt-1 overflow-x-auto rounded-lg border border-gray-200">
-            <table className="w-full text-sm min-w-[460px]">
+            <table className="w-full text-sm min-w-[560px]">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
                   <th className="text-left px-3 py-2 font-medium text-gray-600">Módulo</th>
@@ -370,9 +379,10 @@ export default function Roles() {
         <table className="w-full text-sm min-w-[640px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              {['Nombre', 'Descripción', 'Secciones', ''].map((h) => (
-                <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
-              ))}
+              <SortableTh label="Nombre" sortKey="name" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+              <th className="text-left px-4 py-3 font-medium text-gray-600">Descripción</th>
+              <th className="text-left px-4 py-3 font-medium text-gray-600">Secciones</th>
+              <th className="text-left px-4 py-3 font-medium text-gray-600"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">

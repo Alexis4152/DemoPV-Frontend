@@ -108,7 +108,27 @@ export default function Maintenance() {
       <p className="text-gray-500 text-sm mb-6">
         Programa un aviso de mantenimiento que se muestra en la pantalla de inicio de sesión de{' '}
         <span className="font-medium">todas las tiendas</span>. El texto es una plantilla fija — solo eliges cuándo.
+        Mientras la ventana está activa, nadie puede entrar ni operar (las sesiones abiertas se cierran); solo el super admin.
       </p>
+
+      {/* Acceso del super admin durante la ventana: el login normal solo muestra la pantalla
+          de mantenimiento; con ?admin aparece el formulario (el backend rechaza otros roles). */}
+      <div className="card mb-4">
+        <p className="text-sm font-semibold text-gray-900">🔑 Tu acceso durante el mantenimiento</p>
+        <p className="text-xs text-gray-500 mt-1 mb-2">Guárdala: es la única forma de ver el formulario de inicio de sesión mientras la ventana está activa.</p>
+        <div className="flex gap-2">
+          <input className="input font-mono text-sm" readOnly value={`${window.location.origin}/login?admin`} onFocus={(e) => e.target.select()} />
+          <button
+            type="button"
+            className="btn-secondary text-sm shrink-0"
+            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/login?admin`)
+              .then(() => notify('Dirección copiada', 'success'))
+              .catch(() => notify('No se pudo copiar; selecciónala y cópiala a mano', 'error'))}
+          >
+            Copiar
+          </button>
+        </div>
+      </div>
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>

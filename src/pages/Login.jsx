@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import PasswordInput from '../components/PasswordInput'
 import { applyDefaultBrand } from '../utils/theme'
@@ -7,10 +7,12 @@ import PublicFooter from '../components/PublicFooter'
 import { getPublicMaintenanceWindow } from '../api/maintenance'
 import { scheduledMaintenanceMessage, activeMaintenanceMessage } from '../utils/maintenanceMessages'
 import logo from '../assets/logo.png'
+import MaintenanceScreen from '../components/MaintenanceScreen'
 
 // Cada cuánto se revisa si hay una ventana de mantenimiento nueva/que cambió de fase
-// (programada -> en curso -> terminada) mientras alguien se queda parado en esta pantalla.
-const MAINTENANCE_POLL_MS = 30000
+// (programada -> en curso -> terminada) mientras alguien se queda parado en esta pantalla:
+// al terminar, el formulario regresa solo, sin recargar.
+const MAINTENANCE_POLL_MS = 60000
 
 /**
  * Pantalla de login. Es la puerta de entrada a la app: no hay sesión ni tienda todavía,
@@ -31,6 +33,12 @@ export default function Login() {
   const [fieldErrors, setFieldErrors] = useState({})
   const [loading, setLoading] = useState(false)
   const [maintenanceWindow, setMaintenanceWindow] = useState(null)
+  // Acceso del SUPER_ADMIN durante una ventana activa: /login?admin muestra el formulario
+  // (el backend igual rechaza a cualquier otro rol, ver MaintenanceWindowService). Sin ese
+  // parámetro, todos ven solo la pantalla de mantenimiento.
+  const adminMode = new URLSearchParams(useLocation().search).has('admin')
+  const maintenanceActive = maintenanceWindow?.phase === 'ACTIVE'
+  const showMaintenanceScreen = maintenanceActive && !adminMode
 
   // El login siempre es azul Nexora fijo, sin importar el color que haya quedado
   // aplicado de una sesión anterior con una tienda con color propio.
@@ -100,17 +108,18 @@ export default function Login() {
       />
       <div className="flex-1 flex items-center justify-center p-4">
       <div className="flex flex-col items-center w-full max-w-md relative z-10">
-        {maintenanceWindow && (
+        {maintenanceWindow && !showMaintenanceScreen && (
           <div className={`w-full mb-4 rounded-xl px-4 py-3 text-sm text-center ${
             maintenanceWindow.phase === 'ACTIVE'
               ? 'bg-red-50 border border-red-200 text-red-700'
               : 'bg-amber-50 border border-amber-200 text-amber-800'
           }`}>
-            {maintenanceWindow.phase === 'ACTIVE'
-              ? activeMaintenanceMessage(maintenanceWindow.endAt)
+            {maintenanceActive
+              ? `Acceso de administrador: ${activeMaintenanceMessage(maintenanceWindow.endAt)} Solo el super admin puede entrar.`
               : scheduledMaintenanceMessage(maintenanceWindow.startAt, maintenanceWindow.endAt)}
           </div>
         )}
+        {showMaintenanceScreen ? <MaintenanceScreen endAt={maintenanceWindow.endAt} /> : (
         <div className="bg-white rounded-2xl shadow-2xl shadow-[#155dea]/30 w-full p-6 sm:p-8">
           <div className="text-center mb-8">
             <img src={logo} alt="Nexora Systems" className="w-24 h-24 rounded-full mx-auto mb-3 shadow-[0_0_24px_rgba(43,132,245,0.5)]" />
@@ -160,6 +169,7 @@ export default function Login() {
             </Link>
           </form>
         </div>
+        )}
       </div>
       </div>
       <PublicFooter dark />

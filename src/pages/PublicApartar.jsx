@@ -7,6 +7,7 @@ import { useNotify } from '../context/NotifyContext'
 import useEscapeClose from '../hooks/useEscapeClose'
 import PublicFooter from '../components/PublicFooter'
 import defaultLogo from '../assets/logo.png'
+import ModalCloseButton from '../components/ModalCloseButton'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDateTime = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
@@ -980,11 +981,11 @@ export default function PublicApartar() {
           sin truncar, algo que antes no existía: la tarjeta del catálogo solo mostraba la
           primera foto en chico y la descripción cortada a 2 líneas. */}
       {detailProduct && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDetailProduct(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-start gap-3 mb-3">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => setDetailProduct(null)} />
+            <div className="mb-3 pr-8">
               <h3 className="text-lg font-bold text-gray-900">{detailProduct.name}</h3>
-              <button type="button" className="text-gray-400 hover:text-gray-600 text-xl leading-none shrink-0" onClick={() => setDetailProduct(null)}>✕</button>
             </div>
 
             <div className="relative w-full aspect-square bg-purple-50 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
