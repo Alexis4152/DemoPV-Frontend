@@ -3,6 +3,7 @@ import { getInventoryActivity, getInventoryActivityUsers } from '../../api/inven
 import { toLocalDateStr, todayLocalDateStr } from '../../utils/date'
 import useTableSort from '../../hooks/useTableSort'
 import SortableTh from '../../components/SortableTh'
+import { Pagination } from '../cashcuts/common'
 
 // Acciones que se pueden filtrar, agrupadas como se muestran en el selector. Las de
 // "Stock" son el origen de un movimiento (MovementSource en el backend); las de
@@ -47,7 +48,9 @@ const ACTION_LABELS = Object.fromEntries(ACTION_GROUPS.flatMap((g) => g.options)
 const RED = new Set(['SALE', 'APARTADO', 'MERMA', 'COUNT_DIFFERENCE', 'RETURN_TO_SUPPLIER', 'INTERNAL_USE', 'MANUAL_OUT', 'PRODUCT_DEACTIVATED'])
 const GREEN = new Set(['SALE_CANCEL', 'APARTADO_RETURN', 'INITIAL_STOCK', 'MANUAL_IN', 'RAW_MATERIAL', 'PRODUCT_CREATED', 'PRODUCT_REACTIVATED'])
 
-const PAGE_SIZE = 20
+// Tamaño de página inicial; el usuario lo cambia con "Mostrar N por página" (mismo
+// componente Pagination que el resto de las tablas).
+const DEFAULT_PAGE_SIZE = 20
 
 function daysAgo(n) {
   const d = new Date()
@@ -78,6 +81,7 @@ export default function InventoryMovements({ categories }) {
   const [userId, setUserId] = useState('')
   const [action, setAction] = useState('')
   const [page, setPage] = useState(0)
+  const [size, setSize] = useState(DEFAULT_PAGE_SIZE)
   // Orden de la tabla por encabezado (se aplica en el servidor; ver useTableSort).
   const tableSort = useTableSort('sort:inventoryActivity')
   const onSort = (k) => { tableSort.toggle(k); setPage(0) }
@@ -105,7 +109,7 @@ export default function InventoryMovements({ categories }) {
     setLoading(true)
     setError('')
     getInventoryActivity({
-      from, to, page, size: PAGE_SIZE,
+      from, to, page, size,
       ...tableSort.params,
       q: q || undefined,
       categoryId: categoryId || undefined,
@@ -115,12 +119,9 @@ export default function InventoryMovements({ categories }) {
       .then((r) => setData(r.data.data ?? { content: [], totalElements: 0, totalPages: 0 }))
       .catch((err) => setError(err.response?.data?.message ?? 'No se pudieron cargar los movimientos'))
       .finally(() => setLoading(false))
-  }, [from, to, q, categoryId, userId, action, page, tableSort.sort])
+  }, [from, to, q, categoryId, userId, action, page, size, tableSort.sort])
 
   const rows = data.content ?? []
-  const total = data.totalElements ?? 0
-  const rangeFrom = total === 0 ? 0 : page * PAGE_SIZE + 1
-  const rangeTo = Math.min(total, page * PAGE_SIZE + rows.length)
   const hasFilters = q || categoryId || userId || action
 
   function clearFilters() {
@@ -179,7 +180,8 @@ export default function InventoryMovements({ categories }) {
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>}
 
-      <div className="card p-0 overflow-x-auto">
+      <div className="card p-0 overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm min-w-[860px]">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
@@ -226,14 +228,11 @@ export default function InventoryMovements({ categories }) {
             )}
           </tbody>
         </table>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-2 mt-3 text-sm text-gray-500">
-        <span>{rangeFrom}–{rangeTo} de {total}</span>
-        <div className="flex gap-2">
-          <button type="button" className="btn-secondary text-sm" disabled={page === 0 || loading} onClick={() => setPage((p) => p - 1)}>← Anterior</button>
-          <button type="button" className="btn-secondary text-sm" disabled={page + 1 >= (data.totalPages ?? 0) || loading} onClick={() => setPage((p) => p + 1)}>Siguiente →</button>
         </div>
+        <Pagination
+          page={page} size={size} totalElements={data.totalElements ?? 0} totalPages={data.totalPages ?? 0}
+          count={rows.length} onPageChange={setPage} onSizeChange={(n) => { setSize(n); setPage(0) }}
+        />
       </div>
     </div>
   )
