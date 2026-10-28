@@ -91,7 +91,7 @@ export default function POS() {
   const [showDepositModal, setShowDepositModal] = useState(false)
   const [depositForm, setDepositForm] = useState({
     customerName: '', customerPhone: '', customerEmail: '', notes: '',
-    depositAmount: '', paymentMethod: 'CASH', amountReceived: '', deliveryDate: '',
+    depositAmount: '', paymentMethod: 'CASH', amountReceived: '', deliveryDate: '', ticketType: 'physical',
   })
   const [depositLoading, setDepositLoading] = useState(false)
   const [depositFieldErrors, setDepositFieldErrors] = useState({})
@@ -902,7 +902,8 @@ export default function POS() {
       notify(`No se puede registrar un anticipo con productos en oferta (${names}). El anticipo es solo para productos sin oferta — quítalos del carrito y véndelos aparte.`, 'error')
       return
     }
-    setDepositForm((prev) => ({ ...prev, customerName: customerName || prev.customerName, customerEmail: customerEmail || prev.customerEmail }))
+    // El tipo de ticket arranca con el que el cajero ya eligió en el panel de "Resumen".
+    setDepositForm((prev) => ({ ...prev, customerName: customerName || prev.customerName, customerEmail: customerEmail || prev.customerEmail, ticketType }))
     setDepositFieldErrors({})
     setShowDepositModal(true)
   }
@@ -1028,7 +1029,7 @@ export default function POS() {
     setDepositLoading(true)
     setDepositFieldErrors({})
     try {
-      await createDepositApartado({
+      const res = await createDepositApartado({
         customerName: depositForm.customerName.trim(),
         customerPhone: depositForm.customerPhone,
         customerEmail: depositForm.customerEmail.trim() || null,
@@ -1038,13 +1039,26 @@ export default function POS() {
         depositAmount: Number(depositForm.depositAmount),
         paymentMethod: depositForm.paymentMethod,
         amountReceived: depositForm.paymentMethod === 'CASH' ? Number(depositForm.amountReceived) : undefined,
+        sendTicketEmail: depositForm.ticketType === 'digital',
       })
-      notify('Anticipo registrado — el apartado ya quedó activo', 'success')
+      // Digital sin correo = anticipo sin ticket (igual que la venta normal, ver handleCheckout).
+      const isDigital = depositForm.ticketType === 'digital'
+      notify(isDigital && depositForm.customerEmail.trim()
+        ? `Anticipo registrado — ticket enviado a ${depositForm.customerEmail.trim()}`
+        : 'Anticipo registrado — el apartado ya quedó activo', 'success')
+      // Igual que al cobrar una venta (ver handleCheckout): en físico se imprime el ticket
+      // del anticipo, que ya trae el pulso del cajón si fue en efectivo; en digital no se
+      // imprime nada, pero si fue en efectivo el cajón se abre aparte para dar el cambio.
+      const depositSaleId = res.data.data?.depositSaleId
+      if (depositSaleId) {
+        if (!isDigital) printTicket(depositSaleId)
+        else if (depositForm.paymentMethod === 'CASH') openDrawerSilently(depositSaleId)
+      }
       setShowDepositModal(false)
       setCart([])
       setSelectedIds(new Set())
       setDepositForm({ customerName: '', customerPhone: '', customerEmail: '', notes: '',
-        depositAmount: '', paymentMethod: 'CASH', amountReceived: '', deliveryDate: '' })
+        depositAmount: '', paymentMethod: 'CASH', amountReceived: '', deliveryDate: '', ticketType: 'physical' })
     } catch (err) {
       // Errores ligados a un campo ({campo: mensaje}) van debajo de su input; los demás
       // (ej. sin corte abierto, sin stock) solo en la notificación, con el mensaje real.
@@ -1741,7 +1755,21 @@ export default function POS() {
                 {depositFieldErrors.customerPhone && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerPhone}</p>}
               </div>
               <div>
-                <label className="text-xs font-medium text-gray-600">Correo (opcional)</label>
+                <label className="text-xs font-medium text-gray-600">Ticket</label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  {[['physical', '🖨️ Físico'], ['digital', '📧 Digital']].map(([value, label]) => (
+                    <button key={value} type="button"
+                      className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                        depositForm.ticketType === value ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                      onClick={() => setDepositForm({ ...depositForm, ticketType: value })}
+                    >{label}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">
+                  {depositForm.ticketType === 'digital' ? 'Correo para enviar el ticket (opcional)' : 'Correo (opcional)'}
+                </label>
                 <input className="input" value={depositForm.customerEmail} onChange={(e) => setDepositForm({ ...depositForm, customerEmail: e.target.value })} />
                 {depositFieldErrors.customerEmail && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerEmail}</p>}
               </div>
