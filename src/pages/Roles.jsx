@@ -28,8 +28,8 @@ const CRUD_COLUMNS = [
 // el backend) — una sección ausente de este mapa, o una acción que no esté en su lista, se
 // muestra con "—" en la tabla de permisos (sin ese nivel de detalle). No todos los módulos
 // tienen las tres: Ventas solo puede cancelarse (no hay "editar" una venta ya hecha, y
-// venderla es la sección POS, no esta), y Apartados no tiene alta manual (se crean desde
-// la tienda pública) — confirmar/completar/quitar un producto cuentan como "editar". En
+// venderla es la sección POS, no esta). En Apartados, "agregar" es registrar un anticipo
+// desde el POS — confirmar/completar/quitar un producto cuentan como "editar". En
 // Usuarios, aunque se le dé el permiso a un rol sin rango (CASHIER o uno personalizado), la
 // jerarquía de UserService#assertCanManage sigue sin dejarlo tocar cuentas ADMIN/SUPERVISOR
 // /SUPER_ADMIN — solo otras cuentas sin rango.
@@ -37,8 +37,10 @@ const CRUD_SECTIONS = {
   INVENTORY: ['CREATE', 'EDIT', 'DELETE', 'ADJUST_STOCK'],
   RAW_MATERIALS: ['CREATE', 'EDIT', 'DELETE'],
   SALES: ['DELETE'],
-  APARTADOS: ['EDIT', 'DELETE'],
+  APARTADOS: ['CREATE', 'EDIT', 'DELETE'],
   USERS: ['CREATE', 'EDIT', 'DELETE'],
+  // "Eliminar" una oferta en realidad la desactiva (ver OfferController#delete).
+  OFFERS: ['CREATE', 'EDIT', 'DELETE'],
 }
 
 /**

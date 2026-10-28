@@ -37,3 +37,10 @@ export const updateOffer = (id, data) => api.put(`/offers/${id}`, data)
  * @returns {Promise} Respuesta de axios confirmando la eliminación.
  */
 export const deleteOffer = (id) => api.delete(`/offers/${id}`)
+
+/**
+ * Reactiva una oferta desactivada.
+ * @param {number|string} id Id de la oferta.
+ * @returns {Promise} Respuesta de axios con la oferta reactivada.
+ */
+export const activateOffer = (id) => api.post(`/offers/${id}/activate`)

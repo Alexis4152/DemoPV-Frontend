@@ -14,6 +14,38 @@ import SortableTh from '../components/SortableTh'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
+
+// Fecha de entrega de un anticipo ("2026-10-27", sin hora). Se arma como fecha LOCAL: con
+// new Date("2026-10-27") el navegador la toma en UTC y en México se vería un día antes.
+function parseLocalDate(isoDate) {
+  const [y, m, d] = isoDate.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function fmtDeliveryDate(isoDate) {
+  return parseLocalDate(isoDate).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** Días que faltan para la entrega (0 = hoy, negativo = ya pasó). */
+function daysUntil(isoDate) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.round((parseLocalDate(isoDate) - today) / 86400000)
+}
+
+/**
+ * Aviso de entrega de un anticipo activo: desde un día antes se marca "Próximo a entregar";
+ * el mismo día, "Entrega hoy"; si ya pasó la fecha, "Atrasado".
+ */
+function deliveryBadge(isoDate) {
+  const days = daysUntil(isoDate)
+  const [label, cls] = days < 0 ? ['⚠️ Atrasado', 'bg-red-100 text-red-700']
+    : days === 0 ? ['📦 Entrega hoy', 'bg-orange-100 text-orange-700']
+    : days === 1 ? ['⏰ Próximo a entregar', 'bg-amber-100 text-amber-800']
+    : [null, null]
+  if (!label) return null
+  return <span className={`block w-fit mt-1 px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>{label}</span>
+}
 // Mismo patrón que Users.jsx/POS.jsx para validar formato de correo del lado del cliente.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -435,7 +467,10 @@ export default function Apartados() {
                 <SortableTh label="Total" sortKey="total" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
                 <SortableTh label="Estado" sortKey="status" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
                 <SortableTh label="Solicitado" sortKey="requested" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
-                <SortableTh label="Vence" sortKey="expires" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                {/* Anticipos: no vencen solos, llevan fecha de entrega (ver deliveryBadge). */}
+                {origin === 'DEPOSIT'
+                  ? <SortableTh label="Entrega" sortKey="delivery" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />
+                  : <SortableTh label="Vence" sortKey="expires" sort={tableSort.sort} onSort={onSort} className="text-left px-4 py-3 font-medium text-gray-600" align="left" />}
                 <th className="text-left px-4 py-3 font-medium text-gray-600"></th>
               </tr>
             </thead>
@@ -466,7 +501,16 @@ export default function Apartados() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{fmtDate(a.requestedAt)}</td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{a.status === 'ACTIVE' ? fmtDate(a.expiresAt) : '—'}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      {a.origin === 'DEPOSIT' ? (
+                        a.deliveryDate ? (
+                          <>
+                            <span className="text-gray-700">{fmtDeliveryDate(a.deliveryDate)}</span>
+                            {a.status === 'ACTIVE' && deliveryBadge(a.deliveryDate)}
+                          </>
+                        ) : '—'
+                      ) : (a.status === 'ACTIVE' ? fmtDate(a.expiresAt) : '—')}
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2 justify-end whitespace-nowrap">
                         {a.status === 'PENDING' && hasAction('APARTADOS', 'EDIT') && (

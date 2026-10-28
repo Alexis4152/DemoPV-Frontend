@@ -1,14 +1,23 @@
 import { useEffect, useState } from 'react'
-import { getOffersPage, createOffer, updateOffer, deleteOffer } from '../api/offers'
+import { getOffersPage, createOffer, updateOffer, deleteOffer, activateOffer } from '../api/offers'
 import { getProducts } from '../api/products'
 import { useNotify } from '../context/NotifyContext'
+import { useAuth } from '../context/AuthContext'
 import IconButton from '../components/IconButton'
-import { PencilIcon, ArchiveIcon } from '../components/icons'
+import ModalCloseButton from '../components/ModalCloseButton'
+import { PencilIcon, ArchiveIcon, CheckCircleIcon } from '../components/icons'
 
+// Campos de piezas: texto sin flechitas, pero solo aceptan dígitos (enteros).
+const onlyDigits = (v) => v.replace(/\D/g, '')
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 // `datetime-local` necesita "YYYY-MM-DDTHH:mm", sin segundos ni zona — y al revés al enviar.
 const toLocalInput = (iso) => iso ? iso.slice(0, 16) : ''
 const toIso = (local) => local ? `${local}:00` : null
+// Ahora mismo en hora local, mismo formato "YYYY-MM-DDTHH:mm" que `datetime-local`.
+const nowLocalInput = () => {
+  const d = new Date()
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+}
 
 const emptyForm = {
   name: '', buyQuantity: '2', payQuantity: '1', maxPromosPerSale: '',
@@ -20,8 +29,8 @@ const PAGE_SIZES = [10, 20, 50, 100]
 /**
  * Pantalla "Ofertas": CRUD de promociones "compra X paga Y" (2x1, 3x2, ...) — ver
  * `Offer.java`/`SaleService#applyOffer` en el backend para cómo se calcula al vender.
- * Reservada a ADMIN/SUPER_ADMIN/SUPERVISOR (sección `OFFERS`, igual que el resto de
- * módulos configurables por rol).
+ * Visible para los roles con la sección `OFFERS`; crear/editar/desactivar requiere además
+ * la acción OFFERS:CREATE/EDIT/DELETE (ver Roles.jsx) — sin ella, solo se ve la lista.
  *
  * Mismo patrón de pantalla que Categories.jsx (filtros con debounce, paginación
  * server-side, modal de alta/edición con Escape) — lo único propio de aquí es el
@@ -29,6 +38,10 @@ const PAGE_SIZES = [10, 20, 50, 100]
  */
 export default function Offers() {
   const { notify, confirmDialog } = useNotify()
+  const { hasAction } = useAuth()
+  const canCreate = hasAction('OFFERS', 'CREATE')
+  const canEdit = hasAction('OFFERS', 'EDIT')
+  const canDelete = hasAction('OFFERS', 'DELETE')
   const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 })
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [page, setPage] = useState(0)
@@ -38,7 +51,6 @@ export default function Offers() {
   const [form, setForm] = useState(emptyForm)
   const [products, setProducts] = useState([])
   const [productFilter, setProductFilter] = useState('')
-  const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
   const [loading, setLoading] = useState(false)
 
@@ -84,7 +96,6 @@ export default function Offers() {
     setEditOffer(null)
     setForm(emptyForm)
     setProductFilter('')
-    setError('')
     setFieldErrors({})
     getProducts().then((r) => setProducts(r.data.data ?? []))
     setShowModal(true)
@@ -102,7 +113,6 @@ export default function Offers() {
       productIds: (o.products ?? []).map((p) => p.id),
     })
     setProductFilter('')
-    setError('')
     setFieldErrors({})
     getProducts().then((r) => setProducts(r.data.data ?? []))
     setShowModal(true)
@@ -127,12 +137,25 @@ export default function Offers() {
     else if (form.name.length > 150) errors.name = 'El nombre no puede tener más de 150 caracteres'
     const buy = Number(form.buyQuantity)
     const pay = Number(form.payQuantity)
-    if (!form.buyQuantity || buy < 2) errors.buyQuantity = 'Debe llevarse al menos 2 piezas'
-    if (!form.payQuantity || pay < 1) errors.payQuantity = 'Debe pagar al menos 1 pieza'
-    if (buy && pay && pay >= buy) errors.payQuantity = 'Lo que se paga debe ser menor a lo que se lleva'
-    if (form.maxPromosPerSale && Number(form.maxPromosPerSale) < 1) {
-      errors.maxPromosPerSale = 'El límite debe ser al menos 1 (o déjalo vacío para no poner límite)'
+    if (form.buyQuantity === '') errors.buyQuantity = 'Indica cuántas piezas se lleva'
+    else if (!Number.isInteger(buy)) errors.buyQuantity = 'Debe ser un número entero'
+    else if (buy < 2) errors.buyQuantity = 'Debe llevarse al menos 2 piezas'
+    else if (buy > 1000) errors.buyQuantity = 'Máximo 1000 piezas por promoción'
+    if (form.payQuantity === '') errors.payQuantity = 'Indica cuántas piezas paga'
+    else if (!Number.isInteger(pay)) errors.payQuantity = 'Debe ser un número entero'
+    else if (pay < 1) errors.payQuantity = 'Debe pagar al menos 1 pieza'
+    else if (!errors.buyQuantity && pay >= buy) errors.payQuantity = 'Lo que se paga debe ser menor a lo que se lleva'
+    if (form.maxPromosPerSale !== '') {
+      const max = Number(form.maxPromosPerSale)
+      if (!Number.isInteger(max)) errors.maxPromosPerSale = 'Debe ser un número entero'
+      else if (max < 1) errors.maxPromosPerSale = 'El límite debe ser al menos 1 (o déjalo vacío para no poner límite)'
+      else if (max > 1000) errors.maxPromosPerSale = 'El límite de promociones no puede ser mayor a 1000'
     }
+    // Strings "YYYY-MM-DDTHH:mm" del mismo formato: se comparan bien como texto.
+    // "Empieza" sí puede ser pasada (oferta que ya arrancó); "Termina" no — una oferta que
+    // ya terminó no tiene caso guardarla.
+    if (form.endsAt && form.endsAt < nowLocalInput()) errors.endsAt = 'No puede ser anterior a la fecha y hora actual'
+    else if (form.startsAt && form.endsAt && form.endsAt <= form.startsAt) errors.endsAt = 'Debe terminar después de que empieza'
     if (form.productIds.length === 0) errors.productIds = 'Elige al menos un producto'
     return errors
   }
@@ -142,7 +165,6 @@ export default function Offers() {
     const validationErrors = validateOfferForm()
     if (Object.keys(validationErrors).length > 0) {
       setFieldErrors(validationErrors)
-      setError('')
       notify('Revisa los campos marcados en rojo', 'error')
       return
     }
@@ -151,7 +173,6 @@ export default function Offers() {
       : `¿Deseas crear la oferta "${form.name}"?`
     if (!(await confirmDialog(confirmMsg, { confirmText: editOffer ? 'Guardar cambios' : 'Crear', danger: false }))) return
     setLoading(true)
-    setError('')
     setFieldErrors({})
     const payload = {
       name: form.name,
@@ -169,15 +190,16 @@ export default function Offers() {
       load()
       notify(editOffer ? 'Oferta editada correctamente' : 'Oferta agregada correctamente', 'success')
     } catch (err) {
+      // Errores ligados a un campo ({campo: mensaje}) van debajo de su input; los demás
+      // (ej. un producto que ya no existe) solo en la notificación, con el mensaje real.
       const data = err.response?.data?.data
       if (data && typeof data === 'object' && !Array.isArray(data)) {
         setFieldErrors(data)
-        setError('')
+        notify('Revisa los campos marcados en rojo', 'error')
       } else {
         setFieldErrors({})
-        setError(err.response?.data?.message ?? 'Error al guardar')
+        notify(err.response?.data?.message ?? (editOffer ? 'No se pudo guardar la oferta' : 'No se pudo registrar la oferta'), 'error')
       }
-      notify(editOffer ? 'Error al guardar la oferta' : 'Error al registrar la oferta', 'error')
     } finally { setLoading(false) }
   }
 
@@ -185,6 +207,17 @@ export default function Offers() {
     if (!(await confirmDialog(`¿Desactivar la oferta "${o.name}"? Las ventas ya hechas con esta oferta no se ven afectadas.`, { confirmText: 'Desactivar' }))) return
     await deleteOffer(o.id)
     load()
+  }
+
+  async function handleActivate(o) {
+    if (!(await confirmDialog(`¿Reactivar la oferta "${o.name}"? Vuelve a aplicar en el Punto de Venta según su vigencia.`, { confirmText: 'Reactivar' }))) return
+    try {
+      await activateOffer(o.id)
+      notify('Oferta reactivada', 'success')
+      load()
+    } catch (err) {
+      notify(err.response?.data?.message || 'No se pudo reactivar la oferta', 'error')
+    }
   }
 
   const offers = pageData.content ?? []
@@ -198,7 +231,7 @@ export default function Offers() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Ofertas</h2>
-        <button className="btn-primary" onClick={openNew}>+ Nueva oferta</button>
+        {canCreate && <button className="btn-primary" onClick={openNew}>+ Nueva oferta</button>}
       </div>
 
       <div className="card mb-4 flex flex-wrap gap-3 items-end">
@@ -256,9 +289,14 @@ export default function Offers() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
-                    <IconButton icon={PencilIcon} label="Editar" variant="primary" onClick={() => openEdit(o)} />
-                    {o.isActive && (
+                    {canEdit && (
+                      <IconButton icon={PencilIcon} label="Editar" variant="primary" onClick={() => openEdit(o)} />
+                    )}
+                    {o.isActive && canDelete && (
                       <IconButton icon={ArchiveIcon} label="Desactivar" variant="danger" onClick={() => handleDelete(o)} />
+                    )}
+                    {!o.isActive && canEdit && (
+                      <IconButton icon={CheckCircleIcon} label="Reactivar" variant="primary" onClick={() => handleActivate(o)} />
                     )}
                   </div>
                 </td>
@@ -305,11 +343,12 @@ export default function Offers() {
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">{editOffer ? 'Editar oferta' : 'Nueva oferta'}</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => setShowModal(false)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">{editOffer ? 'Editar oferta' : 'Nueva oferta'}</h3>
             <p className="text-xs text-gray-500 mb-4">La cantidad que captura el cajero en el Punto de Venta son piezas físicas — el sistema calcula solo cuántas promociones completas caben ahí.</p>
-            <form onSubmit={handleSave} className="space-y-3">
+            <form onSubmit={handleSave} noValidate className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-gray-600">Nombre <span className={fieldErrors.name ? 'text-red-600' : ''}>*</span></label>
                 <input className="input" autoFocus placeholder="Ej. 2x1 playeras de verano" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -319,12 +358,12 @@ export default function Offers() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-gray-600">Se lleva <span className={fieldErrors.buyQuantity ? 'text-red-600' : ''}>*</span></label>
-                  <input type="number" min="2" className="input" value={form.buyQuantity} onChange={(e) => setForm({ ...form, buyQuantity: e.target.value })} />
+                  <input type="text" inputMode="numeric" className="input" value={form.buyQuantity} onChange={(e) => setForm({ ...form, buyQuantity: onlyDigits(e.target.value) })} />
                   {fieldErrors.buyQuantity && <p className="text-red-600 text-xs mt-1">{fieldErrors.buyQuantity}</p>}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600">Paga <span className={fieldErrors.payQuantity ? 'text-red-600' : ''}>*</span></label>
-                  <input type="number" min="1" className="input" value={form.payQuantity} onChange={(e) => setForm({ ...form, payQuantity: e.target.value })} />
+                  <input type="text" inputMode="numeric" className="input" value={form.payQuantity} onChange={(e) => setForm({ ...form, payQuantity: onlyDigits(e.target.value) })} />
                   {fieldErrors.payQuantity && <p className="text-red-600 text-xs mt-1">{fieldErrors.payQuantity}</p>}
                 </div>
               </div>
@@ -334,7 +373,7 @@ export default function Offers() {
 
               <div>
                 <label className="text-xs font-medium text-gray-600">Límite de promociones por venta</label>
-                <input type="number" min="1" className="input" placeholder="Sin límite" value={form.maxPromosPerSale} onChange={(e) => setForm({ ...form, maxPromosPerSale: e.target.value })} />
+                <input type="text" inputMode="numeric" className="input" placeholder="Sin límite" value={form.maxPromosPerSale} onChange={(e) => setForm({ ...form, maxPromosPerSale: onlyDigits(e.target.value) })} />
                 {fieldErrors.maxPromosPerSale && <p className="text-red-600 text-xs mt-1">{fieldErrors.maxPromosPerSale}</p>}
               </div>
 
@@ -346,6 +385,7 @@ export default function Offers() {
                 <div>
                   <label className="text-xs font-medium text-gray-600">Termina</label>
                   <input type="datetime-local" className="input" value={form.endsAt} onChange={(e) => setForm({ ...form, endsAt: e.target.value })} />
+                  {fieldErrors.endsAt && <p className="text-red-600 text-xs mt-1">{fieldErrors.endsAt}</p>}
                 </div>
               </div>
               <p className="text-xs text-gray-400 -mt-2">Deja ambas en blanco para que la oferta quede activa indefinidamente.</p>
@@ -374,7 +414,6 @@ export default function Offers() {
                 {fieldErrors.productIds && <p className="text-red-600 text-xs mt-1">{fieldErrors.productIds}</p>}
               </div>
 
-              {error && <p className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</p>}
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary" disabled={loading}>{loading ? 'Guardando...' : 'Guardar'}</button>

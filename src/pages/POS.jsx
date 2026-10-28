@@ -10,14 +10,26 @@ import { printSaleTicket, openCashDrawer } from '../utils/printer'
 import { resolveMediaUrl } from '../utils/media'
 import { barcodeNotFoundMessage } from '../utils/barcode'
 import Barcode from '../components/Barcode'
+import ModalCloseButton from '../components/ModalCloseButton'
 import { useNotify } from '../context/NotifyContext'
 import { useAuth } from '../context/AuthContext'
+import { todayLocalDateStr } from '../utils/date'
 
 const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 
 // Mismo patrón simple que Users.jsx para validar formato de correo del lado del cliente —
 // no reemplaza al @Email real del backend, solo adelanta el error más común.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+// Montos del anticipo: mismo tope que ApartadoDepositRequest (NUMERIC(12,2)).
+const MONEY_RE = /^\d+(\.\d{1,2})?$/
+const MAX_MONEY = 9999999999.99
+// Campos de monto: texto sin flechitas, pero solo dígitos y un punto decimal. Los
+// decimales de más no se cortan aquí — los marca validateDepositForm ("Máximo 2 decimales").
+const onlyMoney = (v) => {
+  const clean = v.replace(/[^\d.]/g, '')
+  const dot = clean.indexOf('.')
+  return dot === -1 ? clean : clean.slice(0, dot + 1) + clean.slice(dot + 1).replace(/\./g, '')
+}
 
 /**
  * Página "Punto de Venta" (POS): pantalla operativa donde el cajero busca/escanea
@@ -45,7 +57,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
  */
 export default function POS() {
   const { notify, confirmDialog } = useNotify()
-  const { user } = useAuth()
+  const { user, hasAction } = useAuth()
+  // Anticipo = alta de apartado (APARTADOS:CREATE en el backend); sin el permiso no se muestra.
+  const canDeposit = hasAction('APARTADOS', 'CREATE')
   // Para el listener global del lector (se registra una sola vez): la tienda actual, para
   // avisar si un código escaneado es de otra tienda.
   const userRef = useRef(user)
@@ -77,7 +91,7 @@ export default function POS() {
   const [showDepositModal, setShowDepositModal] = useState(false)
   const [depositForm, setDepositForm] = useState({
     customerName: '', customerPhone: '', customerEmail: '', notes: '',
-    depositAmount: '', paymentMethod: 'CASH', amountReceived: '', durationHours: '',
+    depositAmount: '', paymentMethod: 'CASH', amountReceived: '', deliveryDate: '',
   })
   const [depositLoading, setDepositLoading] = useState(false)
   const [depositFieldErrors, setDepositFieldErrors] = useState({})
@@ -760,6 +774,15 @@ export default function POS() {
   // sin esto, un monto absurdamente grande pasaba hasta el backend y tronaba con un error
   // crudo en vez de un mensaje claro (mismo caso que ya se resolvió en Inventario).
   const amountExceedsLimit = paymentMethod === 'CASH' && amountReceivedNum != null && amountReceivedNum > 9999999999.99
+  // Lo mismo para "¿Con cuánto paga?" del anticipo: tope y cambio calculados en vivo. El
+  // cambio solo se muestra cuando ambos montos son números válidos.
+  const depositReceivedNum = depositForm.amountReceived === '' ? null : Number(depositForm.amountReceived)
+  const depositAmountNum = depositForm.depositAmount === '' ? null : Number(depositForm.depositAmount)
+  const depositReceivedExceeds = depositReceivedNum != null && depositReceivedNum > MAX_MONEY
+  const depositChange = depositReceivedNum != null && depositAmountNum != null
+    && !Number.isNaN(depositReceivedNum) && !Number.isNaN(depositAmountNum)
+    ? depositReceivedNum - depositAmountNum
+    : null
   // Nombre y correo del cliente son SIEMPRE opcionales (se puede vender sin capturar
   // ninguno de los dos) — estos chequeos solo importan cuando sí se escribió algo. Máximos
   // alineados a sales.customer_name/customer_email VARCHAR(150) en el backend (SaleRequest).
@@ -871,9 +894,30 @@ export default function POS() {
    * lo pide (no es parte de una venta de mostrador, solo de un apartado).
    */
   function openDepositModal() {
+    // El anticipo es solo para productos sin oferta (cobra a precio de lista): si el
+    // carrito trae alguno con oferta vigente, ni se abre — el backend lo rechaza igual.
+    const withOffer = cart.filter((i) => !i.isConcept && activeOfferFor(i.productId))
+    if (withOffer.length > 0) {
+      const names = withOffer.map((i) => `"${i.productName}"`).join(', ')
+      notify(`No se puede registrar un anticipo con productos en oferta (${names}). El anticipo es solo para productos sin oferta — quítalos del carrito y véndelos aparte.`, 'error')
+      return
+    }
     setDepositForm((prev) => ({ ...prev, customerName: customerName || prev.customerName, customerEmail: customerEmail || prev.customerEmail }))
+    setDepositFieldErrors({})
     setShowDepositModal(true)
   }
+
+  // Los modales no se cierran con clic afuera (ver ModalCloseButton): solo con la X o Esc.
+  useEffect(() => {
+    if (!showDepositModal && !showConceptModal) return
+    function onKeyDown(e) {
+      if (e.key !== 'Escape') return
+      setShowDepositModal(false)
+      setShowConceptModal(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [showDepositModal, showConceptModal])
 
   /** Abre el modal "Agregar por concepto", siempre con el formulario en blanco. */
   function openConceptModal() {
@@ -934,15 +978,31 @@ export default function POS() {
    *  confirmación — mismo criterio que `ApartadoDepositRequest` en el backend. */
   function validateDepositForm() {
     const errors = {}
-    if (!depositForm.customerName.trim()) errors.customerName = 'El nombre es obligatorio'
-    if (!/^[0-9]{10}$/.test(depositForm.customerPhone)) errors.customerPhone = 'El teléfono debe tener 10 dígitos'
-    if (depositForm.customerEmail && !EMAIL_RE.test(depositForm.customerEmail)) errors.customerEmail = 'Correo inválido'
+    const name = depositForm.customerName.trim()
+    if (!name) errors.customerName = 'El nombre es obligatorio'
+    else if (name.length > 150) errors.customerName = 'El nombre no puede tener más de 150 caracteres'
+    if (!depositForm.customerPhone) errors.customerPhone = 'El teléfono es obligatorio'
+    else if (!/^[0-9]{10}$/.test(depositForm.customerPhone)) errors.customerPhone = 'El teléfono debe tener 10 dígitos'
+    const email = depositForm.customerEmail.trim()
+    if (email.length > 150) errors.customerEmail = 'El correo no puede tener más de 150 caracteres'
+    else if (email && !EMAIL_RE.test(email)) errors.customerEmail = 'Correo inválido'
+    if (depositForm.notes.length > 200) errors.notes = 'Las notas no pueden tener más de 200 caracteres'
     const amount = Number(depositForm.depositAmount)
-    if (!depositForm.depositAmount || amount <= 0) errors.depositAmount = 'Captura cuánto dejó de anticipo'
+    if (depositForm.depositAmount === '') errors.depositAmount = 'Captura cuánto dejó de anticipo'
+    else if (Number.isNaN(amount) || amount <= 0) errors.depositAmount = 'El anticipo debe ser mayor a 0'
+    else if (!MONEY_RE.test(depositForm.depositAmount)) errors.depositAmount = 'Máximo 2 decimales'
+    else if (amount > MAX_MONEY) errors.depositAmount = 'El máximo permitido es 9,999,999,999.99'
     else if (amount >= subtotal) errors.depositAmount = `Debe ser menor al total del pedido (${fmt(subtotal)})`
+    // Fecha de entrega en lugar de horas de vigencia: el anticipo no vence solo.
+    if (!depositForm.deliveryDate) errors.deliveryDate = 'Elige la fecha de entrega'
+    else if (depositForm.deliveryDate < todayLocalDateStr()) errors.deliveryDate = 'No puede ser anterior a hoy'
     if (depositForm.paymentMethod === 'CASH') {
       const received = Number(depositForm.amountReceived)
-      if (!depositForm.amountReceived || received < amount) errors.amountReceived = 'Debe alcanzar para cubrir el anticipo'
+      if (depositForm.amountReceived === '') errors.amountReceived = 'Captura con cuánto pagó el cliente'
+      else if (Number.isNaN(received) || received <= 0) errors.amountReceived = 'Captura un monto válido'
+      else if (!MONEY_RE.test(depositForm.amountReceived)) errors.amountReceived = 'Máximo 2 decimales'
+      else if (received > MAX_MONEY) errors.amountReceived = 'El máximo permitido es 9,999,999,999.99'
+      else if (!errors.depositAmount && received < amount) errors.amountReceived = 'Debe alcanzar para cubrir el anticipo'
     }
     return errors
   }
@@ -969,12 +1029,12 @@ export default function POS() {
     setDepositFieldErrors({})
     try {
       await createDepositApartado({
-        customerName: depositForm.customerName,
+        customerName: depositForm.customerName.trim(),
         customerPhone: depositForm.customerPhone,
-        customerEmail: depositForm.customerEmail || null,
+        customerEmail: depositForm.customerEmail.trim() || null,
         notes: depositForm.notes || null,
         items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-        durationHours: depositForm.durationHours ? Number(depositForm.durationHours) : null,
+        deliveryDate: depositForm.deliveryDate,
         depositAmount: Number(depositForm.depositAmount),
         paymentMethod: depositForm.paymentMethod,
         amountReceived: depositForm.paymentMethod === 'CASH' ? Number(depositForm.amountReceived) : undefined,
@@ -984,9 +1044,17 @@ export default function POS() {
       setCart([])
       setSelectedIds(new Set())
       setDepositForm({ customerName: '', customerPhone: '', customerEmail: '', notes: '',
-        depositAmount: '', paymentMethod: 'CASH', amountReceived: '', durationHours: '' })
+        depositAmount: '', paymentMethod: 'CASH', amountReceived: '', deliveryDate: '' })
     } catch (err) {
-      notify(err.response?.data?.message ?? 'No se pudo registrar el anticipo', 'error')
+      // Errores ligados a un campo ({campo: mensaje}) van debajo de su input; los demás
+      // (ej. sin corte abierto, sin stock) solo en la notificación, con el mensaje real.
+      const data = err.response?.data?.data
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        setDepositFieldErrors(data)
+        notify('Revisa los campos marcados en rojo', 'error')
+      } else {
+        notify(err.response?.data?.message ?? 'No se pudo registrar el anticipo', 'error')
+      }
     } finally {
       setDepositLoading(false)
     }
@@ -1436,7 +1504,7 @@ export default function POS() {
           <h3 className="font-bold text-gray-900 mb-4">Resumen</h3>
 
           <div className="space-y-3 mb-4">
-            <div className="grid grid-cols-2 gap-2">
+            <div className={`grid gap-2 ${canDeposit ? 'grid-cols-2' : 'grid-cols-1'}`}>
               <button
                 type="button"
                 className="py-2 rounded-lg text-sm font-semibold border-2 border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1444,13 +1512,13 @@ export default function POS() {
                 title={!cashCut ? 'Abre un corte de caja para poder cobrar' : 'Para algo que vendes pero no está en tu inventario, ej. 2 jitomates'}
                 onClick={openConceptModal}
               >📋 Por concepto</button>
-              <button
+              {canDeposit && <button
                 type="button"
                 className="py-2 rounded-lg text-sm font-semibold border-2 border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 disabled={cart.length === 0 || !cashCut}
                 title={cart.length === 0 ? 'Agrega primero lo que el cliente va a encargar' : !cashCut ? 'Abre un corte de caja para poder cobrar' : undefined}
                 onClick={openDepositModal}
-              >💰 Anticipo</button>
+              >💰 Anticipo</button>}
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Ticket</label>
@@ -1573,9 +1641,10 @@ export default function POS() {
       </div>
 
       {showConceptModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowConceptModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Agregar por concepto</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <ModalCloseButton onClick={() => setShowConceptModal(false)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Agregar por concepto</h3>
             <p className="text-xs text-gray-500 mb-4">
               Para algo que vendes pero que no está en tu catálogo/inventario, ej. "2 jitomates" o "3 huevos". Se agrega como una línea más del carrito — puedes seguir agregando productos normales después.
             </p>
@@ -1652,9 +1721,10 @@ export default function POS() {
       )}
 
       {showDepositModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowDepositModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">Registrar anticipo</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <ModalCloseButton onClick={() => setShowDepositModal(false)} />
+            <h3 className="text-lg font-bold mb-1 pr-8">Registrar anticipo</h3>
             <p className="text-xs text-gray-500 mb-4">
               El cliente deja un anticipo de lo que trae en el carrito ({fmt(subtotal)} en total) — se registra como un apartado activo y una venta aparte solo por el anticipo.
             </p>
@@ -1678,18 +1748,21 @@ export default function POS() {
               <div>
                 <label className="text-xs font-medium text-gray-600">Notas (opcional)</label>
                 <textarea className="input" rows={2} value={depositForm.notes} onChange={(e) => setDepositForm({ ...depositForm, notes: e.target.value })} />
+                <p className={`text-xs text-right ${depositForm.notes.length > 200 ? 'text-red-600' : 'text-gray-400'}`}>{depositForm.notes.length}/200</p>
+                {depositFieldErrors.notes && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.notes}</p>}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-gray-600">Anticipo <span className={depositFieldErrors.depositAmount ? 'text-red-600' : ''}>*</span></label>
-                  <input className="input" type="number" min="0" step="0.01" value={depositForm.depositAmount}
-                    onChange={(e) => setDepositForm({ ...depositForm, depositAmount: e.target.value })} />
+                  <input className="input" type="text" inputMode="decimal" value={depositForm.depositAmount}
+                    onChange={(e) => setDepositForm({ ...depositForm, depositAmount: onlyMoney(e.target.value) })} />
                   {depositFieldErrors.depositAmount && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.depositAmount}</p>}
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-gray-600">Vigencia (horas)</label>
-                  <input className="input" type="number" min="1" placeholder="Default de la tienda" value={depositForm.durationHours}
-                    onChange={(e) => setDepositForm({ ...depositForm, durationHours: e.target.value })} />
+                  <label className="text-xs font-medium text-gray-600">Fecha de entrega <span className={depositFieldErrors.deliveryDate ? 'text-red-600' : ''}>*</span></label>
+                  <input className="input" type="date" value={depositForm.deliveryDate}
+                    onChange={(e) => setDepositForm({ ...depositForm, deliveryDate: e.target.value })} />
+                  {depositFieldErrors.deliveryDate && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.deliveryDate}</p>}
                 </div>
               </div>
               <div>
@@ -1702,20 +1775,28 @@ export default function POS() {
               </div>
               {depositForm.paymentMethod === 'CASH' && (
                 <div>
-                  <label className="text-xs font-medium text-gray-600">¿Con cuánto pagó el anticipo?</label>
-                  <input className="input" type="number" min="0" step="0.01" value={depositForm.amountReceived}
-                    onChange={(e) => setDepositForm({ ...depositForm, amountReceived: e.target.value })} />
-                  {depositFieldErrors.amountReceived && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.amountReceived}</p>}
-                  {depositForm.amountReceived !== '' && depositForm.depositAmount !== '' && !Number.isNaN(Number(depositForm.amountReceived)) && (
-                    Number(depositForm.amountReceived) - Number(depositForm.depositAmount) >= 0 ? (
+                  <label className="text-xs font-medium text-gray-600">¿Con cuánto paga el cliente? <span className={depositFieldErrors.amountReceived ? 'text-red-600' : ''}>*</span></label>
+                  {/* Mismo comportamiento en vivo que "¿Con cuánto paga el cliente?" de la venta:
+                      tope de monto mientras se escribe y cambio/falta por cobrar al instante. */}
+                  <input className="input mt-1" type="text" inputMode="decimal" placeholder="0.00" value={depositForm.amountReceived}
+                    onChange={(e) => {
+                      setDepositForm({ ...depositForm, amountReceived: onlyMoney(e.target.value) })
+                      setDepositFieldErrors(({ amountReceived, ...rest }) => rest)
+                    }} />
+                  {depositReceivedExceeds ? (
+                    <p className="text-red-600 text-xs mt-1">El número es excesivamente grande — el máximo permitido es 9,999,999,999.99</p>
+                  ) : depositFieldErrors.amountReceived ? (
+                    <p className="text-red-600 text-xs mt-1">{depositFieldErrors.amountReceived}</p>
+                  ) : depositChange != null && (
+                    depositChange >= 0 ? (
                       <div className="mt-2 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 text-center overflow-hidden">
                         <p className="text-xs font-semibold text-green-700 uppercase tracking-wide">Cambio a entregar</p>
-                        <p className="font-bold text-green-700 text-3xl mt-0.5 break-words">{fmt(Number(depositForm.amountReceived) - Number(depositForm.depositAmount))}</p>
+                        <p className="font-bold text-green-700 text-3xl mt-0.5 break-words">{fmt(depositChange)}</p>
                       </div>
                     ) : (
                       <div className="mt-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-center overflow-hidden">
                         <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Falta por cobrar</p>
-                        <p className="font-bold text-red-600 text-3xl mt-0.5 break-words">{fmt(Number(depositForm.depositAmount) - Number(depositForm.amountReceived))}</p>
+                        <p className="font-bold text-red-600 text-3xl mt-0.5 break-words">{fmt(-depositChange)}</p>
                       </div>
                     )
                   )}
