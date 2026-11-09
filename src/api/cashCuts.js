@@ -98,6 +98,15 @@ export const getUnresolvedCountDifferenceCount = () => api.get('/cash-cuts/count
 /** Movimientos de efectivo (gastos, retiros, aportes...) de un corte. */
 export const getCashCutMovements = (id) => api.get(`/cash-cuts/${id}/movements`)
 
+/** Ventas canceladas de un corte, con quién las canceló (y si fue alguien distinto al cajero). */
+export const getCashCutCancelledSales = (id) => api.get(`/cash-cuts/${id}/cancelled-sales`)
+
+/** Devoluciones con tarjeta o transferencia hechas en un turno (informativas). */
+export const getCashCutNonCashRefunds = (id) => api.get(`/cash-cuts/${id}/non-cash-refunds`)
+
+/** Productos de una venta cancelada o devuelta en ese corte, con qué pasó con cada uno. */
+export const getCashCutSaleItems = (cutId, saleId) => api.get(`/cash-cuts/${cutId}/sales/${saleId}/items`)
+
 /** Movimientos con la caja cerrada que un corte vio al recibir la caja. */
 export const getCashCutReceivedMovements = (id) => api.get(`/cash-cuts/${id}/received-movements`)
 

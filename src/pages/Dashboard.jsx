@@ -41,7 +41,9 @@ function fmt(n) {
  * avance con una barra de progreso. Sin meta configurada, solo se muestra la venta del
  * día. Enlaza a Ventas con el filtro del día en curso ya aplicado.
  */
-function DailySalesCard({ total, goal, to }) {
+// `total` es lo vendido hoy (sin restar devoluciones: esas van en su propia tarjeta) y es
+// contra lo que se mide la meta; `net` es lo que queda después de las devoluciones de hoy.
+function DailySalesCard({ total, net, refunds, goal, to }) {
   const hasGoal = goal != null && Number(goal) > 0
   const pct = hasGoal ? Math.min(Math.round((total / goal) * 100), 100) : null
   const barColor = pct >= 100 ? 'bg-green-600' : pct >= 50 ? 'bg-amber-500' : 'bg-purple-600'
@@ -49,6 +51,7 @@ function DailySalesCard({ total, goal, to }) {
     <Link to={to} className="card hover:shadow-md transition-shadow block">
       <p className="text-sm text-gray-500">Venta diaria</p>
       <p className="text-2xl font-bold mt-1 text-purple-700">{fmt(total)}</p>
+      {Number(refunds) > 0 && <p className="text-xs text-gray-500 mt-0.5">Neto después de devoluciones: <span className={Number(net) < 0 ? 'text-red-600 font-medium' : 'font-medium'}>{fmt(net)}</span></p>}
       {hasGoal ? (
         <>
           <p className="text-xs text-gray-400 mt-1">Meta: {fmt(goal)} · {pct}%</p>
@@ -177,23 +180,35 @@ export default function Dashboard() {
       </div>
 
       {hasStats && (
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
         {canSales && (<>
         <StatCard
           label="Ventas del mes"
-          value={fmt(summary?.totalSales)}
-          sub={`${summary?.totalTransactions ?? 0} transacciones`}
+          value={fmt(summary?.grossSales ?? summary?.totalSales)}
+          sub={`${summary?.totalTransactions ?? 0} transacciones${Number(summary?.refundsTotal) > 0 ? ` · neto ${fmt(summary.totalSales)}` : ''}`}
           color="text-purple-700"
           to={`/sales?from=${firstOfMonth}&to=${today}`}
         />
         <DailySalesCard
-          total={todaySummary?.totalSales ?? 0}
+          total={todaySummary?.grossSales ?? todaySummary?.totalSales ?? 0}
+          net={todaySummary?.totalSales ?? 0}
+          refunds={todaySummary?.refundsTotal}
           goal={user?.tienda?.dailySalesGoal}
           to={`/sales?from=${today}&to=${today}`}
         />
+        {/* Devoluciones hechas hoy (de ventas de cualquier día): no se restan de la Venta
+            diaria (ahí solo se ve el neto como dato aparte). Enlaza a Ventas filtrando "Devuelta", sin fecha: la venta devuelta
+            hoy pudo ser de días anteriores. */}
+        <StatCard
+          label="Devoluciones de hoy"
+          value={fmt(todaySummary?.refundsTotal)}
+          sub={`${todaySummary?.refundsCount ?? 0} ${todaySummary?.refundsCount === 1 ? 'venta devuelta' : 'ventas devueltas'}`}
+          color={Number(todaySummary?.refundsTotal) > 0 ? 'text-red-600' : 'text-gray-400'}
+          to="/sales?status=REFUNDED"
+        />
         <StatCard
           label="Ticket promedio"
-          value={fmt(summary?.averageTicket)}
+          value={fmt(summary?.grossAverageTicket ?? summary?.averageTicket)}
           color="text-blue-600"
         />
         </>)}

@@ -64,11 +64,12 @@ export const lookupPublicApartado = (slug, data) => api.post(`/public/tiendas/${
 
 /**
  * "¿No tienes tu folio?" — lista los apartados recientes de la tienda que coincidan con un
- * teléfono (sin folio). A propósito menos estricto que `lookupPublicApartado`: cualquiera
- * que sepa el teléfono de alguien puede ver su historial de apartados en esa tienda.
+ * teléfono, pero SOLO con fecha y estado (sin folio, productos ni montos): el folio junto con
+ * el teléfono abre el detalle, así que no se le da a quien solo sabe el teléfono. El cliente
+ * llama a la tienda para pedir su folio. Limitado a 10 consultas cada 15 min por IP.
  * @param {string} slug
  * @param {Object} data `{ phone }`.
- * @returns {Promise} Respuesta de axios con la lista de apartados que coinciden (hasta 10).
+ * @returns {Promise} Respuesta de axios con `[{ requestedAt, status }]` (hasta 10).
  */
 export const lookupPublicApartadosByPhone = (slug, data) => api.post(`/public/tiendas/${slug}/apartados/lookup-by-phone`, data)
 

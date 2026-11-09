@@ -117,6 +117,10 @@ export default function StoreInfo() {
         notasAdicionales: info.notasAdicionales || '',
         maxDiscountAmount: info.tienda?.maxDiscountAmount ?? '',
         maxDiscountPercent: info.tienda?.maxDiscountPercent ?? '',
+        cashierRefundMaxAmount: info.tienda?.cashierRefundMaxAmount ?? '',
+        cashierRefundMaxDays: info.tienda?.cashierRefundMaxDays ?? '',
+        apartadoRetentionPercent: info.tienda?.apartadoRetentionPercent ?? '',
+        inventoryReportTime: info.tienda?.inventoryReportTime ?? '',
         apartadosEnabled: !!info.tienda?.apartadosEnabled,
         publicSlug: info.tienda?.publicSlug || '',
         maxApartadoDiscountAmount: info.tienda?.maxApartadoDiscountAmount ?? '',
@@ -171,6 +175,15 @@ export default function StoreInfo() {
     if (form.maxDiscountPercent !== '' && Number(form.maxDiscountPercent) > PERCENT_MAX) {
       errors.maxDiscountPercent = `El porcentaje máximo de descuento no puede ser mayor a ${PERCENT_MAX}`
     }
+    if (form.cashierRefundMaxAmount !== '' && Number(form.cashierRefundMaxAmount) > MONEY_MAX) {
+      errors.cashierRefundMaxAmount = `El número es excesivamente grande — el máximo permitido es ${money(MONEY_MAX)}`
+    }
+    if (form.cashierRefundMaxDays !== '' && Number(form.cashierRefundMaxDays) > 3650) {
+      errors.cashierRefundMaxDays = 'Los días no pueden ser más de 3650'
+    }
+    if (form.apartadoRetentionPercent !== '' && Number(form.apartadoRetentionPercent) > PERCENT_MAX) {
+      errors.apartadoRetentionPercent = `El porcentaje de retención no puede ser mayor a ${PERCENT_MAX}`
+    }
     if (form.maxApartadoDiscountAmount !== '' && Number(form.maxApartadoDiscountAmount) > MONEY_MAX) {
       errors.maxApartadoDiscountAmount = `El número es excesivamente grande — el máximo permitido es ${money(MONEY_MAX)}`
     }
@@ -201,8 +214,13 @@ export default function StoreInfo() {
       const maxApartadoDiscountPercent = form.maxApartadoDiscountPercent === '' ? null : Number(form.maxApartadoDiscountPercent)
       const dailySalesGoal = form.dailySalesGoal === '' ? null : Number(form.dailySalesGoal)
       const pollingIntervalSeconds = Number(form.pollingIntervalSeconds) || 20
+      const cashierRefundMaxAmount = form.cashierRefundMaxAmount === '' ? null : Number(form.cashierRefundMaxAmount)
+      const cashierRefundMaxDays = form.cashierRefundMaxDays === '' ? null : Number(form.cashierRefundMaxDays)
+      const apartadoRetentionPercent = form.apartadoRetentionPercent === '' ? null : Number(form.apartadoRetentionPercent)
       const res = await updateTiendaInfo(tiendaId, {
         ...form, maxDiscountAmount, maxDiscountPercent, maxApartadoDiscountAmount, maxApartadoDiscountPercent, dailySalesGoal, pollingIntervalSeconds,
+        cashierRefundMaxAmount, cashierRefundMaxDays, apartadoRetentionPercent,
+        inventoryReportTime: form.inventoryReportTime || null,
       })
       // El slug puede haber cambiado si lo dejaste en blanco (se autogenera) o si chocaba
       // con el de otra tienda (el backend lo hubiera rechazado antes de llegar aquí) — se
@@ -210,7 +228,7 @@ export default function StoreInfo() {
       const savedSlug = res.data.data?.tienda?.publicSlug ?? form.publicSlug
       setForm((f) => ({ ...f, publicSlug: savedSlug }))
       patchTienda({
-        name: form.name, maxDiscountAmount, maxDiscountPercent,
+        name: form.name, maxDiscountAmount, maxDiscountPercent, cashierRefundMaxAmount, cashierRefundMaxDays, apartadoRetentionPercent,
         apartadosEnabled: form.apartadosEnabled, publicSlug: savedSlug,
         maxApartadoDiscountAmount, maxApartadoDiscountPercent, defaultApartadoHours: Number(form.defaultApartadoHours) || 24,
         dailySalesGoal, pollingIntervalSeconds, blindCashCount: form.blindCashCount,
@@ -476,6 +494,77 @@ export default function StoreInfo() {
                 onChange={(e) => setForm({ ...form, maxDiscountPercent: sanitizeIntegerInput(e.target.value) })}
               />
               {fieldErrors.maxDiscountPercent && <p className="text-red-600 text-xs mt-1">{fieldErrors.maxDiscountPercent}</p>}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <p className="text-sm font-semibold text-gray-800">Reporte diario de inventario</p>
+          <p className="text-xs text-gray-500 mb-3">
+            Todos los días a esta hora se manda al correo del supervisor un Excel con los productos y sus piezas actuales,
+            y los anticipos sobre pedido por entregar. Déjalo vacío para no enviarlo.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="inventory-report-time" className="block text-sm font-medium text-gray-700 mb-1">Hora de envío</label>
+              <input
+                id="inventory-report-time" type="time" className="input"
+                value={form.inventoryReportTime}
+                onChange={(e) => setForm({ ...form, inventoryReportTime: e.target.value })}
+              />
+              {fieldErrors.inventoryReportTime && <p className="text-red-600 text-xs mt-1">{fieldErrors.inventoryReportTime}</p>}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <p className="text-sm font-semibold text-gray-800">Devoluciones que puede hacer un cajero</p>
+          <p className="text-xs text-gray-500 mb-3">
+            Por encima de cualquiera de estos límites, la devolución solo la puede registrar un administrador o
+            supervisor. Déjalos vacíos para no poner límite.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Monto máximo por devolución ($)</label>
+              <input
+                type="text" inputMode="decimal"
+                className="input" placeholder="Sin límite"
+                value={form.cashierRefundMaxAmount}
+                onChange={(e) => setForm({ ...form, cashierRefundMaxAmount: sanitizeDecimalInput(e.target.value) })}
+              />
+              {fieldErrors.cashierRefundMaxAmount && <p className="text-red-600 text-xs mt-1">{fieldErrors.cashierRefundMaxAmount}</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Antigüedad máxima de la venta (días)</label>
+              <input
+                type="text" inputMode="numeric"
+                className="input" placeholder="Sin límite"
+                value={form.cashierRefundMaxDays}
+                onChange={(e) => setForm({ ...form, cashierRefundMaxDays: sanitizeIntegerInput(e.target.value) })}
+              />
+              {fieldErrors.cashierRefundMaxDays && <p className="text-red-600 text-xs mt-1">{fieldErrors.cashierRefundMaxDays}</p>}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <p className="text-sm font-semibold text-gray-800">Apartados con anticipo: anticipo mínimo no reembolsable</p>
+          <p className="text-xs text-gray-500 mb-3">
+            Porcentaje del total del apartado que el cliente debe dejar como mínimo de anticipo, y que la tienda retiene si
+            cancela o devuelve por cambio de opinión; lo demás que haya pagado se le devuelve. Se imprime en el ticket del
+            anticipo y aplica a los apartados registrados desde que lo guardes. Si el producto está defectuoso, un
+            administrador o supervisor devuelve todo. Vacío: sin mínimo, y lo pagado a cuenta no se devuelve.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Anticipo mínimo y no reembolsable (%)</label>
+              <input
+                type="text" inputMode="decimal"
+                className="input" placeholder="No se devuelve lo pagado a cuenta"
+                value={form.apartadoRetentionPercent}
+                onChange={(e) => setForm({ ...form, apartadoRetentionPercent: sanitizeDecimalInput(e.target.value) })}
+              />
+              {fieldErrors.apartadoRetentionPercent && <p className="text-red-600 text-xs mt-1">{fieldErrors.apartadoRetentionPercent}</p>}
             </div>
           </div>
         </div>

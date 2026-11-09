@@ -51,6 +51,12 @@ export const removeApartadoItem = (apartadoId, itemId) => api.delete(`/apartados
  */
 export const completeApartado = (id, data) => api.post(`/apartados/${id}/complete`, data)
 
+/** Registra la entrega de un apartado pagado completo; `deductItemIds`: lo sobre pedido que sale del inventario. */
+export const deliverApartado = (id, data) => api.post(`/apartados/${id}/deliver`, data)
+
+/** Abono a un apartado con anticipo: pago a cuenta menor al saldo. Devuelve la venta del abono. */
+export const addApartadoInstallment = (id, data) => api.post(`/apartados/${id}/installments`, data)
+
 /**
  * Registra, en persona, un apartado con anticipo — el cajero ya está confirmando el
  * apartado ahí mismo (nace `ACTIVE` directo) y cobra el anticipo de una vez (genera una
@@ -69,3 +75,26 @@ export const createDepositApartado = (data) => api.post('/apartados/deposit', da
  * @returns {Promise} Respuesta de axios con el apartado ya `CANCELLED`.
  */
 export const cancelApartado = (id, data) => api.post(`/apartados/${id}/cancel`, data)
+
+/**
+ * Desglose de cobros de un apartado: anticipo, saldo o pago completo (incluidos cancelados o devueltos).
+ * @param {number|string} id
+ * @returns {Promise} Respuesta de axios con `[{saleId, folio, kind, createdAt, paymentMethod, total, status, cancelledAt, refundedAt, userName}]`.
+ */
+export const getApartadoPayments = (id) => api.get(`/apartados/${id}/payments`)
+
+/**
+ * Devuelve un apartado ya completado (el cliente lo recogió y lo regresa).
+ * @param {number|string} id
+ * @param {{reason: string, depositAction?: 'REFUNDED'|'RETAINED', items: Array<{itemId: number, outcome: string}>}} data
+ */
+export const refundApartado = (id, data) => api.post(`/apartados/${id}/refund`, data)
+
+/** Cuántos apartados (vencidos o cancelados por el cliente) tienen el inventario por revisar. */
+export const getApartadoReviewCount = () => api.get('/apartados/review-count')
+
+/**
+ * Revisa el inventario de un apartado vencido o cancelado por el cliente.
+ * @param {{items: Array<{itemId: number, outcome: string}>, note?: string}} data
+ */
+export const reviewApartadoStock = (id, data) => api.post(`/apartados/${id}/stock-review`, data)

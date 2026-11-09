@@ -23,6 +23,12 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 // Montos del anticipo: mismo tope que ApartadoDepositRequest (NUMERIC(12,2)).
 const MONEY_RE = /^\d+(\.\d{1,2})?$/
 const MAX_MONEY = 9999999999.99
+// Línea "por concepto": topes alineados a SaleItemRequest / sale_items. El nombre deja
+// margen bajo los 200 de la BD para el " (350 g)" que se le agrega si se vende por peso.
+const CONCEPT_NAME_MAX = 150
+const CONCEPT_QTY_MAX = 9999999
+const CONCEPT_GRAMS_MAX = 999999
+const decimals = (raw) => (String(raw).split('.')[1] ?? '').length
 // Campos de monto: texto sin flechitas, pero solo dígitos y un punto decimal. Los
 // decimales de más no se cortan aquí — los marca validateDepositForm ("Máximo 2 decimales").
 const onlyMoney = (v) => {
@@ -323,22 +329,28 @@ export default function POS() {
     // "Por pedido" (ver Product#isMadeToOrder): no hay inventario real que validar —
     // se puede agregar sin importar `stock`, siempre.
     const madeToOrder = !!product.isMadeToOrder
-    if (!madeToOrder && product.stock <= 0) { reject(`"${product.name}" no tiene stock disponible`); return }
+    // Sin piezas suficientes, quien registra anticipos puede agregarlo sobre pedido (salvo con
+    // oferta, que no entra en un anticipo). Esa línea ya no se puede cobrar como venta normal.
+    const canOrder = canDeposit && !activeOfferFor(product.id)
+    if (!madeToOrder && product.stock <= 0 && !canOrder) { reject(`"${product.name}" no tiene stock disponible`); return }
     // Si el producto tiene oferta vigente, cada "agregar" se lleva una promoción completa
     // (`offer.buyQuantity` piezas), no una sola — ver `qtyStep`/`displayQty`: la Cantidad
     // que ve el cajero son promociones, nunca piezas sueltas, cuando hay oferta.
     const offer = activeOfferFor(product.id)
     const step = offer ? offer.buyQuantity : 1
     const existingBefore = cart.find((i) => i.productId === product.id)
-    if (!madeToOrder && existingBefore && existingBefore.quantity + step > product.stock) {
+    if (!madeToOrder && !canOrder && existingBefore && existingBefore.quantity + step > product.stock) {
       reject(`Ya no hay más "${product.name}": ya tienes en la venta todo lo disponible (${product.stock})`)
       return
     }
-    if (!madeToOrder && !existingBefore && step > product.stock) {
+    if (!madeToOrder && !canOrder && !existingBefore && step > product.stock) {
       reject(`"${product.name}" no tiene suficiente stock para una promoción completa (necesita ${step}, disponible: ${product.stock})`)
       return
     }
     setError('')
+    if (!madeToOrder && (existingBefore?.quantity ?? 0) + step > product.stock && !existingBefore?.onOrder) {
+      notify(`"${product.name}" no tiene piezas suficientes: queda sobre pedido y solo se puede registrar como anticipo`, 'info')
+    }
     setCart((prev) => {
       const existing = prev.find((i) => i.productId === product.id)
       if (existing) {
@@ -348,12 +360,14 @@ export default function POS() {
         const existingStep = existing.skipOffer ? 1 : step
         // Tope también aquí: el estado más reciente manda, aunque `cart` de arriba
         // viniera desfasado (escaneos muy seguidos). Sin tope si es "por pedido".
-        if (!madeToOrder && existing.quantity + existingStep > product.stock) return prev
-        return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + existingStep } : i)
+        const over = !madeToOrder && existing.quantity + existingStep > product.stock
+        if (over && !canOrder) return prev
+        return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + existingStep, onOrder: i.onOrder || over } : i)
       }
       return [...prev, {
         productId: product.id, productName: product.name, unitPrice: product.price, quantity: step,
         stock: product.stock, minStock: product.minStock, isMadeToOrder: madeToOrder,
+        onOrder: !madeToOrder && step > product.stock,
         // Descuento por línea: 'amount' ($ fijo) o 'percent' (%) sobre esta línea — ver
         // `lineDiscount`/`lineSubtotal` para cómo se resuelve a un monto en pesos.
         discountType: 'amount', discountValue: '',
@@ -520,30 +534,46 @@ export default function POS() {
    * en vez de dejarlo tal cual — "restringir", no solo advertir.
    */
   function updateDiscountValue(productId, rawValue) {
-    setCart((prev) => prev.map((i) => {
-      if (i.productId !== productId) return i
-      const num = Number(rawValue)
-      if (rawValue === '' || Number.isNaN(num)) return { ...i, discountValue: rawValue }
-
-      const breakdown = offerBreakdown(i)
-      const gross = breakdown ? breakdown.paidGross : i.unitPrice * i.quantity
-      const attemptedAmount = i.discountType === 'percent' ? gross * num / 100 : num
-      const { capAmount, reason, maxAmount, maxPercent } = resolveDiscountCap(i)
-
-      if (attemptedAmount > capAmount + 0.001) {
-        notify(
-          reason === 'disabled'
-            ? 'Los descuentos están deshabilitados: el administrador debe configurar un límite de descuento en Datos de la tienda.'
-            : reason === 'percent'
-              ? `Ese porcentaje de descuento no está permitido, el porcentaje máximo permitido es ${maxPercent}%`
-              : `Ese descuento no está permitido, el monto máximo permitido es ${fmt(maxAmount)}`,
-          'error'
-        )
-        const clamped = i.discountType === 'percent' ? (gross > 0 ? (capAmount / gross) * 100 : 0) : capAmount
-        return { ...i, discountValue: String(Math.round(clamped * 100) / 100) }
+    const item = cart.find((i) => i.productId === productId)
+    if (!item) return
+    const num = Number(rawValue)
+    let discountValue = rawValue
+    if (rawValue !== '' && !Number.isNaN(num)) {
+      const breakdown = offerBreakdown(item)
+      const gross = breakdown ? breakdown.paidGross : item.unitPrice * item.quantity
+      const attemptedAmount = item.discountType === 'percent' ? gross * num / 100 : num
+      const cap = resolveDiscountCap(item)
+      if (attemptedAmount > cap.capAmount + 0.001) {
+        notifyDiscountOnce(discountLimitMessage(cap))
+        const clamped = item.discountType === 'percent' ? (gross > 0 ? (cap.capAmount / gross) * 100 : 0) : cap.capAmount
+        discountValue = String(Math.round(clamped * 100) / 100)
       }
-      return { ...i, discountValue: rawValue }
-    }))
+    }
+    // El aviso va fuera de setCart: dentro del actualizador se dispararía de más (React puede
+    // ejecutarlo dos veces).
+    setCart((prev) => prev.map((i) => i.productId === productId ? { ...i, discountValue } : i))
+  }
+
+  /**
+   * Texto del límite de descuento según lo que configuró el ADMIN en Datos de la tienda: en
+   * porcentaje, en pesos, o ambos (aplica el menor), más cuánto es en esta línea.
+   */
+  function discountLimitMessage({ capAmount, reason, maxAmount, maxPercent }) {
+    if (reason === 'disabled') {
+      return 'Los descuentos están deshabilitados: el administrador debe configurar un límite de descuento en Datos de la tienda.'
+    }
+    const limits = [maxPercent != null && `${maxPercent}%`, maxAmount != null && fmt(maxAmount)].filter(Boolean)
+    const limitText = limits.length === 2 ? `${limits.join(' o ')} (el que sea menor)` : limits[0]
+    return `Descuento máximo permitido: ${limitText}. En esta línea, hasta ${fmt(capAmount)}.`
+  }
+
+  // Un solo aviso aunque se siga tecleando: el mismo mensaje no se repite en 3 segundos.
+  const lastDiscountNotice = useRef({ msg: '', at: 0 })
+  function notifyDiscountOnce(msg) {
+    const now = Date.now()
+    if (lastDiscountNotice.current.msg === msg && now - lastDiscountNotice.current.at < 3000) return
+    lastDiscountNotice.current = { msg, at: now }
+    notify(msg, 'error')
   }
 
   /**
@@ -605,7 +635,7 @@ export default function POS() {
       // abajo al múltiplo de `step` más cercano (si hay oferta, el stock siempre alcanza
       // para al menos una promoción completa — ver el guard en `addToCart`). Sin tope si
       // es "por pedido" (`isMadeToOrder`): no hay inventario real que respetar.
-      if (!i.isMadeToOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
+      if (!i.isMadeToOrder && !i.onOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
   }
@@ -627,7 +657,7 @@ export default function POS() {
       // que entiende el resto del carrito y lo que se manda al backend.
       const step = qtyStep(i)
       let qty = Number(digits) * step
-      if (!i.isMadeToOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
+      if (!i.isMadeToOrder && !i.onOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
   }
@@ -640,7 +670,7 @@ export default function POS() {
       const step = qtyStep(i)
       let qty = Number(i.quantity) || 0
       if (qty < step) qty = step
-      if (!i.isMadeToOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
+      if (!i.isMadeToOrder && !i.onOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
   }
@@ -779,6 +809,19 @@ export default function POS() {
   const depositReceivedNum = depositForm.amountReceived === '' ? null : Number(depositForm.amountReceived)
   const depositAmountNum = depositForm.depositAmount === '' ? null : Number(depositForm.depositAmount)
   const depositReceivedExceeds = depositReceivedNum != null && depositReceivedNum > MAX_MONEY
+  // Anticipo mínimo = el % que no se reembolsa (Datos de la tienda, ver ApartadoService#createWithDeposit).
+  const depositMinPercent = tienda?.apartadoRetentionPercent != null ? Number(tienda.apartadoRetentionPercent) : null
+  const depositMin = depositMinPercent != null ? Math.round(subtotal * depositMinPercent) / 100 : null
+  // Si paga el total: el mínimo (sin mínimo, la mitad) queda como anticipo, el resto como saldo
+  // y el apartado se liquida solo (ver ApartadoService#createWithDeposit).
+  const depositFullSplit = depositMin != null && depositMin > 0 && depositMin < subtotal ? depositMin : Math.round(subtotal * 50) / 100
+  const depositCanPayFull = depositFullSplit < subtotal
+  const depositIsFull = depositCanPayFull && depositAmountNum === subtotal
+  // Productos del anticipo que tocan inventario: en cada uno se elige si se descuenta ahora.
+  const depositStockLines = cart.filter((i) => !i.isConcept && !i.isMadeToOrder)
+  // Por pedido: no manejan inventario, solo se muestran para que se vea que no se descuentan.
+  const depositMadeToOrderLines = cart.filter((i) => !i.isConcept && i.isMadeToOrder)
+  const setLineOnOrder = (productId, onOrder) => setCart((prev) => prev.map((i) => (i.productId === productId ? { ...i, onOrder } : i)))
   const depositChange = depositReceivedNum != null && depositAmountNum != null
     && !Number.isNaN(depositReceivedNum) && !Number.isNaN(depositAmountNum)
     ? depositReceivedNum - depositAmountNum
@@ -821,6 +864,10 @@ export default function POS() {
   async function handleCheckout() {
     if (cart.length === 0 || !cashCut || cashAmountMissing || amountExceedsLimit
       || customerNameTooLong || customerEmailTooLong || customerEmailInvalid) return
+    if (cart.some((i) => i.onOrder)) {
+      notify('Hay productos sobre pedido: regístralos como anticipo o quítalos para cobrar', 'error')
+      return
+    }
 
     // Líneas con oferta vigente a las que el cajero ADEMÁS les metió un descuento manual:
     // se le pregunta una sola vez, aquí, si quiere apilar los dos descuentos o quedarse
@@ -942,21 +989,38 @@ export default function POS() {
     const errors = {}
     const name = conceptForm.name.trim()
     if (!name) errors.name = 'Captura el nombre de lo que vendes'
+    else if (name.length > CONCEPT_NAME_MAX) errors.name = `El nombre no puede tener más de ${CONCEPT_NAME_MAX} caracteres`
+    const moneyError = (raw, what) => {
+      const n = Number(raw)
+      if (raw === '' || Number.isNaN(n) || n <= 0) return `Captura ${what} mayor a 0`
+      if (n > MAX_MONEY) return `El número es excesivamente grande — el máximo permitido es ${fmt(MAX_MONEY)}`
+      if (decimals(raw) > 2) return 'Máximo 2 decimales'
+      return null
+    }
 
     let qty, price, finalName
     if (conceptForm.isWeighed) {
       const grams = Number(conceptForm.weightGrams)
       if (!grams || grams <= 0) errors.weightGrams = 'Captura el peso marcado por la báscula'
-      const total = Number(conceptForm.totalAmount)
-      if (conceptForm.totalAmount === '' || Number.isNaN(total) || total < 0) errors.totalAmount = 'Captura cuánto cobraste en total'
+      else if (grams > CONCEPT_GRAMS_MAX) errors.weightGrams = `El peso máximo es ${CONCEPT_GRAMS_MAX.toLocaleString('es-MX')} g`
+      else if (decimals(conceptForm.weightGrams) > 1) errors.weightGrams = 'Máximo 1 decimal'
+      const totalError = moneyError(conceptForm.totalAmount, 'un total')
+      if (totalError) errors.totalAmount = totalError
       qty = 1
-      price = total
+      price = Number(conceptForm.totalAmount)
       finalName = grams > 0 ? `${name} (${grams} g)` : name
     } else {
       qty = Number(conceptForm.quantity)
       if (!qty || qty <= 0) errors.quantity = 'La cantidad debe ser mayor a 0'
+      else if (qty > CONCEPT_QTY_MAX) errors.quantity = `La cantidad máxima es ${CONCEPT_QTY_MAX.toLocaleString('es-MX')}`
+      else if (decimals(conceptForm.quantity) > 3) errors.quantity = 'Máximo 3 decimales'
+      const priceError = moneyError(conceptForm.unitPrice, 'un precio')
+      if (priceError) errors.unitPrice = priceError
       price = Number(conceptForm.unitPrice)
-      if (conceptForm.unitPrice === '' || Number.isNaN(price) || price < 0) errors.unitPrice = 'Captura un precio válido'
+      // sale_items.subtotal es NUMERIC(12,2): cantidad × precio tampoco puede pasar del tope.
+      if (!errors.quantity && !errors.unitPrice && qty * price > MAX_MONEY) {
+        errors.unitPrice = `Cantidad × precio pasa del máximo permitido (${fmt(MAX_MONEY)})`
+      }
       finalName = name
     }
 
@@ -993,7 +1057,9 @@ export default function POS() {
     else if (Number.isNaN(amount) || amount <= 0) errors.depositAmount = 'El anticipo debe ser mayor a 0'
     else if (!MONEY_RE.test(depositForm.depositAmount)) errors.depositAmount = 'Máximo 2 decimales'
     else if (amount > MAX_MONEY) errors.depositAmount = 'El máximo permitido es 9,999,999,999.99'
-    else if (amount >= subtotal) errors.depositAmount = `Debe ser menor al total del pedido (${fmt(subtotal)})`
+    else if (amount > subtotal) errors.depositAmount = `No puede ser mayor al total del pedido (${fmt(subtotal)})`
+    else if (amount === subtotal && !depositCanPayFull) errors.depositAmount = `Debe ser menor al total del pedido (${fmt(subtotal)})`
+    else if (depositMin != null && amount < depositMin) errors.depositAmount = `El anticipo mínimo es ${fmt(depositMin)} (${depositMinPercent} % del total)`
     // Fecha de entrega en lugar de horas de vigencia: el anticipo no vence solo.
     if (!depositForm.deliveryDate) errors.deliveryDate = 'Elige la fecha de entrega'
     else if (depositForm.deliveryDate < todayLocalDateStr()) errors.deliveryDate = 'No puede ser anterior a hoy'
@@ -1023,8 +1089,10 @@ export default function POS() {
       return
     }
     if (!(await confirmDialog(
-      `¿Registrar un anticipo de ${fmt(Number(depositForm.depositAmount))} para "${depositForm.customerName}"?`,
-      { confirmText: 'Registrar anticipo', danger: false }
+      depositIsFull
+        ? `¿Registrar el pago completo de ${fmt(subtotal)} para "${depositForm.customerName}"? Anticipo ${fmt(depositFullSplit)} y saldo ${fmt(subtotal - depositFullSplit)}: el apartado queda pagado y por entregar.`
+        : `¿Registrar un anticipo de ${fmt(Number(depositForm.depositAmount))} para "${depositForm.customerName}"?`,
+      { confirmText: depositIsFull ? 'Registrar pago completo' : 'Registrar anticipo', danger: false }
     ))) return
     setDepositLoading(true)
     setDepositFieldErrors({})
@@ -1034,7 +1102,7 @@ export default function POS() {
         customerPhone: depositForm.customerPhone,
         customerEmail: depositForm.customerEmail.trim() || null,
         notes: depositForm.notes || null,
-        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, onOrder: !!i.onOrder })),
         deliveryDate: depositForm.deliveryDate,
         depositAmount: Number(depositForm.depositAmount),
         paymentMethod: depositForm.paymentMethod,
@@ -1043,16 +1111,18 @@ export default function POS() {
       })
       // Digital sin correo = anticipo sin ticket (igual que la venta normal, ver handleCheckout).
       const isDigital = depositForm.ticketType === 'digital'
+      const registered = depositIsFull ? 'Pago completo registrado' : 'Anticipo registrado'
       notify(isDigital && depositForm.customerEmail.trim()
-        ? `Anticipo registrado — ticket enviado a ${depositForm.customerEmail.trim()}`
-        : 'Anticipo registrado — el apartado ya quedó activo', 'success')
+        ? `${registered} — ticket enviado a ${depositForm.customerEmail.trim()}`
+        : `${registered} — el apartado ya quedó ${depositIsFull ? 'pagado y por entregar' : 'activo'}`, 'success')
       // Igual que al cobrar una venta (ver handleCheckout): en físico se imprime el ticket
       // del anticipo, que ya trae el pulso del cajón si fue en efectivo; en digital no se
       // imprime nada, pero si fue en efectivo el cajón se abre aparte para dar el cambio.
-      const depositSaleId = res.data.data?.depositSaleId
-      if (depositSaleId) {
-        if (!isDigital) printTicket(depositSaleId)
-        else if (depositForm.paymentMethod === 'CASH') openDrawerSilently(depositSaleId)
+      // Con pago completo se imprime la liquidación: ya trae el anticipo, el saldo y el cambio.
+      const ticketSaleId = res.data.data?.saleId ?? res.data.data?.depositSaleId
+      if (ticketSaleId) {
+        if (!isDigital) printTicket(ticketSaleId)
+        else if (depositForm.paymentMethod === 'CASH') openDrawerSilently(ticketSaleId)
       }
       setShowDepositModal(false)
       setCart([])
@@ -1409,6 +1479,7 @@ export default function POS() {
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900">
                       {item.productName}
+                      {item.onOrder && <span className="block text-xs font-medium text-amber-700">Sobre pedido</span>}
                       {item.isConcept && (
                         <span className="block text-xs font-normal text-amber-600 mt-0.5">📋 Por concepto</span>
                       )}
@@ -1666,10 +1737,11 @@ export default function POS() {
               <div>
                 <label className="text-xs font-medium text-gray-600">Nombre del producto <span className={conceptFieldErrors.name ? 'text-red-600' : ''}>*</span></label>
                 <input
-                  className="input" placeholder="Ej. Jitomates" autoFocus
+                  className="input" placeholder="Ej. Jitomates" autoFocus maxLength={CONCEPT_NAME_MAX}
                   value={conceptForm.name}
                   onChange={(e) => setConceptForm({ ...conceptForm, name: e.target.value })}
                 />
+                <p className="text-xs text-right text-gray-400">{conceptForm.name.length}/{CONCEPT_NAME_MAX}</p>
                 {conceptFieldErrors.name && <p className="text-red-600 text-xs mt-1">{conceptFieldErrors.name}</p>}
               </div>
 
@@ -1773,6 +1845,39 @@ export default function POS() {
                 <input className="input" value={depositForm.customerEmail} onChange={(e) => setDepositForm({ ...depositForm, customerEmail: e.target.value })} />
                 {depositFieldErrors.customerEmail && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerEmail}</p>}
               </div>
+              {(depositStockLines.length > 0 || depositMadeToOrderLines.length > 0) && (
+                <div>
+                  <p className="text-xs font-medium text-gray-600 mb-1">Inventario</p>
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {depositMadeToOrderLines.map((i) => (
+                      <div key={i.productId} className="border border-gray-100 bg-gray-50 rounded-lg p-2">
+                        <p className="text-sm font-medium text-gray-800 [overflow-wrap:anywhere]">{i.productName} <span className="text-xs font-normal text-gray-500">· {Number(i.quantity)} pza.</span></p>
+                        <p className="text-xs text-gray-500 mt-0.5">Por pedido: no maneja inventario</p>
+                      </div>
+                    ))}
+                    {depositStockLines.map((i) => {
+                      const noStock = Number(i.quantity) > Number(i.stock ?? 0)
+                      return (
+                        <div key={i.productId} className="border border-gray-200 rounded-lg p-2">
+                          <p className="text-sm font-medium text-gray-800 [overflow-wrap:anywhere]">{i.productName} <span className="text-xs font-normal text-gray-500">· {Number(i.quantity)} pza. · hay {i.stock ?? 0}</span></p>
+                          <div className="grid grid-cols-2 gap-1 mt-1">
+                            {[[false, 'Descontar ahora'], [true, 'Sobre pedido']].map(([value, label]) => (
+                              <button
+                                key={label} type="button" disabled={!value && noStock}
+                                className={`min-h-[36px] rounded-lg text-sm font-medium border disabled:opacity-40 ${!!i.onOrder === value ? 'border-purple-600 bg-purple-50 text-purple-800' : 'border-gray-200 text-gray-600'}`}
+                                onClick={() => setLineOnOrder(i.productId, value)}
+                              >{label}</button>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {depositIsFull && depositStockLines.some((i) => i.onOrder) && (
+                    <p className="text-xs text-amber-800 mt-1">Con pago completo, lo sobre pedido queda sin descontar del inventario.</p>
+                  )}
+                </div>
+              )}
               <div>
                 <label className="text-xs font-medium text-gray-600">Notas (opcional)</label>
                 <textarea className="input" rows={2} value={depositForm.notes} onChange={(e) => setDepositForm({ ...depositForm, notes: e.target.value })} />
@@ -1785,6 +1890,20 @@ export default function POS() {
                   <input className="input" type="text" inputMode="decimal" value={depositForm.depositAmount}
                     onChange={(e) => setDepositForm({ ...depositForm, depositAmount: onlyMoney(e.target.value) })} />
                   {depositFieldErrors.depositAmount && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.depositAmount}</p>}
+                  {depositMin != null && !depositFieldErrors.depositAmount && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Mínimo {fmt(depositMin)} ({depositMinPercent} % del total, no reembolsable)
+                      {depositCanPayFull && !depositIsFull && ` · Para pagar todo, captura ${fmt(subtotal)}`}
+                    </p>
+                  )}
+                  {depositMin == null && depositCanPayFull && !depositIsFull && !depositFieldErrors.depositAmount && (
+                    <p className="text-xs text-gray-500 mt-1">Para pagar todo, captura {fmt(subtotal)}</p>
+                  )}
+                  {depositIsFull && !depositFieldErrors.depositAmount && (
+                    <p className="text-sm text-blue-900 bg-blue-50 rounded-lg p-2 mt-2">
+                      Pago completo: se registra el anticipo de <strong>{fmt(depositFullSplit)}</strong> y el saldo de <strong>{fmt(subtotal - depositFullSplit)}</strong>. El apartado queda pagado y por entregar: la entrega se registra en Apartados cuando el cliente lo recoja.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600">Fecha de entrega <span className={depositFieldErrors.deliveryDate ? 'text-red-600' : ''}>*</span></label>

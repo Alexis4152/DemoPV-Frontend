@@ -14,6 +14,8 @@ const ACTION_GROUPS = [
     options: [
       ['SALE', 'Venta'],
       ['SALE_CANCEL', 'Cancelación de venta'],
+      ['SALE_REFUND', 'Devolución de venta'],
+      ['SALE_REFUND_NO_PRODUCT', 'Producto no regresó'],
       ['APARTADO', 'Apartado'],
       ['APARTADO_RETURN', 'Apartado devuelto'],
       ['INITIAL_STOCK', 'Stock inicial'],
@@ -25,6 +27,8 @@ const ACTION_GROUPS = [
       ['MANUAL_OUT', 'Salida manual'],
       ['STOCK_IMPORT', 'Actualización de existencias'],
       ['RAW_MATERIAL', 'Desde materia prima'],
+      ['APARTADO_DELIVERED', 'Apartado entregado'],
+      ['APARTADO_INSTALLMENT', 'Abono'],
     ],
   },
   {
@@ -46,7 +50,15 @@ const ACTION_LABELS = Object.fromEntries(ACTION_GROUPS.flatMap((g) => g.options)
 
 // Color del badge: rojo salidas/bajas, verde entradas/altas, gris el resto.
 const RED = new Set(['SALE', 'APARTADO', 'MERMA', 'COUNT_DIFFERENCE', 'RETURN_TO_SUPPLIER', 'INTERNAL_USE', 'MANUAL_OUT', 'PRODUCT_DEACTIVATED'])
-const GREEN = new Set(['SALE_CANCEL', 'APARTADO_RETURN', 'INITIAL_STOCK', 'MANUAL_IN', 'RAW_MATERIAL', 'PRODUCT_CREATED', 'PRODUCT_REACTIVATED'])
+const GREEN = new Set(['SALE_CANCEL', 'SALE_REFUND', 'APARTADO_RETURN', 'INITIAL_STOCK', 'MANUAL_IN', 'RAW_MATERIAL', 'PRODUCT_CREATED', 'PRODUCT_REACTIVATED'])
+// Movimientos de stock: el color sigue al cambio real (sale, entra o informativo sin cambio);
+// así "Apartado entregado" es rojo si descontó y gris si solo informa.
+function badgeColor(r) {
+  if (r.quantity != null && r.previousStock != null) {
+    return r.quantity < 0 ? 'bg-red-50 text-red-700' : r.quantity > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-700'
+  }
+  return RED.has(r.action) ? 'bg-red-50 text-red-700' : GREEN.has(r.action) ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-700'
+}
 
 // Tamaño de página inicial; el usuario lo cambia con "Mostrar N por página" (mismo
 // componente Pagination que el resto de las tablas).
@@ -201,7 +213,7 @@ export default function InventoryMovements({ categories }) {
                 <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{r.userName}</td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                    RED.has(r.action) ? 'bg-red-50 text-red-700' : GREEN.has(r.action) ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                    badgeColor(r)}`}>
                     {ACTION_LABELS[r.action] ?? r.action}
                   </span>
                 </td>
@@ -215,7 +227,8 @@ export default function InventoryMovements({ categories }) {
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap font-semibold">
                   {r.quantity == null ? <span className="text-gray-300">—</span>
-                    : <span className={r.quantity < 0 ? 'text-red-600' : 'text-green-600'}>{r.quantity > 0 ? `+${r.quantity}` : r.quantity}</span>}
+                    : r.action === 'SALE_REFUND_NO_PRODUCT' ? <span className="text-amber-600 font-medium text-xs">No regresó</span>
+                    : <span className={r.quantity < 0 ? 'text-red-600' : r.quantity > 0 ? 'text-green-600' : 'text-gray-400'}>{r.quantity > 0 ? `+${r.quantity}` : r.quantity}</span>}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-gray-600">
                   {r.previousStock == null ? <span className="text-gray-300">—</span> : <>{r.previousStock} → <span className="font-semibold">{r.newStock}</span></>}

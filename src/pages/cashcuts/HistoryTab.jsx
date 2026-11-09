@@ -5,7 +5,8 @@ import ResolveArqueoModal, { ARQUEO_RESOLUTION_LABELS } from './ResolveArqueoMod
 import IconButton from '../../components/IconButton'
 import { EyeIcon } from '../../components/icons'
 import { resolveMediaUrl } from '../../utils/media'
-import { CountBadge, Modal, MovementBadge, Pagination, SignedAmount, SummaryRow, fmt, fmtDate, fmtTime } from './common'
+import { CountBadge, Modal, Pagination, SummaryRow, fmt, fmtDate } from './common'
+import CutMovementsTable from './CutMovementsTable'
 import useTableSort from '../../hooks/useTableSort'
 import SortableTh from '../../components/SortableTh'
 
@@ -197,7 +198,7 @@ export function CutDetailModal({ cut, onClose }) {
   const diff = cut.cashDifference != null ? Number(cut.cashDifference) : null
 
   return (
-    <Modal title={`Corte #${cut.id}`} subtitle={`${cut.cashRegister?.name ? `${cut.cashRegister.name} · ` : ''}${cut.user?.name ?? ''}`} onClose={onClose} wide>
+    <Modal title={`Corte #${cut.id}`} subtitle={`${cut.cashRegister?.name ? `${cut.cashRegister.name} · ` : ''}${cut.user?.name ?? ''}`} onClose={onClose} wide="xl">
       <div className="space-y-4 text-sm">
         <div className="space-y-1.5">
           <SummaryRow label="Apertura">{fmtDate(cut.openedAt)}</SummaryRow>
@@ -234,9 +235,18 @@ export function CutDetailModal({ cut, onClose }) {
           {Number(summary?.loansOutTotal ?? cut.loansOutTotal) > 0 && (
             <SummaryRow label="Préstamos a otras cajas">−{fmt(summary?.loansOutTotal ?? cut.loansOutTotal)}</SummaryRow>
           )}
+          {Number(summary?.refundsTotal ?? cut.refundsTotal) > 0 && (
+            <SummaryRow label="Devoluciones de ventas">−{fmt(summary?.refundsTotal ?? cut.refundsTotal)}</SummaryRow>
+          )}
           <div className="border-t border-gray-100 pt-1.5">
             <SummaryRow label="Efectivo esperado" strong>{fmt(closed ? cut.closingAmount : summary?.expectedCash)}</SummaryRow>
           </div>
+          {Number(summary?.cardRefunds) > 0 && (
+            <SummaryRow label="Devoluciones con tarjeta (informativo)">{fmt(summary.cardRefunds)}</SummaryRow>
+          )}
+          {Number(summary?.transferRefunds) > 0 && (
+            <SummaryRow label="Devoluciones con transferencia (informativo)">{fmt(summary.transferRefunds)}</SummaryRow>
+          )}
         </div>
 
         {closed && (
@@ -267,22 +277,7 @@ export function CutDetailModal({ cut, onClose }) {
           </div>
         )}
 
-        {movements.length > 0 && (
-          <div>
-            <p className="text-xs font-semibold text-gray-600 mb-1">Movimientos de efectivo</p>
-            <ul className="divide-y divide-gray-100">
-              {movements.map((m) => (
-                <li key={m.id} className="py-1.5 flex justify-between gap-3">
-                  <span className="flex flex-col">
-                    <span className="flex items-center gap-2"><MovementBadge type={m.type} /><span className="text-gray-500 text-xs">{fmtTime(m.createdAt)}</span></span>
-                    <span className="text-gray-700">{m.concept ?? '—'}{m.person ? ` · ${m.person.name}` : ''}</span>
-                  </span>
-                  <SignedAmount type={m.type} amount={m.amount} />
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <CutMovementsTable cutId={cut.id} movements={movements} sortKey="sort:cutDetailMovements" card={false} />
 
         {cut.notes && <p className="text-gray-500 text-xs">{cut.notes}</p>}
       </div>

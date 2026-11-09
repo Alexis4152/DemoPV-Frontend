@@ -84,6 +84,7 @@ export function AuthProvider({ children }) {
         const fresh = r.data.data
         const merged = {
           ...parsed,
+          id: parsed.userId ?? fresh.id,
           role: fresh.role?.name ?? parsed.role,
           sections: fresh.role?.sections ?? parsed.sections,
           actionGrants: fresh.role?.actionGrants ?? parsed.actionGrants,
@@ -113,7 +114,9 @@ export function AuthProvider({ children }) {
    */
   async function login(email, password) {
     const res = await apiLogin({ email, password })
-    const { token, ...userData } = res.data.data
+    // El login responde `userId`; en todo el portal el usuario se compara por `id`.
+    const { token, ...data } = res.data.data
+    const userData = { ...data, id: data.userId }
     localStorage.setItem('pos_token', token)
     localStorage.setItem('pos_user', JSON.stringify(userData))
     setUser(userData)

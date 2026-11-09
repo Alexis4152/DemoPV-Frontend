@@ -30,6 +30,20 @@ export const createSale = (data) => api.post('/sales', data)
 export const cancelSale = (id) => api.delete(`/sales/${id}`)
 
 /**
+ * Cancela una venta del turno abierto eligiendo por artículo qué pasó con el producto.
+ * @param {{reason?: string, items: Array<{itemId: number, outcome: 'RESTOCK'|'WASTE'|'NOT_RETURNED'}>}} data
+ */
+export const cancelSaleWithItems = (id, data) => api.post(`/sales/${id}/cancel`, data)
+
+/**
+ * Devuelve una venta de un turno ya cerrado (la del turno abierto se cancela).
+ * @param {number|string} id Id de la venta.
+ * @param {{ reason: string, returnedItemIds: number[] }} data Motivo y artículos que el cliente entregó.
+ * @returns {Promise} Respuesta de axios con la venta ya marcada como devuelta.
+ */
+export const refundSale = (id, data) => api.post(`/sales/${id}/refund`, data)
+
+/**
  * Arma el ticket de una venta en formato ESC/POS (texto + comandos de control), listo
  * para pasárselo directo a un puente local de impresión (ver `utils/printer.js`) — no es
  * un PDF, es lo que la impresora térmica USB entiende byte por byte. Viene como una sola
@@ -40,6 +54,12 @@ export const cancelSale = (id) => api.delete(`/sales/${id}`)
  * @returns {Promise} Respuesta de axios con el ticket completo en hexadecimal (`data.data`).
  */
 export const getSaleTicketEscPos = (id) => api.get(`/sales/${id}/ticket-escpos`)
+
+/** Ticket digital (PDF) de una venta, el mismo que se manda por correo. */
+export const getSaleTicketPdf = (id) => api.get(`/sales/${id}/ticket-pdf`, { responseType: 'blob' })
+
+/** Manda por correo el ticket digital de una venta. */
+export const sendSaleTicket = (id, email) => api.post(`/sales/${id}/send-ticket`, { email })
 
 /**
  * Arma SOLO el pulso ESC/POS que abre el cajón de dinero, sin el ticket completo —

@@ -68,6 +68,27 @@ export const XCircleIcon = (props) => (
   </svg>
 )
 
+// Devolución de una venta (flecha que regresa).
+export const UndoIcon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </svg>
+)
+
+export const PlusIcon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+)
+
+// Palomita sola (sin círculo), para no confundirse con Confirmar.
+export const CheckIcon = (props) => (
+  <svg {...base} {...props}>
+    <path d="m5 12.5 4.5 4.5L19 7.5" />
+  </svg>
+)
+
 export const CheckCircleIcon = (props) => (
   <svg {...base} {...props}>
     <circle cx="12" cy="12" r="9" />
@@ -192,5 +213,18 @@ export const LandmarkIcon = (props) => (
 export const BarcodeIcon = (props) => (
   <svg {...base} {...props}>
     <path d="M3 5v14M7 5v14M10 5v14M14 5v14M17 5v14M21 5v14" />
+  </svg>
+)
+
+export const ShirtIcon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M20.4 6.6 16 3.5a4 4 0 0 1-8 0L3.6 6.6a1 1 0 0 0-.4 1.2l1.4 3.4a1 1 0 0 0 1.2.6L8 11v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-9l2.2.8a1 1 0 0 0 1.2-.6l1.4-3.4a1 1 0 0 0-.4-1.2Z" />
+  </svg>
+)
+
+export const DollarIcon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M12 2v20" />
+    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
   </svg>
 )

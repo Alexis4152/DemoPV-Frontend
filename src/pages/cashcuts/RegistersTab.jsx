@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getCashPeople, getCashRegisters, getHandovers, reopenCashRegisterDay } from '../../api/cashRegisters'
+import { getCashCut } from '../../api/cashCuts'
+import { CutDetailModal } from './HistoryTab'
 import { useNotify } from '../../context/NotifyContext'
 import { ClosedMovementModal, ForceCloseModal, RegisterFormModal, ResolveHandoverModal } from './RegisterModals'
 import { CountBadge, Pagination, PendingBreakdown, fmt, fmtDate, fmtTime } from './common'
@@ -32,6 +34,17 @@ export default function RegistersTab({ onChanged }) {
   const onSort = (k) => { tableSort.toggle(k); setPage(0) }
   // { kind: 'form'|'closed'|'force'|'resolve', register?, handover?, type? }
   const [modal, setModal] = useState(null)
+  // Corte abierto que se está viendo (fondo, ventas y movimientos del turno en curso).
+  const [viewCut, setViewCut] = useState(null)
+
+  async function openCutDetail(cutId) {
+    try {
+      const r = await getCashCut(cutId)
+      setViewCut(r.data.data)
+    } catch (err) {
+      notify(err.response?.data?.message ?? 'No se pudo cargar el turno', 'error')
+    }
+  }
 
   function loadRegisters() {
     getCashRegisters()
@@ -97,6 +110,9 @@ export default function RegistersTab({ onChanged }) {
                     <div className="flex justify-between"><span className="text-gray-500">Corte</span><span>#{r.openCut.id} · desde {fmtTime(r.openCut.openedAt)}</span></div>
                     <div className="flex justify-between"><span className="text-gray-500">Efectivo esperado</span><span className="font-bold">{fmt(r.openCut.expectedCash)}</span></div>
                   </div>
+                  <button className="w-full min-h-[44px] rounded-lg border border-purple-600 text-purple-700 font-semibold hover:bg-purple-50" onClick={() => openCutDetail(r.openCut.id)}>
+                    Ver movimientos del turno
+                  </button>
                   <button className="w-full min-h-[44px] rounded-lg border border-red-600 text-red-700 font-semibold hover:bg-red-50" onClick={() => setModal({ kind: 'force', register: r })}>
                     Forzar cierre
                   </button>
@@ -195,6 +211,7 @@ export default function RegistersTab({ onChanged }) {
       )}
       {modal?.kind === 'force' && <ForceCloseModal register={modal.register} people={people} onClose={() => setModal(null)} onSaved={afterSave} />}
       {modal?.kind === 'resolve' && <ResolveHandoverModal handover={modal.handover} people={people} onClose={() => setModal(null)} onSaved={afterSave} />}
+      {viewCut && <CutDetailModal cut={viewCut} onClose={() => setViewCut(null)} />}
     </div>
   )
 }

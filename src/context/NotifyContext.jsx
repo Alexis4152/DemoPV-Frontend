@@ -100,7 +100,7 @@ export function NotifyProvider({ children }) {
               className={`pointer-events-auto rounded-lg shadow-lg border px-4 py-3 text-sm flex items-start gap-3 animate-[toast-in_0.2s_ease-out] ${style.box}`}
             >
               <span className="text-base leading-none">{style.icon}</span>
-              <p className="flex-1">{t.message}</p>
+              <p className="flex-1 [overflow-wrap:anywhere]">{t.message}</p>
               <button className="text-current opacity-50 hover:opacity-100 leading-none" onClick={() => dismiss(t.id)}>✕</button>
             </div>
           )
@@ -112,7 +112,7 @@ export function NotifyProvider({ children }) {
           <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
             <ModalCloseButton onClick={() => handleConfirm(false)} />
             {confirmState.opts.title && <h3 className="text-lg font-bold text-gray-900 mb-2 pr-8">{confirmState.opts.title}</h3>}
-            <p className={`text-sm text-gray-700 mb-6 ${confirmState.opts.title ? '' : 'pr-8'}`}>{confirmState.message}</p>
+            <p className={`text-sm text-gray-700 mb-6 [overflow-wrap:anywhere] ${confirmState.opts.title ? '' : 'pr-8'}`}>{confirmState.message}</p>
             <div className="flex gap-2 justify-end">
               <button className="btn-secondary" onClick={() => handleConfirm(false)}>
                 {confirmState.opts.cancelText ?? 'Cancelar'}

@@ -18,6 +18,8 @@ const STATUS_INFO = {
   PENDING: { label: 'Pendiente de revisión', color: 'bg-amber-100 text-amber-700', icon: '⏳' },
   ACTIVE: { label: 'Confirmado', color: 'bg-green-100 text-green-700', icon: '✅' },
   COMPLETED: { label: 'Completado', color: 'bg-blue-100 text-blue-700', icon: '🎉' },
+  PAID: { label: 'Pagado, por entregar', color: 'bg-teal-100 text-teal-700', icon: '📦' },
+  PAID_PARTIAL: { label: 'Pagado, entregado en parte', color: 'bg-teal-100 text-teal-700', icon: '📦' },
   CANCELLED: { label: 'Cancelado', color: 'bg-red-100 text-red-700', icon: '❌' },
   EXPIRED: { label: 'Vencido', color: 'bg-gray-200 text-gray-600', icon: '⏰' },
 }
@@ -747,26 +749,20 @@ export default function PublicApartar() {
                 phoneOnlyResults.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center mt-4">No encontramos apartados con ese teléfono en esta tienda.</p>
                 ) : (
+                  // Solo fecha y estado: sin folio ni montos (ver PublicApartadoBrief en el
+                  // backend). Para ver el detalle se necesita el folio, que da la tienda.
                   <div className="mt-4 space-y-2">
-                    {phoneOnlyResults.map((a) => (
-                      <button
-                        key={a.id}
-                        type="button"
-                        className="w-full text-left border border-gray-100 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors"
-                        onClick={() => { setLookupResult(a); setLookupVerifiedPhone(phoneOnlyPhone) }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-semibold text-sm text-gray-900">Folio #{a.folio}</span>
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${STATUS_INFO[a.status]?.color}`}>
-                            {STATUS_INFO[a.status]?.icon} {STATUS_INFO[a.status]?.label}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 text-xs text-gray-400 mt-0.5">
-                          <span>{fmtDateTime(a.requestedAt)}</span>
-                          <span className="font-medium text-gray-600">{fmt(a.total)}</span>
-                        </div>
-                      </button>
+                    {phoneOnlyResults.map((a, idx) => (
+                      <div key={`${a.requestedAt}-${idx}`} className="flex items-center justify-between gap-2 border border-gray-100 rounded-lg px-3 py-2">
+                        <span className="text-sm text-gray-700">{fmtDateTime(a.requestedAt)}</span>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${STATUS_INFO[a.status]?.color}`}>
+                          {STATUS_INFO[a.status]?.icon} {STATUS_INFO[a.status]?.label}
+                        </span>
+                      </div>
                     ))}
+                    <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      📞 Llama a la tienda{tienda?.telefono ? <> al <strong>{tienda.telefono}</strong></> : ''}, indica la fecha de tu apartado y solicita tu número de folio. Con el folio y tu teléfono podrás ver el detalle.
+                    </p>
                   </div>
                 )
               )}
@@ -799,6 +795,13 @@ export default function PublicApartar() {
               {lookupResult.status === 'ACTIVE' && (
                 <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-800 mb-4">
                   Pasa a recogerlo{lookupResult.expiresAt && <> — tienes hasta el <strong>{fmtDateTime(lookupResult.expiresAt)}</strong></>}.
+                </div>
+              )}
+              {(lookupResult.status === 'PAID' || lookupResult.status === 'PAID_PARTIAL') && (
+                <div className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-2 text-sm text-teal-800 mb-4">
+                  {lookupResult.status === 'PAID_PARTIAL'
+                    ? 'Ya está pagado y te entregamos una parte. Te esperamos en la tienda para entregarte lo que falta.'
+                    : 'Ya está pagado. Te esperamos en la tienda para entregártelo.'}
                 </div>
               )}
               {lookupResult.status === 'COMPLETED' && (
@@ -834,8 +837,20 @@ export default function PublicApartar() {
                   (completada/cancelada/vencida ya no se puede tocar, el botón ni aparece).
                   Ver handleSelfCancel/handleSelfEdit: el servidor vuelve a verificar
                   folio+teléfono desde cero en cada una, nunca se confía en que llegar hasta
-                  aquí ya demostró que es suyo. */}
-              {(lookupResult.status === 'PENDING' || lookupResult.status === 'ACTIVE') && (
+                  aquí ya demostró que es suyo.
+                  Con anticipo pagado en tienda no aplica ninguno de los dos (Editar también
+                  cancela): lo resuelve la tienda, así que en su lugar va la leyenda. */}
+              {lookupResult.depositAmount > 0 && (lookupResult.status === 'ACTIVE' || lookupResult.status === 'PENDING') && (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <p>
+                    Pagado a cuenta: <strong>{fmt(lookupResult.depositAmount)}</strong> · Saldo por pagar: <strong>{fmt(Number(lookupResult.total) - Number(lookupResult.depositAmount))}</strong>
+                  </p>
+                  <p className="mt-1">Este apartado tiene un anticipo pagado: para modificarlo o cancelarlo comunícate con la tienda. {lookupResult.retentionPercent != null
+                    ? `Si cancelas por cambio de opinión, la tienda retiene el ${Number(lookupResult.retentionPercent)} % del total (${fmt(Number(lookupResult.total) * Number(lookupResult.retentionPercent) / 100)}) y te devuelve el resto. Producto defectuoso: se devuelve todo.`
+                    : 'Lo pagado a cuenta (anticipo y abonos) no es reembolsable.'}</p>
+                </div>
+              )}
+              {!(lookupResult.depositAmount > 0) && (lookupResult.status === 'PENDING' || lookupResult.status === 'ACTIVE') && (
                 <div className="flex gap-2 mb-3">
                   <button type="button" className="btn-secondary flex-1" disabled={selfActionLoading} onClick={handleSelfEdit}>
                     Editar

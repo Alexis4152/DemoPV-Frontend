@@ -22,6 +22,9 @@ const ROLE_LABELS = {
  *  en el backend). */
 export const MANAGEMENT_ROLE_NAMES = ['SUPER_ADMIN', 'SUPERVISOR', 'ADMIN']
 
+/** ADMIN/SUPERVISOR/SUPER_ADMIN (igual que TenantScope#isAdminLevel en el backend). */
+export const isManagement = (user) => MANAGEMENT_ROLE_NAMES.includes(user?.role)
+
 /** Traduce el nombre interno de un rol a español si es uno de los roles fijos del
  *  sistema; cualquier otro nombre (rol personalizado) se devuelve tal cual. */
 export function roleLabel(name) {

@@ -4,35 +4,11 @@ import { getCashPeople, getCashRegisters } from '../../api/cashRegisters'
 import { getReimbursements } from '../../api/reimbursements'
 import { useAuth } from '../../context/AuthContext'
 import { useNotify } from '../../context/NotifyContext'
-import { resolveMediaUrl } from '../../utils/media'
 import CloseCutModal from './CloseCutModal'
+import CutMovementsTable from './CutMovementsTable'
 import { EntryModal, ExitModal } from './MovementModals'
 import { ChooseRegisterModal, ReceiveModal } from './OpenCutModals'
-import { MovementBadge, Pagination, SignedAmount, fmt, fmtDate, fmtTime, isOutflow } from './common'
-import useTableSort from '../../hooks/useTableSort'
-import SortableTh from '../../components/SortableTh'
-
-// Valor por el que se ordena cada columna de los movimientos del turno. El monto va con
-// signo (salidas negativas), igual que se muestra.
-const MOVEMENT_SORT_VALUE = {
-  time: (m) => m.createdAt ?? '',
-  type: (m) => m.type ?? '',
-  concept: (m) => (m.concept ?? '').toLowerCase(),
-  by: (m) => (m.registeredBy?.name ?? '').toLowerCase(),
-  amount: (m) => Number(m.amount ?? 0) * (isOutflow(m.type) ? -1 : 1),
-}
-
-/** Movimientos ordenados por la columna elegida; sin orden elegido, del más reciente al más antiguo. */
-function sortMovements(movements, sort) {
-  if (!sort || !MOVEMENT_SORT_VALUE[sort.key]) return [...movements].reverse()
-  const value = MOVEMENT_SORT_VALUE[sort.key]
-  const factor = sort.dir === 'desc' ? -1 : 1
-  return [...movements].sort((a, b) => {
-    const va = value(a)
-    const vb = value(b)
-    return (va < vb ? -1 : va > vb ? 1 : 0) * factor
-  })
-}
+import { fmt, fmtDate } from './common'
 
 /**
  * Pestaña "Mi caja": el corte del usuario en sesión. Sin corte abierto, ofrece abrir uno
@@ -50,14 +26,6 @@ export default function MyCashTab({ onChanged }) {
   const [myToday, setMyToday] = useState(null)
   const [summary, setSummary] = useState(null)
   const [movements, setMovements] = useState([])
-  // Paginación de los movimientos del turno: vienen todos juntos (un turno tiene pocos),
-  // así que se pagina aquí mismo, con los más recientes primero.
-  const [movPage, setMovPage] = useState(0)
-  // Orden de los movimientos del turno: aquí sí es en pantalla, porque ya están todos
-  // cargados (se ordena la lista completa y luego se pagina).
-  const movSort = useTableSort('sort:myCashMovements')
-  const onMovSort = (k) => { movSort.toggle(k); setMovPage(0) }
-  const [movSize, setMovSize] = useState(10)
   const [pendingReimbursements, setPendingReimbursements] = useState([])
   const [people, setPeople] = useState([])
   const [registers, setRegisters] = useState(null)
@@ -105,6 +73,14 @@ export default function MyCashTab({ onChanged }) {
     onChanged?.()
   }
 
+  // Un gasto o retiro al recibir baja lo que se entrega: se vuelve a pedir la caja.
+  async function refreshReceiveRegister() {
+    const r = await getCashRegisters()
+    const list = r.data.data ?? []
+    setRegisters(list)
+    setReceiveRegister((current) => list.find((x) => x.id === current.id) ?? current)
+  }
+
   async function startOpen() {
     try {
       const r = await getCashRegisters()
@@ -118,11 +94,8 @@ export default function MyCashTab({ onChanged }) {
   if (!loaded) return <p className="text-sm text-gray-400">Cargando…</p>
 
   const pendingIds = new Set(pendingReimbursements.map((r) => r.id))
-  const movTotalPages = Math.ceil(movements.length / movSize)
-  const safeMovPage = Math.min(movPage, Math.max(movTotalPages - 1, 0))
-  const pagedMovements = sortMovements(movements, movSort.sort).slice(safeMovPage * movSize, (safeMovPage + 1) * movSize)
   const outflows = Number(summary?.expensesTotal ?? 0) + Number(summary?.withdrawalsTotal ?? 0) + Number(summary?.reimbursementsTotal ?? 0)
-    + Number(summary?.loansOutTotal ?? 0)
+    + Number(summary?.loansOutTotal ?? 0) + Number(summary?.refundsTotal ?? 0)
 
   return (
     <div className="space-y-6">
@@ -191,6 +164,7 @@ export default function MyCashTab({ onChanged }) {
               <p className="text-xs text-gray-500">
                 Gastos {fmt(summary?.expensesTotal)} · Retiros {fmt(summary?.withdrawalsTotal)}
                 {Number(summary?.loansOutTotal) > 0 && ` · Préstamos a otras cajas ${fmt(summary.loansOutTotal)}`}
+                {Number(summary?.refundsTotal) > 0 && ` · Devoluciones ${fmt(summary.refundsTotal)}`}
               </p>
             </div>
             <div className="rounded-xl p-4 bg-purple-600 text-white">
@@ -204,55 +178,7 @@ export default function MyCashTab({ onChanged }) {
             Ventas con tarjeta/transferencia: {fmt(Number(summary?.cardSales ?? 0) + Number(summary?.transferSales ?? 0))} — no son dinero físico, no cuentan en el efectivo esperado.
           </p>
 
-          <div className="card p-0 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap justify-between gap-2">
-              <h3 className="font-semibold text-gray-900">Movimientos de efectivo del turno</h3>
-              <span className="text-xs text-gray-500">Esperado = fondo + ventas en efectivo + entradas − salidas</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[720px]">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <SortableTh label="Hora" sortKey="time" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
-                    <SortableTh label="Tipo" sortKey="type" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
-                    <SortableTh label="Concepto" sortKey="concept" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
-                    <SortableTh label="Registró" sortKey="by" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-left" />
-                    <th className="px-4 py-2 font-medium text-gray-600 text-left">Comprobante</th>
-                    <SortableTh label="Monto" sortKey="amount" sort={movSort.sort} onSort={onMovSort} className="px-4 py-2 font-medium text-gray-600 text-right" align="right" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {pagedMovements.map((m) => (
-                    <tr key={m.id}>
-                      <td className="px-4 py-2 text-gray-500">{fmtTime(m.createdAt)}</td>
-                      <td className="px-4 py-2"><MovementBadge type={m.type} /></td>
-                      <td className="px-4 py-2">
-                        <div>{m.concept ?? '—'}</div>
-                        {m.type === 'CONTRIBUTION' && m.person && <div className="text-xs text-gray-500">Puso: {m.person.name}</div>}
-                        {m.type === 'CONTRIBUTION' && m.reimbursementId && (
-                          <span className={`inline-block mt-1 px-2 py-0.5 rounded text-xs font-semibold ${pendingIds.has(m.reimbursementId) ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
-                            Reembolsable · {pendingIds.has(m.reimbursementId) ? 'pendiente' : 'pagado'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2">{m.registeredBy?.name ?? '—'}</td>
-                      <td className="px-4 py-2">
-                        {m.receiptPath ? <a className="text-purple-700 hover:underline" href={resolveMediaUrl(m.receiptPath)} target="_blank" rel="noopener noreferrer">Ver foto</a> : <span className="text-gray-400">—</span>}
-                      </td>
-                      <td className="px-4 py-2 text-right"><SignedAmount type={m.type} amount={m.amount} /></td>
-                    </tr>
-                  ))}
-                  {movements.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400">Sin movimientos en este turno</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <Pagination
-              page={safeMovPage} size={movSize} totalElements={movements.length} totalPages={movTotalPages}
-              count={pagedMovements.length} onPageChange={setMovPage} onSizeChange={(n) => { setMovSize(n); setMovPage(0) }}
-            />
-          </div>
+          <CutMovementsTable cutId={openCut.id} movements={movements} reloadKey={summary} pendingIds={pendingIds} />
         </>
       )}
 
@@ -264,7 +190,10 @@ export default function MyCashTab({ onChanged }) {
         />
       )}
       {modal === 'receive' && receiveRegister && (
-        <ReceiveModal register={receiveRegister} onBack={() => setModal('choose')} onClose={() => setModal(null)} onOpened={reloadAll} />
+        <ReceiveModal
+          register={receiveRegister} people={people} onRefresh={refreshReceiveRegister}
+          onBack={() => setModal('choose')} onClose={() => setModal(null)} onOpened={reloadAll}
+        />
       )}
       {modal === 'entry' && openCut && (
         <EntryModal cut={openCut} people={people} preset={entryPreset} onClose={() => setModal(null)} onSaved={reloadAll} />

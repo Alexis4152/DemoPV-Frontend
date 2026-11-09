@@ -42,7 +42,7 @@ const ICONS = {
 const FILTER_KEYS = ['status', 'method', 'movementType']
 
 const STATUS_OPTIONS = {
-  ventas: [['', 'Todos los estados'], ['COMPLETED', 'Completada'], ['CANCELLED', 'Cancelada']],
+  ventas: [['', 'Todos los estados'], ['COMPLETED', 'Completada'], ['REFUNDED', 'Devuelta'], ['CANCELLED', 'Cancelada']],
   'cortes-caja': [['', 'Todos los estados'], ['OPEN', 'Abierto'], ['CLOSED', 'Cerrado']],
   apartados: [['', 'Todos los estados'], ['PENDING', 'Pendiente'], ['ACTIVE', 'Activo'],
     ['COMPLETED', 'Completado'], ['CANCELLED', 'Cancelado'], ['EXPIRED', 'Vencido']],
