@@ -339,6 +339,11 @@ export default function POS() {
     const offer = activeOfferFor(product.id)
     const step = offer ? offer.buyQuantity : 1
     const existingBefore = cart.find((i) => i.productId === product.id)
+    // Límite de promociones por venta: no se agregan más (ni a precio normal); otra venta.
+    if (existingBefore && !existingBefore.skipOffer && existingBefore.quantity + step > maxQtyFor(existingBefore)) {
+      reject(promoLimitMessage(product.name, offer))
+      return
+    }
     if (!madeToOrder && !canOrder && existingBefore && existingBefore.quantity + step > product.stock) {
       reject(`Ya no hay más "${product.name}": ya tienes en la venta todo lo disponible (${product.stock})`)
       return
@@ -405,6 +410,26 @@ export default function POS() {
     )
   }
 
+  /** Precio en oferta de un producto (ver Offer#productPrices), o null si la oferta no lo trae. */
+  function offerPriceFor(offer, productId) {
+    const price = offer?.productPrices?.[productId]
+    return price != null ? Number(price) : null
+  }
+
+  /**
+   * Piezas máximas de una línea con oferta: `maxPromosPerSale` promociones completas. Sin
+   * límite (o con "No aplicar oferta"), Infinity — ahí solo topa el stock.
+   */
+  function maxQtyFor(item) {
+    if (item.skipOffer) return Infinity
+    const offer = activeOfferFor(item.productId)
+    return offer?.maxPromosPerSale != null ? offer.maxPromosPerSale * offer.buyQuantity : Infinity
+  }
+
+  function promoLimitMessage(name, offer) {
+    return `La oferta de "${name}" permite máximo ${offer.maxPromosPerSale} promoción(es) por venta; para llevar más, haz otra venta`
+  }
+
   /**
    * Cuántas piezas físicas representa "1" en el cuadro de Cantidad de esta línea. Si el
    * producto tiene oferta vigente, la Cantidad que captura el cajero son PROMOCIONES, no
@@ -445,7 +470,9 @@ export default function POS() {
     if (promosAplicados <= 0) return null
     const piezasGratis = promosAplicados * (offer.buyQuantity - offer.payQuantity)
     const piezasPagadas = item.quantity - piezasGratis
-    return { offer, piezasPagadas, piezasGratis, paidGross: item.unitPrice * piezasPagadas }
+    // Las piezas pagadas van al precio en oferta (el oficial si la oferta no lo trae).
+    const price = offerPriceFor(offer, item.productId) ?? item.unitPrice
+    return { offer, piezasPagadas, piezasGratis, price, paidGross: price * piezasPagadas }
   }
 
   /**
@@ -631,6 +658,7 @@ export default function POS() {
       const step = qtyStep(i)
       let qty = Number(i.quantity || 0) + delta * step
       if (qty < step) qty = step
+      if (qty > maxQtyFor(i)) qty = maxQtyFor(i)
       // Topa al stock disponible sin partir una promoción a la mitad: redondea hacia
       // abajo al múltiplo de `step` más cercano (si hay oferta, el stock siempre alcanza
       // para al menos una promoción completa — ver el guard en `addToCart`). Sin tope si
@@ -649,6 +677,11 @@ export default function POS() {
   // de más. El mínimo de 1 se corrige hasta que se sale del campo, ver `commitQtyInput`.
   function handleQtyInputChange(productId, raw) {
     const digits = raw.replace(/\D/g, '')
+    // El aviso del límite de promociones va fuera de setCart (ver updateDiscountValue).
+    const current = cart.find((i) => i.productId === productId)
+    if (current && digits !== '' && Number(digits) * qtyStep(current) > maxQtyFor(current)) {
+      notify(promoLimitMessage(current.productName, activeOfferFor(productId)), 'error')
+    }
     setCart((prev) => prev.map((i) => {
       if (i.productId !== productId) return i
       if (digits === '') return { ...i, quantity: '' }
@@ -656,7 +689,7 @@ export default function POS() {
       // no — ver `displayQty`); se guarda convertido a piezas físicas, que es lo único
       // que entiende el resto del carrito y lo que se manda al backend.
       const step = qtyStep(i)
-      let qty = Number(digits) * step
+      let qty = Math.min(Number(digits) * step, maxQtyFor(i))
       if (!i.isMadeToOrder && !i.onOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
@@ -670,6 +703,7 @@ export default function POS() {
       const step = qtyStep(i)
       let qty = Number(i.quantity) || 0
       if (qty < step) qty = step
+      if (qty > maxQtyFor(i)) qty = maxQtyFor(i)
       if (!i.isMadeToOrder && !i.onOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
@@ -1503,7 +1537,14 @@ export default function POS() {
                         </label>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{fmt(item.unitPrice)}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {breakdown && breakdown.price !== Number(item.unitPrice) ? (
+                        <>
+                          <span className="text-purple-700 font-medium">{fmt(breakdown.price)}</span>
+                          <span className="block text-xs text-gray-400 line-through">{fmt(item.unitPrice)}</span>
+                        </>
+                      ) : fmt(item.unitPrice)}
+                    </td>
                     <td className="px-4 py-3 text-gray-400">{item.isConcept ? '—' : item.isMadeToOrder ? <span className="italic text-xs">Por pedido</span> : item.stock}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -1526,7 +1567,8 @@ export default function POS() {
                           title={offer ? `Cada promoción son ${offer.buyQuantity} piezas` : undefined}
                         />
                         <button className="w-6 h-6 rounded border text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed select-none touch-manipulation"
-                          disabled={!item.isMadeToOrder && item.stock != null && item.quantity + qtyStep(item) > item.stock}
+                          disabled={(!item.isMadeToOrder && item.stock != null && item.quantity + qtyStep(item) > item.stock) || item.quantity + qtyStep(item) > maxQtyFor(item)}
+                          title={item.quantity + qtyStep(item) > maxQtyFor(item) ? `Máximo ${offer?.maxPromosPerSale} promoción(es) por venta` : undefined}
                           onMouseDown={() => startQtyHold(item.productId, 1)}
                           onMouseUp={() => endQtyHold(item.productId, 1)}
                           onMouseLeave={clearQtyHold}

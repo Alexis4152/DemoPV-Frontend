@@ -131,6 +131,24 @@ function OnOrderDeductList({ items, selected, onChange, hint, online }) {
 const STATUS_VALUES = Object.keys(STATUS_LABELS)
 
 /**
+ * Lo sobre pedido que alcanza a salir del inventario: viene marcado por omisión en Entregar y
+ * en Cobrar, para que no se olvide descontarlo (para no descontar, se desmarca). Si varios
+ * renglones son del mismo producto, el stock se va repartiendo entre ellos.
+ */
+function deductableOnOrder(items) {
+  const left = {}
+  return items.filter((i) => {
+    if (!i.onOrder || !i.product) return false
+    const id = i.product.id
+    if (left[id] == null) left[id] = Number(i.product.stock ?? 0)
+    const qty = Number(i.quantity)
+    if (left[id] < qty) return false
+    left[id] -= qty
+    return true
+  }).map((i) => i.id)
+}
+
+/**
  * Página "Apartados": gestión de las reservas solicitadas desde la tienda pública
  * (`/apartar/{slug}`, ver `PublicApartar.jsx`). Cubre las tres acciones del ciclo de vida
  * que le tocan al cajero/admin (el resto — solicitar y vencer — los hacen el cliente
@@ -372,7 +390,7 @@ export default function Apartados() {
 
   function openComplete(apartado) {
     setCompleteModal(apartado)
-    setDeductItemIds([])
+    setDeductItemIds(deductableOnOrder(apartado.items ?? []))
     setPaymentMethod('CASH')
     setAmountReceived('')
     setChargeMode('full')
@@ -443,7 +461,7 @@ export default function Apartados() {
 
   function openDeliver(apartado) {
     setDeliverModal(apartado)
-    setDeliverIds([])
+    setDeliverIds(deductableOnOrder((apartado.items ?? []).filter((i) => !i.deliveredAt)))
     // Por omisión se entrega todo lo que falta; se puede desmarcar lo que se lleva otro día.
     setDeliverNow((apartado.items ?? []).filter((i) => !i.deliveredAt).map((i) => i.id))
   }
@@ -1014,7 +1032,7 @@ export default function Apartados() {
               {!isInstallment && (
                 <OnOrderDeductList items={completeModal.items} selected={deductItemIds} onChange={setDeductItemIds}
                   online={completeModal.origin !== 'DEPOSIT'}
-                  hint="Lo sobre pedido que no marques se entrega sin tocar el inventario." />
+                  hint="Viene marcado lo que alcanza a descontarse; lo que desmarques se entrega sin tocar el inventario." />
               )}
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" className="btn-secondary" onClick={() => setCompleteModal(null)}>Cancelar</button>
@@ -1087,7 +1105,7 @@ export default function Apartados() {
                 )
               })}
             </div>
-            <p className="text-xs text-gray-500 mt-2">Lo sobre pedido que no descuentes se entrega sin tocar el inventario.</p>
+            <p className="text-xs text-gray-500 mt-2">Viene marcado descontar lo sobre pedido que tiene piezas; lo que desmarques se entrega sin tocar el inventario.</p>
             <div className="flex gap-2 justify-end pt-4">
               <button type="button" className="btn-secondary" disabled={delivering} onClick={() => setDeliverModal(null)}>Cancelar</button>
               <button type="button" className="btn-primary disabled:opacity-40" disabled={delivering || deliverNow.length === 0} onClick={handleDeliver}>

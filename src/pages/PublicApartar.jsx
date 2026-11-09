@@ -845,9 +845,7 @@ export default function PublicApartar() {
                   <p>
                     Pagado a cuenta: <strong>{fmt(lookupResult.depositAmount)}</strong> · Saldo por pagar: <strong>{fmt(Number(lookupResult.total) - Number(lookupResult.depositAmount))}</strong>
                   </p>
-                  <p className="mt-1">Este apartado tiene un anticipo pagado: para modificarlo o cancelarlo comunícate con la tienda. {lookupResult.retentionPercent != null
-                    ? `Si cancelas por cambio de opinión, la tienda retiene el ${Number(lookupResult.retentionPercent)} % del total (${fmt(Number(lookupResult.total) * Number(lookupResult.retentionPercent) / 100)}) y te devuelve el resto. Producto defectuoso: se devuelve todo.`
-                    : 'Lo pagado a cuenta (anticipo y abonos) no es reembolsable.'}</p>
+                  <p className="mt-1">Este apartado tiene un anticipo pagado: para modificarlo o cancelarlo comunícate con la tienda.{lookupResult.retentionPercent == null && ' Lo pagado a cuenta (anticipo y abonos) no es reembolsable.'}</p>
                 </div>
               )}
               {!(lookupResult.depositAmount > 0) && (lookupResult.status === 'PENDING' || lookupResult.status === 'ACTIVE') && (

@@ -38,8 +38,8 @@ export default function ApartadoItems({ apartado }) {
               <tr key={i.id}>
                 <td className="px-3 py-2 font-medium text-gray-800 [overflow-wrap:anywhere]">
                   {i.productName}
-                  {i.product?.isMadeToOrder && <span className="ml-1 italic font-normal text-gray-400">· por pedido</span>}
-                  {i.onOrder && <span className="ml-1 italic font-normal text-gray-400">· sobre pedido</span>}
+                  {i.product?.isMadeToOrder && <span className="ml-1 italic font-normal text-gray-400">· por pedido, no maneja inventario</span>}
+                  {i.onOrder && <span className="ml-1 italic font-normal text-gray-400">· sobre pedido, sin descontar del inventario</span>}
                 </td>
                 <td className="px-3 py-2 text-right">{Number(i.quantity)}</td>
                 <td className="px-3 py-2 text-right">{fmt(i.unitPrice)}</td>

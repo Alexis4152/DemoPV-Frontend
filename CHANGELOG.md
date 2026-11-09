@@ -2,10 +2,25 @@
 
 Cambios del portal. Los del servidor están en el `CHANGELOG.md` de DemoPV-Backend.
 Los números entre paréntesis son las secciones de la matriz `Pruebas aprobacion DemoPV (version 4).xlsx`.
+Cada versión lleva su fecha; la más reciente va primero.
 
-## [Sin liberar] — 2026-11-07
+## [2.0.5] — 2026-11-09
 
-Cambios posteriores al commit `e31e483` (2026-10-28). Todavía no tienen commit.
+Sin commit todavía.
+
+### Cambios
+
+- **Descontar viene marcado:** en Entregar y en Cobrar, lo sobre pedido con piezas suficientes trae marcada la casilla de descontar del inventario (para no descontar, se desmarca). En Ver productos las leyendas dicen "sobre pedido, sin descontar del inventario" y "por pedido, no maneja inventario", igual que en Movimientos.
+- **Precio en oferta por producto:** en Ofertas, cada producto elegido tiene su campo "Precio oferta" (obligatorio) y muestra su precio oficial. En el POS la columna Precio muestra el de la oferta con el oficial tachado, y no deja pasar del límite de promociones por venta (avisa y el botón + se bloquea). El precio en oferta tiene que ser menor al precio oficial (ni igual ni mayor).
+- **Sin leyenda de retención:** la tienda en línea ya no dice cuánto se retiene si el cliente cancela un apartado con anticipo.
+
+### Despliegue
+
+- Publicar junto con el backend 2.0.5: Ofertas usa el campo nuevo `productPrices`.
+
+## [2.0.0] — 2026-11-09
+
+Commit `c07f47f`. Cambios del 2026-10-28 (commit `e31e483`) al 2026-11-09.
 
 **Estado de validación:** de 312 casos en la matriz, 212 están OK, 99 pendientes, 1 no aplica y ninguno en falla. La sección 32 ya está validada; 34 y 35 van a medias, y 33, 36, 37, 38 y 39 aún no se validan en pantalla.
 

@@ -9,6 +9,14 @@ import { PencilIcon, ArchiveIcon, CheckCircleIcon } from '../components/icons'
 
 // Campos de piezas: texto sin flechitas, pero solo aceptan dígitos (enteros).
 const onlyDigits = (v) => v.replace(/\D/g, '')
+// Precio: solo dígitos y un punto decimal (los decimales de más los marca la validación).
+const onlyMoney = (v) => {
+  const clean = v.replace(/[^\d.]/g, '')
+  const dot = clean.indexOf('.')
+  return dot === -1 ? clean : clean.slice(0, dot + 1) + clean.slice(dot + 1).replace(/\./g, '')
+}
+const MAX_MONEY = 9999999999.99
+const fmtMoney = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n ?? 0)
 const fmtDate = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 // `datetime-local` necesita "YYYY-MM-DDTHH:mm", sin segundos ni zona — y al revés al enviar.
 const toLocalInput = (iso) => iso ? iso.slice(0, 16) : ''
@@ -22,6 +30,8 @@ const nowLocalInput = () => {
 const emptyForm = {
   name: '', buyQuantity: '2', payQuantity: '1', maxPromosPerSale: '',
   startsAt: '', endsAt: '', productIds: [],
+  // Precio en oferta por producto (id -> texto capturado). Obligatorio para cada elegido.
+  productPrices: {},
 }
 const EMPTY_FILTERS = { from: '', to: '', name: '', isActive: '' }
 const PAGE_SIZES = [10, 20, 50, 100]
@@ -111,11 +121,30 @@ export default function Offers() {
       startsAt: toLocalInput(o.startsAt),
       endsAt: toLocalInput(o.endsAt),
       productIds: (o.products ?? []).map((p) => p.id),
+      productPrices: Object.fromEntries(Object.entries(o.productPrices ?? {}).map(([id, price]) => [id, String(Number(price))])),
     })
     setProductFilter('')
     setFieldErrors({})
     getProducts().then((r) => setProducts(r.data.data ?? []))
     setShowModal(true)
+  }
+
+  function setProductPrice(id, raw) {
+    setForm((prev) => ({ ...prev, productPrices: { ...prev.productPrices, [id]: onlyMoney(raw) } }))
+  }
+
+  /** Error del precio en oferta de un producto elegido, o null si está bien. */
+  function priceError(id) {
+    const raw = form.productPrices[id] ?? ''
+    if (raw === '') return 'Escribe el precio en oferta'
+    const n = Number(raw)
+    if (Number.isNaN(n) || n <= 0) return 'Debe ser mayor a 0'
+    if ((raw.split('.')[1] ?? '').length > 2) return 'Máximo 2 decimales'
+    if (n > MAX_MONEY) return 'El máximo permitido es 9,999,999,999.99'
+    // Tiene que ser menor al precio oficial (ni igual); el back lo vuelve a validar.
+    const official = products.find((p) => p.id === id)?.price
+    if (official != null && n >= Number(official)) return `Menor a ${fmtMoney(official)} (precio oficial)`
+    return null
   }
 
   function toggleProduct(id) {
@@ -157,6 +186,7 @@ export default function Offers() {
     if (form.endsAt && form.endsAt < nowLocalInput()) errors.endsAt = 'No puede ser anterior a la fecha y hora actual'
     else if (form.startsAt && form.endsAt && form.endsAt <= form.startsAt) errors.endsAt = 'Debe terminar después de que empieza'
     if (form.productIds.length === 0) errors.productIds = 'Elige al menos un producto'
+    else if (form.productIds.some((id) => priceError(id))) errors.productPrices = 'Escribe un precio en oferta válido para cada producto elegido'
     return errors
   }
 
@@ -182,6 +212,7 @@ export default function Offers() {
       startsAt: toIso(form.startsAt),
       endsAt: toIso(form.endsAt),
       productIds: form.productIds,
+      productPrices: Object.fromEntries(form.productIds.map((id) => [id, Number(form.productPrices[id])])),
     }
     try {
       if (editOffer) await updateOffer(editOffer.id, payload)
@@ -399,12 +430,29 @@ export default function Offers() {
                   value={productFilter}
                   onChange={(e) => setProductFilter(e.target.value)}
                 />
-                <div className="border border-gray-200 rounded-lg max-h-40 overflow-y-auto divide-y divide-gray-50">
+                <div className="border border-gray-200 rounded-lg max-h-60 overflow-y-auto divide-y divide-gray-50">
                   {visibleProducts.map((p) => (
-                    <label key={p.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-gray-50">
-                      <input type="checkbox" checked={form.productIds.includes(p.id)} onChange={() => toggleProduct(p.id)} />
-                      <span className="flex-1">{p.name}</span>
-                    </label>
+                    <div key={p.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50">
+                      <label className="flex flex-1 min-w-0 items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={form.productIds.includes(p.id)} onChange={() => toggleProduct(p.id)} />
+                        <span className="flex-1 min-w-0 [overflow-wrap:anywhere]">
+                          {p.name}
+                          <span className="block text-xs text-gray-400">Precio oficial {fmtMoney(p.price)}</span>
+                        </span>
+                      </label>
+                      {form.productIds.includes(p.id) && (
+                        <div className="w-28 shrink-0">
+                          <input
+                            type="text" inputMode="decimal" placeholder="Precio oferta"
+                            aria-label={`Precio en oferta de ${p.name}`}
+                            className={`input py-1 text-right ${fieldErrors.productPrices && priceError(p.id) ? '!border-red-400' : ''}`}
+                            value={form.productPrices[p.id] ?? ''}
+                            onChange={(e) => setProductPrice(p.id, e.target.value)}
+                          />
+                          {fieldErrors.productPrices && priceError(p.id) && <p className="text-red-600 text-[11px] mt-0.5 text-right">{priceError(p.id)}</p>}
+                        </div>
+                      )}
+                    </div>
                   ))}
                   {visibleProducts.length === 0 && (
                     <p className="px-3 py-4 text-center text-xs text-gray-400">Sin productos que coincidan</p>
@@ -412,6 +460,8 @@ export default function Offers() {
                 </div>
                 <p className="text-xs text-gray-400 mt-1">{form.productIds.length} producto(s) elegido(s)</p>
                 {fieldErrors.productIds && <p className="text-red-600 text-xs mt-1">{fieldErrors.productIds}</p>}
+                {fieldErrors.productPrices && <p className="text-red-600 text-xs mt-1">{fieldErrors.productPrices}</p>}
+                <p className="text-xs text-gray-400 mt-1">Las piezas que se pagan de cada promoción se cobran al precio en oferta; el precio oficial del producto no cambia.</p>
               </div>
 
               <div className="flex gap-2 justify-end pt-2">
