@@ -141,9 +141,9 @@ export default function Offers() {
     if (Number.isNaN(n) || n <= 0) return 'Debe ser mayor a 0'
     if ((raw.split('.')[1] ?? '').length > 2) return 'Máximo 2 decimales'
     if (n > MAX_MONEY) return 'El máximo permitido es 9,999,999,999.99'
-    // Tiene que ser menor al precio oficial (ni igual); el back lo vuelve a validar.
+    // Igual o mayor al precio oficial, nunca menor; el back lo vuelve a validar.
     const official = products.find((p) => p.id === id)?.price
-    if (official != null && n >= Number(official)) return `Menor a ${fmtMoney(official)} (precio oficial)`
+    if (official != null && n < Number(official)) return `Mínimo ${fmtMoney(official)} (precio oficial)`
     return null
   }
 
