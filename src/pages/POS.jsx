@@ -360,6 +360,10 @@ export default function POS() {
       reject(promoLimitMessage(product.name, offer))
       return
     }
+    if (existingBefore && existingBefore.quantity + (existingBefore.skipOffer ? 1 : step) > hardMaxQty(existingBefore)) {
+      reject(hardMaxMessage(existingBefore))
+      return
+    }
     if (!madeToOrder && !canOrder && existingBefore && existingBefore.quantity + step > product.stock) {
       reject(`Ya no hay más "${product.name}": ya tienes en la venta todo lo disponible (${product.stock})`)
       return
@@ -440,6 +444,25 @@ export default function POS() {
     if (item.skipOffer) return Infinity
     const offer = activeOfferFor(item.productId)
     return offer?.maxPromosPerSale != null ? offer.maxPromosPerSale * offer.buyQuantity : Infinity
+  }
+
+  /**
+   * Tope absoluto de piezas de una línea, para todos los productos (sobre todo "por
+   * pedido", que no tiene stock que lo limite): nunca más de CONCEPT_QTY_MAX (lo que acepta
+   * sale_items.quantity, ver SaleItemRequest) y el importe de la línea nunca más de
+   * MAX_MONEY — el mismo tope que el cobro. Redondeado hacia abajo al paso de la línea
+   * para no partir una promoción.
+   */
+  function hardMaxQty(item) {
+    const step = qtyStep(item)
+    const price = Number(item.unitPrice) || 0
+    let max = CONCEPT_QTY_MAX
+    if (price > 0) max = Math.min(max, Math.floor(MAX_MONEY / price))
+    return Math.max(step, Math.floor(max / step) * step)
+  }
+
+  function hardMaxMessage(item) {
+    return `La cantidad máxima de "${item.productName}" es ${hardMaxQty(item).toLocaleString('es-MX')} piezas`
   }
 
   function promoLimitMessage(name, offer) {
@@ -675,6 +698,7 @@ export default function POS() {
       let qty = Number(i.quantity || 0) + delta * step
       if (qty < step) qty = step
       if (qty > maxQtyFor(i)) qty = maxQtyFor(i)
+      if (qty > hardMaxQty(i)) qty = hardMaxQty(i)
       // Topa al stock disponible sin partir una promoción a la mitad: redondea hacia
       // abajo al múltiplo de `step` más cercano (si hay oferta, el stock siempre alcanza
       // para al menos una promoción completa — ver el guard en `addToCart`). Sin tope si
@@ -697,6 +721,8 @@ export default function POS() {
     const current = cart.find((i) => i.productId === productId)
     if (current && digits !== '' && Number(digits) * qtyStep(current) > maxQtyFor(current)) {
       notify(promoLimitMessage(current.productName, activeOfferFor(productId)), 'error')
+    } else if (current && digits !== '' && Number(digits) * qtyStep(current) > hardMaxQty(current)) {
+      notify(hardMaxMessage(current), 'error')
     }
     setCart((prev) => prev.map((i) => {
       if (i.productId !== productId) return i
@@ -705,7 +731,7 @@ export default function POS() {
       // no — ver `displayQty`); se guarda convertido a piezas físicas, que es lo único
       // que entiende el resto del carrito y lo que se manda al backend.
       const step = qtyStep(i)
-      let qty = Math.min(Number(digits) * step, maxQtyFor(i))
+      let qty = Math.min(Number(digits) * step, maxQtyFor(i), hardMaxQty(i))
       if (!i.isMadeToOrder && !i.onOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
@@ -720,6 +746,7 @@ export default function POS() {
       let qty = Number(i.quantity) || 0
       if (qty < step) qty = step
       if (qty > maxQtyFor(i)) qty = maxQtyFor(i)
+      if (qty > hardMaxQty(i)) qty = hardMaxQty(i)
       if (!i.isMadeToOrder && !i.onOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
@@ -1656,8 +1683,9 @@ export default function POS() {
                           title={offer ? `Cada promoción son ${offer.buyQuantity} piezas` : undefined}
                         />
                         <button className="w-6 h-6 rounded border text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed select-none touch-manipulation"
-                          disabled={(!item.isMadeToOrder && item.stock != null && item.quantity + qtyStep(item) > item.stock) || item.quantity + qtyStep(item) > maxQtyFor(item)}
-                          title={item.quantity + qtyStep(item) > maxQtyFor(item) ? `Máximo ${offer?.maxPromosPerSale} promoción(es) por venta` : undefined}
+                          disabled={(!item.isMadeToOrder && item.stock != null && item.quantity + qtyStep(item) > item.stock) || item.quantity + qtyStep(item) > maxQtyFor(item) || item.quantity + qtyStep(item) > hardMaxQty(item)}
+                          title={item.quantity + qtyStep(item) > maxQtyFor(item) ? `Máximo ${offer?.maxPromosPerSale} promoción(es) por venta`
+                            : item.quantity + qtyStep(item) > hardMaxQty(item) ? `Máximo ${hardMaxQty(item).toLocaleString('es-MX')} piezas` : undefined}
                           onMouseDown={() => startQtyHold(item.productId, 1)}
                           onMouseUp={() => endQtyHold(item.productId, 1)}
                           onMouseLeave={clearQtyHold}
