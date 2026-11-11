@@ -898,7 +898,15 @@ export default function POS() {
     if (sumBills) {
       return [20, 50, 100, 200, 500, 1000].map((v) => ({
         key: `+${v}`, label: `+ $${v.toLocaleString('es-MX')}`, selected: false,
-        pick: () => setAmountReceived((prev) => String(Math.round(((Number(prev) || 0) + v) * 100) / 100)),
+        // Suma sobre lo ya recibido; si lo que hay escrito no es un número válido (o ya
+        // rebasa el tope) se empieza desde este billete. Nunca pasa de MAX_MONEY.
+        pick: () => {
+          const base = amountReceivedNum != null && Number.isFinite(amountReceivedNum) && amountReceivedNum >= 0 && amountReceivedNum <= MAX_MONEY
+            ? amountReceivedNum : 0
+          const next = Math.round((base + v) * 100) / 100
+          if (next > MAX_MONEY) { notify('El monto recibido ya es demasiado grande', 'error'); return }
+          setAmountReceived(String(next))
+        },
       }))
     }
     if (!(roundedTotal > 0)) return []
@@ -1514,14 +1522,36 @@ export default function POS() {
           <div className="card text-center text-gray-400 py-16">
             <p className="text-3xl mb-2">🛒</p>
             <p>Busca productos para agregar al carrito</p>
+            {/* Con el carrito vacío, "Por concepto" sigue a la mano (Anticipo no: necesita productos). */}
+            <button
+              type="button"
+              className="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!cashCut}
+              title={!cashCut ? 'Abre un corte de caja para poder cobrar' : 'Para algo que vendes pero no está en tu inventario, ej. 2 jitomates'}
+              onClick={openConceptModal}
+            >📋 Por concepto</button>
           </div>
         ) : (
           <div className="card p-0 overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 bg-gray-50">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 bg-gray-50">
               <span className="text-xs text-gray-500">
                 {selectedIds.size > 0 ? `${selectedIds.size} seleccionado${selectedIds.size === 1 ? '' : 's'}` : `${cart.length} producto${cart.length === 1 ? '' : 's'}`}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  disabled={!cashCut}
+                  title={!cashCut ? 'Abre un corte de caja para poder cobrar' : 'Para algo que vendes pero no está en tu inventario, ej. 2 jitomates'}
+                  onClick={openConceptModal}
+                >📋 Por concepto</button>
+                {canDeposit && <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  disabled={!cashCut}
+                  title={!cashCut ? 'Abre un corte de caja para poder cobrar' : undefined}
+                  onClick={openDepositModal}
+                >💰 Anticipo</button>}
                 {selectedIds.size > 0 && (
                   <button
                     className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-600 text-white hover:bg-purple-700 transition-colors"
@@ -1749,9 +1779,9 @@ export default function POS() {
                   ))}
                 </div>
                 {sumBills && amountReceived !== '' && (
-                  <div className="flex justify-between items-center text-sm text-gray-600 mt-2">
-                    <span>Recibido: <strong className="text-gray-900">{fmt(amountReceivedNum)}</strong></span>
-                    <button type="button" className="text-purple-700 font-semibold px-1" onClick={() => setAmountReceived('')}>Limpiar</button>
+                  <div className="flex justify-between items-start gap-2 text-sm text-gray-600 mt-2">
+                    <span className="min-w-0 break-all">Recibido: <strong className="text-gray-900">{amountExceedsLimit ? '—' : fmt(amountReceivedNum)}</strong></span>
+                    <button type="button" className="shrink-0 text-purple-700 font-semibold px-1" onClick={() => setAmountReceived('')}>Limpiar</button>
                   </div>
                 )}
                 <label className="text-xs font-medium text-gray-500 block mt-2">Otro monto</label>
@@ -1802,23 +1832,6 @@ export default function POS() {
               : (customerNameTooLong || customerEmailTooLong) ? 'Revisa los campos marcados en rojo'
               : `Cobrar ${fmt(subtotal)}`}
           </button>
-
-          <div className={`grid gap-2 mt-3 ${canDeposit ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            <button
-              type="button"
-              className="py-2 rounded-lg text-sm font-semibold border-2 border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={!cashCut}
-              title={!cashCut ? 'Abre un corte de caja para poder cobrar' : 'Para algo que vendes pero no está en tu inventario, ej. 2 jitomates'}
-              onClick={openConceptModal}
-            >📋 Por concepto</button>
-            {canDeposit && <button
-              type="button"
-              className="py-2 rounded-lg text-sm font-semibold border-2 border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={cart.length === 0 || !cashCut}
-              title={cart.length === 0 ? 'Agrega primero lo que el cliente va a encargar' : !cashCut ? 'Abre un corte de caja para poder cobrar' : undefined}
-              onClick={openDepositModal}
-            >💰 Anticipo</button>}
-          </div>
 
           <div className="border-t border-gray-100 mt-4 pt-2">
             <button
