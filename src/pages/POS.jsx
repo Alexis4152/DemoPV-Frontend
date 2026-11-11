@@ -23,6 +23,22 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 // Montos del anticipo: mismo tope que ApartadoDepositRequest (NUMERIC(12,2)).
 const MONEY_RE = /^\d+(\.\d{1,2})?$/
 const MAX_MONEY = 9999999999.99
+
+/**
+ * Montos sugeridos para "¿Con cuánto paga?" (venta y anticipo): el total redondeado hacia
+ * arriba a 10, 50, 100, 500 y 1000, sin repetidos y siempre mayores al total — p. ej. $137
+ * → 140, 150, 200, 500, 1000. "Exacto" se agrega aparte.
+ */
+function suggestCashValues(total) {
+  if (!(total > 0)) return []
+  const values = new Set()
+  for (const step of [10, 50, 100, 500, 1000]) {
+    let v = Math.ceil(total / step) * step
+    if (v <= total) v += step
+    values.add(v)
+  }
+  return [...values].sort((a, b) => a - b).slice(0, 5)
+}
 // Línea "por concepto": topes alineados a SaleItemRequest / sale_items. El nombre deja
 // margen bajo los 200 de la BD para el " (350 g)" que se le agrega si se vende por peso.
 const CONCEPT_NAME_MAX = 150
@@ -101,6 +117,8 @@ export default function POS() {
   })
   const [depositLoading, setDepositLoading] = useState(false)
   const [depositFieldErrors, setDepositFieldErrors] = useState({})
+  // Ticket, correo y notas del anticipo van plegados en "Más opciones" (igual que en Resumen).
+  const [showDepositMore, setShowDepositMore] = useState(false)
 
   // Modal "Agregar por concepto" (ver handleAddConcept más abajo): para algo que se
   // vende pero nunca está en el catálogo/inventario (ej. "2 jitomates"). Solo captura
@@ -903,6 +921,41 @@ export default function POS() {
     && !Number.isNaN(depositReceivedNum) && !Number.isNaN(depositAmountNum)
     ? depositReceivedNum - depositAmountNum
     : null
+  // Montos rápidos del anticipo: Mínimo (el % no reembolsable de la tienda), Mitad y Pago
+  // completo. Cada uno aparece solo si es válido con las mismas reglas que valida
+  // `handleRegisterDeposit` (y el backend): la mitad no sale si queda bajo el mínimo, y el
+  // pago completo solo si se puede partir en anticipo + saldo (`depositCanPayFull`).
+  const depositHalf = Math.round(subtotal * 50) / 100
+  const depositQuickAmounts = [
+    depositMin != null && depositMin > 0 && depositMin < subtotal
+      && { key: 'min', label: `Mínimo ${depositMinPercent} %`, value: depositMin },
+    depositHalf > 0 && depositHalf < subtotal && (depositMin == null || depositHalf > depositMin)
+      && { key: 'half', label: 'Mitad', value: depositHalf },
+    depositCanPayFull && { key: 'full', label: 'Pago completo', value: subtotal },
+  ].filter(Boolean).map((a) => ({ ...a, selected: depositAmountNum === a.value }))
+  function pickDepositAmount(value) {
+    setDepositForm((prev) => ({ ...prev, depositAmount: String(value), amountReceived: '' }))
+    setDepositFieldErrors(({ depositAmount, amountReceived, ...rest }) => rest)
+  }
+  function pickDepositReceived(value) {
+    setDepositForm((prev) => ({ ...prev, amountReceived: String(value) }))
+    setDepositFieldErrors(({ amountReceived, ...rest }) => rest)
+  }
+  // Billetes para el anticipo en efectivo, calculados sobre lo que se cobra hoy (el
+  // anticipo elegido; con pago completo, el total — ver ApartadoService#createWithDeposit).
+  const depositCashTarget = depositAmountNum != null && depositAmountNum > 0 && depositAmountNum <= MAX_MONEY
+    ? Math.round(depositAmountNum * 100) / 100 : null
+  const depositBills = depositCashTarget == null ? [] : [
+    { key: 'exact', label: 'Exacto', value: depositCashTarget, exact: true },
+    ...suggestCashValues(depositCashTarget).map((v) => ({ key: String(v), label: `$${v.toLocaleString('es-MX')}`, value: v })),
+  ].map((b) => ({ ...b, selected: depositReceivedNum === b.value }))
+  const depositMoreHasError = !!(depositFieldErrors.customerEmail || depositFieldErrors.notes)
+  const depositMoreOpen = showDepositMore || depositMoreHasError
+  const depositMoreSummary = [
+    depositForm.ticketType === 'digital' ? 'Ticket digital' : 'Ticket físico',
+    depositForm.customerEmail.trim() ? 'con correo' : 'sin correo',
+    depositForm.notes.trim() ? 'con notas' : 'sin notas',
+  ].join(' · ')
   // Nombre y correo del cliente son SIEMPRE opcionales (se puede vender sin capturar
   // ninguno de los dos) — estos chequeos solo importan cuando sí se escribió algo. Máximos
   // alineados a sales.customer_name/customer_email VARCHAR(150) en el backend (SaleRequest).
@@ -937,13 +990,7 @@ export default function POS() {
       }))
     }
     if (!(roundedTotal > 0)) return []
-    const values = new Set()
-    for (const step of [10, 50, 100, 500, 1000]) {
-      let v = Math.ceil(roundedTotal / step) * step
-      if (v <= roundedTotal) v += step
-      values.add(v)
-    }
-    const suggested = [...values].sort((a, b) => a - b).slice(0, 5)
+    const suggested = suggestCashValues(roundedTotal)
     return [
       { key: 'exact', label: 'Exacto', value: roundedTotal, exact: true },
       ...suggested.map((v) => ({ key: String(v), label: `$${v.toLocaleString('es-MX')}`, value: v })),
@@ -2009,39 +2056,32 @@ export default function POS() {
           <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
             <ModalCloseButton onClick={() => setShowDepositModal(false)} />
             <h3 className="text-lg font-bold mb-1 pr-8">Registrar anticipo</h3>
-            <p className="text-xs text-gray-500 mb-4">
-              El cliente deja un anticipo de lo que trae en el carrito ({fmt(subtotal)} en total) — se registra como un apartado activo y una venta aparte solo por el anticipo.
+            <p className="text-xs text-gray-500 mb-3">
+              Se registra como un apartado activo y una venta aparte solo por el anticipo.
             </p>
+            <div className="flex justify-between items-baseline rounded-xl bg-purple-50 px-4 py-3 mb-4">
+              <span className="text-sm font-bold text-purple-900">Total del pedido</span>
+              <span className="text-2xl font-extrabold text-purple-700 break-all">{fmt(subtotal)}</span>
+            </div>
             <div className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-gray-600">Nombre del cliente <span className={depositFieldErrors.customerName ? 'text-red-600' : ''}>*</span></label>
-                <input className="input" value={depositForm.customerName} onChange={(e) => setDepositForm({ ...depositForm, customerName: e.target.value })} />
-                {depositFieldErrors.customerName && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerName}</p>}
-              </div>
-              <div>
-                <label className="text-xs font-medium text-gray-600">Teléfono <span className={depositFieldErrors.customerPhone ? 'text-red-600' : ''}>*</span></label>
-                <input className="input" inputMode="numeric" placeholder="10 dígitos" value={depositForm.customerPhone}
-                  onChange={(e) => setDepositForm({ ...depositForm, customerPhone: e.target.value.replace(/\D/g, '').slice(0, 10) })} />
-                {depositFieldErrors.customerPhone && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerPhone}</p>}
-              </div>
-              <div>
-                <label className="text-xs font-medium text-gray-600">Ticket</label>
-                <div className="grid grid-cols-2 gap-2 mt-1">
-                  {[['physical', '🖨️ Físico'], ['digital', '📧 Digital']].map(([value, label]) => (
-                    <button key={value} type="button"
-                      className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
-                        depositForm.ticketType === value ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                      onClick={() => setDepositForm({ ...depositForm, ticketType: value })}
-                    >{label}</button>
-                  ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Nombre del cliente <span className={depositFieldErrors.customerName ? 'text-red-600' : ''}>*</span></label>
+                  <input className="input" value={depositForm.customerName} onChange={(e) => setDepositForm({ ...depositForm, customerName: e.target.value })} />
+                  {depositFieldErrors.customerName && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerName}</p>}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Teléfono <span className={depositFieldErrors.customerPhone ? 'text-red-600' : ''}>*</span></label>
+                  <input className="input" inputMode="numeric" placeholder="10 dígitos" value={depositForm.customerPhone}
+                    onChange={(e) => setDepositForm({ ...depositForm, customerPhone: e.target.value.replace(/\D/g, '').slice(0, 10) })} />
+                  {depositFieldErrors.customerPhone && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerPhone}</p>}
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium text-gray-600">
-                  {depositForm.ticketType === 'digital' ? 'Correo para enviar el ticket (opcional)' : 'Correo (opcional)'}
-                </label>
-                <input className="input" value={depositForm.customerEmail} onChange={(e) => setDepositForm({ ...depositForm, customerEmail: e.target.value })} />
-                {depositFieldErrors.customerEmail && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerEmail}</p>}
+                <label className="text-xs font-medium text-gray-600">Fecha de entrega <span className={depositFieldErrors.deliveryDate ? 'text-red-600' : ''}>*</span></label>
+                <input className="input" type="date" value={depositForm.deliveryDate}
+                  onChange={(e) => setDepositForm({ ...depositForm, deliveryDate: e.target.value })} />
+                {depositFieldErrors.deliveryDate && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.deliveryDate}</p>}
               </div>
               {(depositStockLines.length > 0 || depositMadeToOrderLines.length > 0) && (
                 <div>
@@ -2076,53 +2116,85 @@ export default function POS() {
                   )}
                 </div>
               )}
-              <div>
-                <label className="text-xs font-medium text-gray-600">Notas (opcional)</label>
-                <textarea className="input" rows={2} value={depositForm.notes} onChange={(e) => setDepositForm({ ...depositForm, notes: e.target.value })} />
-                <p className={`text-xs text-right ${depositForm.notes.length > 200 ? 'text-red-600' : 'text-gray-400'}`}>{depositForm.notes.length}/200</p>
-                {depositFieldErrors.notes && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.notes}</p>}
+              <div className="border-t border-gray-100 pt-3">
+                <p className="text-xs font-medium text-gray-600">¿Cuánto deja de anticipo? <span className={depositFieldErrors.depositAmount ? 'text-red-600' : ''}>*</span></p>
+                {depositQuickAmounts.length > 0 && (
+                  <div className={`grid gap-2 mt-1 ${depositQuickAmounts.length === 3 ? 'grid-cols-3' : depositQuickAmounts.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                    {depositQuickAmounts.map((a) => (
+                      <button
+                        key={a.key}
+                        type="button"
+                        aria-pressed={a.selected}
+                        className={`py-2 px-1 rounded-lg border-2 transition-colors min-w-0 ${
+                          a.selected ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-800 border-gray-200 hover:bg-gray-50'}`}
+                        onClick={() => pickDepositAmount(a.value)}
+                      >
+                        <span className="block text-xs font-semibold opacity-90">{a.label}</span>
+                        <span className="block text-sm font-extrabold break-all">{fmt(a.value)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <label className="text-xs font-medium text-gray-500 block mt-2">Otro monto</label>
+                <input className="input mt-1" type="text" inputMode="decimal" placeholder="0.00" value={depositForm.depositAmount}
+                  onChange={(e) => {
+                    setDepositForm({ ...depositForm, depositAmount: onlyMoney(e.target.value) })
+                    setDepositFieldErrors(({ depositAmount, ...rest }) => rest)
+                  }} />
+                {depositFieldErrors.depositAmount && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.depositAmount}</p>}
+                {depositMin != null && !depositFieldErrors.depositAmount && (
+                  <p className="text-xs text-gray-500 mt-1">Mínimo {fmt(depositMin)} ({depositMinPercent} % del total, no reembolsable)</p>
+                )}
+                {depositIsFull && !depositFieldErrors.depositAmount && (
+                  <p className="text-sm text-blue-900 bg-blue-50 rounded-lg p-2 mt-2">
+                    Pago completo: se registra el anticipo de <strong>{fmt(depositFullSplit)}</strong> y el saldo de <strong>{fmt(subtotal - depositFullSplit)}</strong>. El apartado queda pagado y por entregar: la entrega se registra en Apartados cuando el cliente lo recoja.
+                  </p>
+                )}
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium text-gray-600">Anticipo <span className={depositFieldErrors.depositAmount ? 'text-red-600' : ''}>*</span></label>
-                  <input className="input" type="text" inputMode="decimal" value={depositForm.depositAmount}
-                    onChange={(e) => setDepositForm({ ...depositForm, depositAmount: onlyMoney(e.target.value) })} />
-                  {depositFieldErrors.depositAmount && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.depositAmount}</p>}
-                  {depositMin != null && !depositFieldErrors.depositAmount && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      Mínimo {fmt(depositMin)} ({depositMinPercent} % del total, no reembolsable)
-                      {depositCanPayFull && !depositIsFull && ` · Para pagar todo, captura ${fmt(subtotal)}`}
-                    </p>
-                  )}
-                  {depositMin == null && depositCanPayFull && !depositIsFull && !depositFieldErrors.depositAmount && (
-                    <p className="text-xs text-gray-500 mt-1">Para pagar todo, captura {fmt(subtotal)}</p>
-                  )}
-                  {depositIsFull && !depositFieldErrors.depositAmount && (
-                    <p className="text-sm text-blue-900 bg-blue-50 rounded-lg p-2 mt-2">
-                      Pago completo: se registra el anticipo de <strong>{fmt(depositFullSplit)}</strong> y el saldo de <strong>{fmt(subtotal - depositFullSplit)}</strong>. El apartado queda pagado y por entregar: la entrega se registra en Apartados cuando el cliente lo recoja.
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600">Fecha de entrega <span className={depositFieldErrors.deliveryDate ? 'text-red-600' : ''}>*</span></label>
-                  <input className="input" type="date" value={depositForm.deliveryDate}
-                    onChange={(e) => setDepositForm({ ...depositForm, deliveryDate: e.target.value })} />
-                  {depositFieldErrors.deliveryDate && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.deliveryDate}</p>}
-                </div>
-              </div>
               <div>
-                <label className="text-xs font-medium text-gray-600">Método de pago del anticipo</label>
-                <select className="input" value={depositForm.paymentMethod} onChange={(e) => setDepositForm({ ...depositForm, paymentMethod: e.target.value })}>
-                  <option value="CASH">💵 Efectivo</option>
-                  <option value="CARD">💳 Tarjeta</option>
-                  <option value="TRANSFER">🏦 Transferencia</option>
-                </select>
+                <p className="text-xs font-medium text-gray-600">Método de pago</p>
+                <div className="grid grid-cols-3 gap-2 mt-1">
+                  {[['CASH', '💵 Efectivo'], ['CARD', '💳 Tarjeta'], ['TRANSFER', '🏦 Transfer.']].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={depositForm.paymentMethod === value}
+                      className={`py-2.5 rounded-lg text-sm font-semibold border-2 transition-colors ${
+                        depositForm.paymentMethod === value ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                      onClick={() => {
+                        setDepositForm((prev) => ({ ...prev, paymentMethod: value, amountReceived: value === 'CASH' ? prev.amountReceived : '' }))
+                        setDepositFieldErrors(({ amountReceived, ...rest }) => rest)
+                      }}
+                    >{label}</button>
+                  ))}
+                </div>
               </div>
               {depositForm.paymentMethod === 'CASH' && (
                 <div>
-                  <label className="text-xs font-medium text-gray-600">¿Con cuánto paga el cliente? <span className={depositFieldErrors.amountReceived ? 'text-red-600' : ''}>*</span></label>
+                  <p className="text-xs font-medium text-gray-600">
+                    ¿Con cuánto paga el cliente? <span className={depositFieldErrors.amountReceived ? 'text-red-600' : ''}>*</span>
+                    {depositCashTarget != null && <span className="font-normal text-gray-500"> · sobre {fmt(depositCashTarget)}</span>}
+                  </p>
+                  {depositBills.length > 0 ? (
+                    <div className="grid grid-cols-3 gap-2 mt-1">
+                      {depositBills.map((b) => (
+                        <button
+                          key={b.key}
+                          type="button"
+                          className={`py-2.5 rounded-lg text-sm font-bold border-2 transition-colors ${
+                            b.selected ? 'bg-purple-600 text-white border-purple-600'
+                              : b.exact ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100'
+                              : 'bg-white text-gray-800 border-gray-200 hover:bg-gray-50'}`}
+                          onClick={() => pickDepositReceived(b.value)}
+                        >{b.label}</button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500 mt-1">Elige primero cuánto deja de anticipo.</p>
+                  )}
                   {/* Mismo comportamiento en vivo que "¿Con cuánto paga el cliente?" de la venta:
                       tope de monto mientras se escribe y cambio/falta por cobrar al instante. */}
+                  <label className="text-xs font-medium text-gray-500 block mt-2">Otro monto</label>
                   <input className="input mt-1" type="text" inputMode="decimal" placeholder="0.00" value={depositForm.amountReceived}
                     onChange={(e) => {
                       setDepositForm({ ...depositForm, amountReceived: onlyMoney(e.target.value) })
@@ -2147,11 +2219,54 @@ export default function POS() {
                   )}
                 </div>
               )}
+              <div className="border-t border-gray-100 pt-1">
+                <button
+                  type="button"
+                  aria-expanded={depositMoreOpen}
+                  className="w-full flex items-center justify-between gap-2 py-2 text-sm font-semibold text-gray-700"
+                  onClick={() => setShowDepositMore((v) => !v)}
+                >
+                  <span>{depositMoreOpen ? '▾' : '▸'} Más opciones</span>
+                  <span className="text-xs font-normal text-gray-500 truncate">{depositMoreOpen ? 'Ocultar' : depositMoreSummary}</span>
+                </button>
+                {depositMoreOpen && (
+                  <div className="space-y-3 mt-1">
+                    <div>
+                      <p className="text-xs font-medium text-gray-600">Ticket</p>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        {[['physical', '🖨️ Físico'], ['digital', '📧 Digital']].map(([value, label]) => (
+                          <button key={value} type="button"
+                            className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                              depositForm.ticketType === value ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                            onClick={() => setDepositForm({ ...depositForm, ticketType: value })}
+                          >{label}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600">
+                        {depositForm.ticketType === 'digital' ? 'Correo para enviar el ticket (opcional)' : 'Correo (opcional)'}
+                      </label>
+                      <input className="input" value={depositForm.customerEmail} onChange={(e) => setDepositForm({ ...depositForm, customerEmail: e.target.value })} />
+                      {depositFieldErrors.customerEmail && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.customerEmail}</p>}
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600">Notas (opcional)</label>
+                      <textarea className="input" rows={2} value={depositForm.notes} onChange={(e) => setDepositForm({ ...depositForm, notes: e.target.value })} />
+                      <p className={`text-xs text-right ${depositForm.notes.length > 200 ? 'text-red-600' : 'text-gray-400'}`}>{depositForm.notes.length}/200</p>
+                      {depositFieldErrors.notes && <p className="text-red-600 text-xs mt-1">{depositFieldErrors.notes}</p>}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex gap-2 justify-end pt-4">
               <button type="button" className="btn-secondary" onClick={() => setShowDepositModal(false)}>Cancelar</button>
               <button type="button" className="btn-primary" disabled={depositLoading} onClick={handleRegisterDeposit}>
-                {depositLoading ? 'Guardando...' : 'Registrar anticipo'}
+                {depositLoading ? 'Guardando...'
+                  : depositIsFull ? `Registrar pago completo ${fmt(subtotal)}`
+                  : depositAmountNum != null && depositAmountNum > 0 && depositAmountNum <= MAX_MONEY ? `Registrar anticipo ${fmt(depositAmountNum)}`
+                  : 'Registrar anticipo'}
               </button>
             </div>
           </div>
