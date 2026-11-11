@@ -148,14 +148,29 @@ export default function POS() {
   const [customerEmail, setCustomerEmail] = useState('')
   // 'physical': imprime en la impresora térmica al cobrar, igual que siempre. 'digital': no
   // imprime nada; si se capturó un correo, el ticket en PDF se manda ahí — el correo es
-  // opcional en ambos modos (digital sin correo = venta sin ticket).
-  const [ticketType, setTicketType] = useState('physical')
+  // opcional en ambos modos (digital sin correo = venta sin ticket). Se recuerda entre
+  // ventas (y entre sesiones de esta caja) para no tener que volver a elegirlo cada vez.
+  const [ticketType, setTicketTypeState] = useState(() => {
+    try { return localStorage.getItem('pos_ticket_type') === 'digital' ? 'digital' : 'physical' } catch { return 'physical' }
+  })
+  function setTicketType(value) {
+    setTicketTypeState(value)
+    try { localStorage.setItem('pos_ticket_type', value) } catch { /* sin storage: solo dura esta sesión */ }
+  }
+  // "Sumar billetes": en vez de los montos sugeridos, cada botón SUMA un billete al monto
+  // recibido (el cliente paga con varios billetes). Ver `cashBills`.
+  const [sumBills, setSumBills] = useState(false)
+  // Ticket, cliente y correo viven plegados en "Más opciones" — son opcionales y antes
+  // empujaban el método de pago y el monto fuera de la pantalla.
+  const [showMoreOptions, setShowMoreOptions] = useState(false)
   const [cashCut, setCashCut] = useState(null)
   const [loading, setLoading] = useState(false)
+  // Última venta cobrada: se muestra como aviso arriba del carrito (folio, cambio,
+  // reimprimir) SIN bloquear el POS — desaparece en cuanto se agrega el primer producto de
+  // la siguiente venta, o con su ✕.
   const [success, setSuccess] = useState(null)
   const [error, setError] = useState('')
   const searchInputRef = useRef(null)
-  const successRef = useRef(success)
   const searchBoxRef = useRef(null)
 
   // Al montar: revisa si el cajero ya tiene un corte de caja abierto (silenciosamente —
@@ -167,7 +182,8 @@ export default function POS() {
     getOffers().then((r) => setOffers(r.data.data ?? [])).catch(() => {})
   }, [])
 
-  useEffect(() => { successRef.current = success }, [success])
+  // El aviso de la venta anterior se quita solo en cuanto empieza la siguiente.
+  useEffect(() => { if (cart.length > 0) setSuccess(null) }, [cart.length])
 
   // Captura de escaneo "global": una pistola lectora de código de barras funciona como un
   // teclado que teclea cada carácter en milisegundos y termina con Enter — mucho más rápido
@@ -187,7 +203,7 @@ export default function POS() {
     let lastTime = 0
 
     function onKeyDown(e) {
-      if (successRef.current || e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       const now = Date.now()
       const gap = now - lastTime
       lastTime = now
@@ -344,6 +360,10 @@ export default function POS() {
       reject(promoLimitMessage(product.name, offer))
       return
     }
+    if (existingBefore && existingBefore.quantity + (existingBefore.skipOffer ? 1 : step) > hardMaxQty(existingBefore)) {
+      reject(hardMaxMessage(existingBefore))
+      return
+    }
     if (!madeToOrder && !canOrder && existingBefore && existingBefore.quantity + step > product.stock) {
       reject(`Ya no hay más "${product.name}": ya tienes en la venta todo lo disponible (${product.stock})`)
       return
@@ -424,6 +444,25 @@ export default function POS() {
     if (item.skipOffer) return Infinity
     const offer = activeOfferFor(item.productId)
     return offer?.maxPromosPerSale != null ? offer.maxPromosPerSale * offer.buyQuantity : Infinity
+  }
+
+  /**
+   * Tope absoluto de piezas de una línea, para todos los productos (sobre todo "por
+   * pedido", que no tiene stock que lo limite): nunca más de CONCEPT_QTY_MAX (lo que acepta
+   * sale_items.quantity, ver SaleItemRequest) y el importe de la línea nunca más de
+   * MAX_MONEY — el mismo tope que el cobro. Redondeado hacia abajo al paso de la línea
+   * para no partir una promoción.
+   */
+  function hardMaxQty(item) {
+    const step = qtyStep(item)
+    const price = Number(item.unitPrice) || 0
+    let max = CONCEPT_QTY_MAX
+    if (price > 0) max = Math.min(max, Math.floor(MAX_MONEY / price))
+    return Math.max(step, Math.floor(max / step) * step)
+  }
+
+  function hardMaxMessage(item) {
+    return `La cantidad máxima de "${item.productName}" es ${hardMaxQty(item).toLocaleString('es-MX')} piezas`
   }
 
   function promoLimitMessage(name, offer) {
@@ -659,6 +698,7 @@ export default function POS() {
       let qty = Number(i.quantity || 0) + delta * step
       if (qty < step) qty = step
       if (qty > maxQtyFor(i)) qty = maxQtyFor(i)
+      if (qty > hardMaxQty(i)) qty = hardMaxQty(i)
       // Topa al stock disponible sin partir una promoción a la mitad: redondea hacia
       // abajo al múltiplo de `step` más cercano (si hay oferta, el stock siempre alcanza
       // para al menos una promoción completa — ver el guard en `addToCart`). Sin tope si
@@ -681,6 +721,8 @@ export default function POS() {
     const current = cart.find((i) => i.productId === productId)
     if (current && digits !== '' && Number(digits) * qtyStep(current) > maxQtyFor(current)) {
       notify(promoLimitMessage(current.productName, activeOfferFor(productId)), 'error')
+    } else if (current && digits !== '' && Number(digits) * qtyStep(current) > hardMaxQty(current)) {
+      notify(hardMaxMessage(current), 'error')
     }
     setCart((prev) => prev.map((i) => {
       if (i.productId !== productId) return i
@@ -689,7 +731,7 @@ export default function POS() {
       // no — ver `displayQty`); se guarda convertido a piezas físicas, que es lo único
       // que entiende el resto del carrito y lo que se manda al backend.
       const step = qtyStep(i)
-      let qty = Math.min(Number(digits) * step, maxQtyFor(i))
+      let qty = Math.min(Number(digits) * step, maxQtyFor(i), hardMaxQty(i))
       if (!i.isMadeToOrder && !i.onOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
@@ -704,6 +746,7 @@ export default function POS() {
       let qty = Number(i.quantity) || 0
       if (qty < step) qty = step
       if (qty > maxQtyFor(i)) qty = maxQtyFor(i)
+      if (qty > hardMaxQty(i)) qty = hardMaxQty(i)
       if (!i.isMadeToOrder && !i.onOrder && i.stock != null && qty > i.stock) qty = Math.floor(i.stock / step) * step
       return { ...i, quantity: qty }
     }))
@@ -873,6 +916,54 @@ export default function POS() {
     if (value !== 'CASH') setAmountReceived('')
   }
 
+  // Botones de billetes para "¿Con cuánto paga?" — un toque en vez de teclear el monto.
+  // Modo normal: "Exacto" + el total redondeado hacia arriba a 10, 50, 100, 500 y 1000
+  // (sin repetidos y siempre mayores al total), p. ej. $137 → Exacto, 140, 150, 200, 500,
+  // 1000. Modo "Sumar billetes": cada botón suma esa denominación a lo ya recibido.
+  const roundedTotal = Math.round(subtotal * 100) / 100
+  const cashBills = (() => {
+    if (sumBills) {
+      return [20, 50, 100, 200, 500, 1000].map((v) => ({
+        key: `+${v}`, label: `+ $${v.toLocaleString('es-MX')}`, selected: false,
+        // Suma sobre lo ya recibido; si lo que hay escrito no es un número válido (o ya
+        // rebasa el tope) se empieza desde este billete. Nunca pasa de MAX_MONEY.
+        pick: () => {
+          const base = amountReceivedNum != null && Number.isFinite(amountReceivedNum) && amountReceivedNum >= 0 && amountReceivedNum <= MAX_MONEY
+            ? amountReceivedNum : 0
+          const next = Math.round((base + v) * 100) / 100
+          if (next > MAX_MONEY) { notify('El monto recibido ya es demasiado grande', 'error'); return }
+          setAmountReceived(String(next))
+        },
+      }))
+    }
+    if (!(roundedTotal > 0)) return []
+    const values = new Set()
+    for (const step of [10, 50, 100, 500, 1000]) {
+      let v = Math.ceil(roundedTotal / step) * step
+      if (v <= roundedTotal) v += step
+      values.add(v)
+    }
+    const suggested = [...values].sort((a, b) => a - b).slice(0, 5)
+    return [
+      { key: 'exact', label: 'Exacto', value: roundedTotal, exact: true },
+      ...suggested.map((v) => ({ key: String(v), label: `$${v.toLocaleString('es-MX')}`, value: v })),
+    ].map((b) => ({ ...b, selected: amountReceivedNum === b.value, pick: () => setAmountReceived(String(b.value)) }))
+  })()
+
+  function toggleSumBills() {
+    setSumBills((v) => !v)
+    setAmountReceived('')
+  }
+
+  // Resumen de lo que hay dentro de "Más opciones" para verlo sin desplegarlo. Si alguno de
+  // sus campos tiene error, la sección se abre sola para que el error no quede escondido.
+  const moreOptionsHasError = customerNameTooLong || customerEmailTooLong || customerEmailInvalid
+  const moreOptionsOpen = showMoreOptions || moreOptionsHasError
+  const moreOptionsSummary = [
+    ticketType === 'digital' ? 'Ticket digital' : 'Ticket físico',
+    customerName.trim() || 'sin cliente',
+  ].join(' · ')
+
   /**
    * Cobra el carrito: registra la venta en el backend (que la asocia al corte de caja
    * abierto del cajero) y muestra la pantalla de éxito con el ticket. No hace nada si el
@@ -946,7 +1037,10 @@ export default function POS() {
       setCustomerName('')
       setCustomerEmail('')
       setAmountReceived('')
-      setTicketType('physical')
+      // El tipo de ticket se queda como lo dejó el cajero (se recuerda); el método de pago
+      // regresa a efectivo, que es lo más común en mostrador.
+      setPaymentMethod('CASH')
+      setSumBills(false)
       // Se imprime "al vuelo" SOLO en modo físico: si la caja no tiene QZ Tray instalado/
       // corriendo, o la impresora está apagada, no debe tumbar la venta ya registrada —
       // solo se avisa para que el cajero pueda usar "Reimprimir ticket" en cuanto lo resuelva.
@@ -1208,59 +1302,59 @@ export default function POS() {
     }
   }
 
-  // Pantalla de confirmación tras un cobro exitoso: reemplaza toda la pantalla del POS
-  // (early return) hasta que el cajero pulse "Nueva venta", mostrando el folio, el total
-  // y — si aplica — el aviso de productos que quedaron en stock mínimo (ver handleCheckout).
-  if (success) {
-    return (
-      <div className="max-w-md mx-auto mt-16 card text-center">
-        <div className="text-5xl mb-4">✅</div>
-        <h3 className="text-xl font-bold text-gray-900 mb-2">Venta registrada</h3>
-        <p className="text-gray-500 mb-1">Ticket #{success.id}</p>
-        <p className="text-2xl font-bold text-purple-700 mb-1">{fmt(success.total)}</p>
-        {success.discount > 0 && (
-          <p className="text-sm text-green-600 mb-1">Descuento aplicado: -{fmt(success.discount)}</p>
-        )}
-        {success.amountReceived != null && (
-          <div className="text-sm text-gray-500 mb-1">
-            <p>Recibido: {fmt(success.amountReceived)}</p>
-            <p className="font-semibold text-gray-700">Cambio: {fmt(success.changeGiven)}</p>
-          </div>
-        )}
-        {success.ticketType === 'digital' ? (
-          <p className="text-sm text-purple-700 mb-6">
-            {success.customerEmail ? `📧 Ticket enviado a ${success.customerEmail}` : 'Venta sin ticket'}
-          </p>
-        ) : (
-          success.amountReceived == null && <div className="mb-6" />
-        )}
-        {success.lowStockWarnings?.length > 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded-lg px-4 py-3 mb-6 text-left">
-            ⚠️ Producto{success.lowStockWarnings.length > 1 ? 's' : ''} en nivel mínimo de stock:
-            <ul className="list-disc list-inside mt-1">
-              {success.lowStockWarnings.map((i) => (
-                <li key={i.productId}>{i.productName} — quedan {i.stock - i.quantity}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <button
-          className="btn-secondary w-full mb-3"
-          onClick={() => printTicket(success.id)}
-          disabled={printing}
-        >
-          🖨️ {printing ? 'Imprimiendo…' : 'Reimprimir ticket'}
-        </button>
-        <button className="btn-primary" onClick={() => setSuccess(null)}>Nueva venta</button>
-      </div>
-    )
-  }
-
   return (
     <div className="flex flex-col lg:flex-row gap-6 h-full">
       {/* Product search */}
       <div className="flex-1 min-w-0">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Punto de Venta</h2>
+
+        {/* Aviso de la venta recién cobrada: folio, cambio y reimprimir, SIN bloquear el
+            POS (antes era una pantalla completa con botón "Nueva venta"). Se quita solo al
+            agregar el primer producto de la siguiente venta, o con la ✕. */}
+        {success && (
+          <div role="status" className="mb-4 rounded-xl border-2 border-green-300 bg-green-50 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+              <div className="min-w-0">
+                <p className="font-bold text-green-900">✅ Venta #{success.id} registrada · {fmt(success.total)}</p>
+                <p className="text-sm text-green-800">
+                  {success.amountReceived != null && <>Recibido {fmt(success.amountReceived)} · </>}
+                  {success.discount > 0 && <>Descuento -{fmt(success.discount)} · </>}
+                  {success.ticketType === 'digital'
+                    ? (success.customerEmail ? `Ticket enviado a ${success.customerEmail}` : 'Venta sin ticket')
+                    : 'Ticket físico'}
+                </p>
+              </div>
+              {success.amountReceived != null && (
+                <div className="flex items-baseline gap-2 sm:border-l sm:border-green-200 sm:pl-6">
+                  <span className="text-xs font-bold text-green-700 uppercase tracking-wide">Cambio</span>
+                  <span className="text-3xl font-extrabold text-green-700">{fmt(success.changeGiven)}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded-lg text-sm font-semibold border border-green-300 bg-white text-green-800 hover:bg-green-100 disabled:opacity-50"
+                  onClick={() => printTicket(success.id)}
+                  disabled={printing}
+                >
+                  🖨️ {printing ? 'Imprimiendo…' : 'Reimprimir'}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Cerrar aviso"
+                  className="w-10 h-10 rounded-lg border border-green-300 bg-white text-green-800 text-lg hover:bg-green-100"
+                  onClick={() => setSuccess(null)}
+                >✕</button>
+              </div>
+            </div>
+            {success.lowStockWarnings?.length > 0 && (
+              <div className="mt-3 bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded-lg px-3 py-2">
+                ⚠️ Producto{success.lowStockWarnings.length > 1 ? 's' : ''} en nivel mínimo de stock:{' '}
+                {success.lowStockWarnings.map((i) => `${i.productName} (quedan ${i.stock - i.quantity})`).join(', ')}
+              </div>
+            )}
+          </div>
+        )}
 
         {!cashCut && (
           <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg px-4 py-3 mb-4">
@@ -1455,14 +1549,36 @@ export default function POS() {
           <div className="card text-center text-gray-400 py-16">
             <p className="text-3xl mb-2">🛒</p>
             <p>Busca productos para agregar al carrito</p>
+            {/* Con el carrito vacío, "Por concepto" sigue a la mano (Anticipo no: necesita productos). */}
+            <button
+              type="button"
+              className="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!cashCut}
+              title={!cashCut ? 'Abre un corte de caja para poder cobrar' : 'Para algo que vendes pero no está en tu inventario, ej. 2 jitomates'}
+              onClick={openConceptModal}
+            >📋 Por concepto</button>
           </div>
         ) : (
           <div className="card p-0 overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 bg-gray-50">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 bg-gray-50">
               <span className="text-xs text-gray-500">
                 {selectedIds.size > 0 ? `${selectedIds.size} seleccionado${selectedIds.size === 1 ? '' : 's'}` : `${cart.length} producto${cart.length === 1 ? '' : 's'}`}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  disabled={!cashCut}
+                  title={!cashCut ? 'Abre un corte de caja para poder cobrar' : 'Para algo que vendes pero no está en tu inventario, ej. 2 jitomates'}
+                  onClick={openConceptModal}
+                >📋 Por concepto</button>
+                {canDeposit && <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  disabled={!cashCut}
+                  title={!cashCut ? 'Abre un corte de caja para poder cobrar' : undefined}
+                  onClick={openDepositModal}
+                >💰 Anticipo</button>}
                 {selectedIds.size > 0 && (
                   <button
                     className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-600 text-white hover:bg-purple-700 transition-colors"
@@ -1567,8 +1683,9 @@ export default function POS() {
                           title={offer ? `Cada promoción son ${offer.buyQuantity} piezas` : undefined}
                         />
                         <button className="w-6 h-6 rounded border text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed select-none touch-manipulation"
-                          disabled={(!item.isMadeToOrder && item.stock != null && item.quantity + qtyStep(item) > item.stock) || item.quantity + qtyStep(item) > maxQtyFor(item)}
-                          title={item.quantity + qtyStep(item) > maxQtyFor(item) ? `Máximo ${offer?.maxPromosPerSale} promoción(es) por venta` : undefined}
+                          disabled={(!item.isMadeToOrder && item.stock != null && item.quantity + qtyStep(item) > item.stock) || item.quantity + qtyStep(item) > maxQtyFor(item) || item.quantity + qtyStep(item) > hardMaxQty(item)}
+                          title={item.quantity + qtyStep(item) > maxQtyFor(item) ? `Máximo ${offer?.maxPromosPerSale} promoción(es) por venta`
+                            : item.quantity + qtyStep(item) > hardMaxQty(item) ? `Máximo ${hardMaxQty(item).toLocaleString('es-MX')} piezas` : undefined}
                           onMouseDown={() => startQtyHold(item.productId, 1)}
                           onMouseUp={() => endQtyHold(item.productId, 1)}
                           onMouseLeave={clearQtyHold}
@@ -1628,81 +1745,74 @@ export default function POS() {
       {/* Checkout panel */}
       <div className="w-full lg:w-80 lg:flex-shrink-0">
         <div className="card lg:sticky lg:top-0">
-          <h3 className="font-bold text-gray-900 mb-4">Resumen</h3>
+          {/* Orden pensado para cobrar rápido en hora pico: total → método → billetes y
+              cambio → Cobrar. Lo opcional (ticket, cliente, correo) queda plegado abajo. */}
+          <div className="rounded-xl bg-purple-50 px-4 py-3 mb-4">
+            <div className="flex justify-between text-sm text-gray-600">
+              <span>Subtotal</span><span>{fmt(subtotal + totalDiscount)}</span>
+            </div>
+            {totalDiscount > 0 && (
+              <div className="flex justify-between text-sm text-green-700">
+                <span>Descuento</span><span>-{fmt(totalDiscount)}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-baseline mt-1">
+              <span className="font-bold text-purple-900">Total</span>
+              <span className="text-3xl font-extrabold text-purple-700 break-all">{fmt(subtotal)}</span>
+            </div>
+          </div>
 
           <div className="space-y-3 mb-4">
-            <div className={`grid gap-2 ${canDeposit ? 'grid-cols-2' : 'grid-cols-1'}`}>
-              <button
-                type="button"
-                className="py-2 rounded-lg text-sm font-semibold border-2 border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                disabled={!cashCut}
-                title={!cashCut ? 'Abre un corte de caja para poder cobrar' : 'Para algo que vendes pero no está en tu inventario, ej. 2 jitomates'}
-                onClick={openConceptModal}
-              >📋 Por concepto</button>
-              {canDeposit && <button
-                type="button"
-                className="py-2 rounded-lg text-sm font-semibold border-2 border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                disabled={cart.length === 0 || !cashCut}
-                title={cart.length === 0 ? 'Agrega primero lo que el cliente va a encargar' : !cashCut ? 'Abre un corte de caja para poder cobrar' : undefined}
-                onClick={openDepositModal}
-              >💰 Anticipo</button>}
-            </div>
             <div>
-              <label className="text-xs font-medium text-gray-600">Ticket</label>
-              <div className="grid grid-cols-2 gap-2 mt-1">
-                <button
-                  type="button"
-                  className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
-                    ticketType === 'physical' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                  onClick={() => setTicketType('physical')}
-                >🖨️ Físico</button>
-                <button
-                  type="button"
-                  className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
-                    ticketType === 'digital' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                  onClick={() => setTicketType('digital')}
-                >📧 Digital</button>
+              <p className="text-xs font-medium text-gray-600">Método de pago</p>
+              <div className="grid grid-cols-3 gap-2 mt-1">
+                {[['CASH', '💵 Efectivo'], ['CARD', '💳 Tarjeta'], ['TRANSFER', '🏦 Transfer.']].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={paymentMethod === value}
+                    className={`py-2.5 rounded-lg text-sm font-semibold border-2 transition-colors ${
+                      paymentMethod === value ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                    onClick={() => handlePaymentMethodChange(value)}
+                  >{label}</button>
+                ))}
               </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-600">Cliente (opcional)</label>
-              <input className="input mt-1" placeholder="Nombre del cliente" value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)} />
-              {customerNameTooLong && (
-                <p className="text-xs text-red-500 mt-1">El nombre no puede tener más de 150 caracteres</p>
-              )}
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-600">
-                Correo para enviar el ticket (opcional)
-              </label>
-              {/* Sin type="email" ni required nativos a propósito: el navegador metía su
-                  propio globo de validación de formato antes de que este formulario
-                  alcanzara a correr, tapando nuestro manejo de errores de abajo. */}
-              <input
-                className="input mt-1" type="text" placeholder="cliente@correo.com"
-                value={customerEmail}
-                onChange={(e) => setCustomerEmail(e.target.value)}
-              />
-              <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, cliente@outlook.com</p>
-              {customerEmailInvalid ? (
-                <p className="text-xs text-red-500 mt-1">El correo no tiene un formato válido</p>
-              ) : customerEmailTooLong ? (
-                <p className="text-xs text-red-500 mt-1">El correo no puede tener más de 150 caracteres</p>
-              ) : null}
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-600">Método de pago</label>
-              <select className="input mt-1" value={paymentMethod} onChange={(e) => handlePaymentMethodChange(e.target.value)}>
-                <option value="CASH">💵 Efectivo</option>
-                <option value="CARD">💳 Tarjeta</option>
-                <option value="TRANSFER">🏦 Transferencia</option>
-              </select>
             </div>
 
             {paymentMethod === 'CASH' && (
               <div>
-                <label className="text-xs font-medium text-gray-600">¿Con cuánto paga el cliente?</label>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-gray-600">¿Con cuánto paga el cliente?</p>
+                  <button
+                    type="button"
+                    aria-pressed={sumBills}
+                    className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                      sumBills ? 'bg-purple-100 text-purple-800 border-purple-400' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                    onClick={toggleSumBills}
+                    title="Para cuando el cliente paga con varios billetes: cada botón suma"
+                  >{sumBills ? 'Sumando billetes' : 'Sumar billetes'}</button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  {cashBills.map((b) => (
+                    <button
+                      key={b.key}
+                      type="button"
+                      disabled={cart.length === 0}
+                      className={`py-2.5 rounded-lg text-sm font-bold border-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                        b.selected ? 'bg-purple-600 text-white border-purple-600'
+                          : b.exact ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100'
+                          : 'bg-white text-gray-800 border-gray-200 hover:bg-gray-50'}`}
+                      onClick={b.pick}
+                    >{b.label}</button>
+                  ))}
+                </div>
+                {sumBills && amountReceived !== '' && (
+                  <div className="flex justify-between items-start gap-2 text-sm text-gray-600 mt-2">
+                    <span className="min-w-0 break-all">Recibido: <strong className="text-gray-900">{amountExceedsLimit ? '—' : fmt(amountReceivedNum)}</strong></span>
+                    <button type="button" className="shrink-0 text-purple-700 font-semibold px-1" onClick={() => setAmountReceived('')}>Limpiar</button>
+                  </div>
+                )}
+                <label className="text-xs font-medium text-gray-500 block mt-2">Otro monto</label>
                 <input
                   className="input mt-1 disabled:opacity-60 disabled:bg-gray-100 disabled:cursor-not-allowed"
                   type="number"
@@ -1733,20 +1843,6 @@ export default function POS() {
             )}
           </div>
 
-          <div className="border-t border-gray-100 pt-4 mb-4">
-            <div className="flex justify-between text-sm text-gray-600 mb-1">
-              <span>Subtotal</span><span>{fmt(subtotal + totalDiscount)}</span>
-            </div>
-            {totalDiscount > 0 && (
-              <div className="flex justify-between text-sm text-green-600 mb-1">
-                <span>Descuento</span><span>-{fmt(totalDiscount)}</span>
-              </div>
-            )}
-            <div className="flex justify-between font-bold text-lg text-gray-900">
-              <span>Total</span><span className="text-purple-700">{fmt(subtotal)}</span>
-            </div>
-          </div>
-
           {error && <p className="text-red-600 text-sm mb-3">{error}</p>}
 
           <button
@@ -1764,6 +1860,66 @@ export default function POS() {
               : (customerNameTooLong || customerEmailTooLong) ? 'Revisa los campos marcados en rojo'
               : `Cobrar ${fmt(subtotal)}`}
           </button>
+
+          <div className="border-t border-gray-100 mt-4 pt-2">
+            <button
+              type="button"
+              aria-expanded={moreOptionsOpen}
+              className="w-full flex items-center justify-between gap-2 py-2 text-sm font-semibold text-gray-700"
+              onClick={() => setShowMoreOptions((v) => !v)}
+            >
+              <span>{moreOptionsOpen ? '▾' : '▸'} Más opciones</span>
+              <span className="text-xs font-normal text-gray-500 truncate">{moreOptionsOpen ? 'Ocultar' : moreOptionsSummary}</span>
+            </button>
+            {moreOptionsOpen && (
+              <div className="space-y-3 mt-1">
+                <div>
+                  <p className="text-xs font-medium text-gray-600">Ticket</p>
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <button
+                      type="button"
+                      className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                        ticketType === 'physical' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                      onClick={() => setTicketType('physical')}
+                    >🖨️ Físico</button>
+                    <button
+                      type="button"
+                      className={`py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                        ticketType === 'digital' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                      onClick={() => setTicketType('digital')}
+                    >📧 Digital</button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Cliente (opcional)</label>
+                  <input className="input mt-1" placeholder="Nombre del cliente" value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)} />
+                  {customerNameTooLong && (
+                    <p className="text-xs text-red-500 mt-1">El nombre no puede tener más de 150 caracteres</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">
+                    Correo para enviar el ticket (opcional)
+                  </label>
+                  {/* Sin type="email" ni required nativos a propósito: el navegador metía su
+                      propio globo de validación de formato antes de que este formulario
+                      alcanzara a correr, tapando nuestro manejo de errores de abajo. */}
+                  <input
+                    className="input mt-1" type="text" placeholder="cliente@correo.com"
+                    value={customerEmail}
+                    onChange={(e) => setCustomerEmail(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Ej. cliente@gmail.com, cliente@outlook.com</p>
+                  {customerEmailInvalid ? (
+                    <p className="text-xs text-red-500 mt-1">El correo no tiene un formato válido</p>
+                  ) : customerEmailTooLong ? (
+                    <p className="text-xs text-red-500 mt-1">El correo no puede tener más de 150 caracteres</p>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

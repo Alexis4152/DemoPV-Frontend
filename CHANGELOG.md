@@ -4,6 +4,22 @@ Cambios del portal. Los del servidor están en el `CHANGELOG.md` de DemoPV-Backe
 Los números entre paréntesis son las secciones de la matriz `Pruebas aprobacion DemoPV (version 4).xlsx`.
 Cada versión lleva su fecha; la más reciente va primero.
 
+## [2.0.6] — 2026-11-10
+
+Rama `feature/cobro-rapido`. Solo frontend.
+
+### Cambios
+
+- **Cobro rápido en el POS:** en efectivo hay botones de billetes: "Exacto" y el total redondeado hacia arriba a 10, 50, 100, 500 y 1000 (p. ej. $137 → 140, 150, 200, 500, 1000). "Sumar billetes" cambia los botones a +$20…+$1,000 para cuando pagan con varios billetes. El campo "Otro monto" sigue para cualquier otra cantidad.
+- **Método de pago con botones:** Efectivo, Tarjeta y Transferencia son 3 botones en vez de una lista. Después de cada venta regresa a Efectivo.
+- **Panel de cobro reordenado:** total grande arriba, luego método, billetes y cambio, y el botón Cobrar. Por concepto y Anticipo pasan a la barra del carrito, junto a "Vaciar carrito" (con el carrito vacío, Por concepto aparece en el aviso de carrito vacío). Ticket, cliente y correo van plegados en "Más opciones" (se abre solo si alguno tiene error). El tipo de ticket se recuerda entre ventas.
+- **Tope de cantidad en el carrito:** ninguna línea pasa de 9,999,999 piezas ni de $9,999,999,999.99 de importe, igual que el cobro. Antes lo "por pedido" (sin stock que lo limite) aceptaba cualquier número. Aplica al teclear la cantidad, a los botones +/- y a escanear o tocar el producto otra vez.
+- **Sin pantalla de "Venta registrada":** al cobrar sale un aviso arriba del carrito con folio, recibido, cambio, "Reimprimir" y el aviso de stock mínimo. No bloquea el POS: se quita al agregar el primer producto de la siguiente venta o con la ✕, y el lector de códigos funciona mientras está visible.
+
+### Despliegue
+
+- No necesita backend nuevo. Se puede publicar sola sobre la 2.0.5.
+
 ## [2.0.5] — 2026-11-09
 
 Sin commit todavía.
