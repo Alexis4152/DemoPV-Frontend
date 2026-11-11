@@ -880,7 +880,31 @@ export default function POS() {
   // esto, si las ofertas vigentes desaparecieran (se desactivaron/vencieron) mientras el
   // filtro seguía prendido, el botón se esconde pero el catálogo se quedaría vacío sin
   // ninguna forma de apagarlo.
-  const displayResults = onlyOffers && hasActiveOffers ? results.filter((p) => activeOfferFor(p.id)) : results
+  //
+  // Con "Ofertas" NO se filtra `results`: ese arreglo solo trae los primeros 50 del
+  // catálogo (8 con texto), así que con "Todas" los productos en oferta que no cayeran ahí
+  // no salían. Se arma la lista con los productos de las ofertas vigentes (ya vienen
+  // completos en la respuesta de ofertas, que se recarga al prender el filtro) y encima
+  // se aplica la categoría elegida y el texto buscado (nombre o código).
+  const offerCatalog = (() => {
+    if (!(onlyOffers && hasActiveOffers)) return null
+    const q = query.trim().toLowerCase()
+    const seen = new Set()
+    const list = []
+    for (const o of offers) {
+      for (const p of o.products ?? []) {
+        if (seen.has(p.id)) continue
+        seen.add(p.id)
+        if (p.isActive === false || p.deletedAt) continue
+        if (!activeOfferFor(p.id)) continue
+        if (categoryId && String(p.category?.id) !== String(categoryId)) continue
+        if (q && !(p.name?.toLowerCase().includes(q) || p.barcode?.toLowerCase().includes(q))) continue
+        list.push(p)
+      }
+    }
+    return list.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'es'))
+  })()
+  const displayResults = offerCatalog ?? results
 
   const subtotal = cart.reduce((s, i) => s + lineSubtotal(i), 0)
   const totalDiscount = cart.reduce((s, i) => s + lineDiscount(i), 0)
@@ -1438,7 +1462,15 @@ export default function POS() {
               type="button"
               title="Mostrar solo productos con oferta vigente"
               className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${onlyOffers ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-              onClick={() => setOnlyOffers((v) => !v)}
+              onClick={() => {
+                const next = !onlyOffers
+                setOnlyOffers(next)
+                if (next) {
+                  // Ofertas al día (stock y precio) al prender el filtro: la lista sale de aquí.
+                  getOffers().then((r) => setOffers(r.data.data ?? [])).catch(() => {})
+                  setCatalogVisible(true)
+                }
+              }}
             >🏷️ Ofertas</button>
           )}
           <div className="flex gap-1 bg-gray-100 rounded-full p-1 shrink-0">
@@ -1474,6 +1506,11 @@ export default function POS() {
             onFocus={() => setCatalogVisible(true)}
             onKeyDown={handleSearchKeyDown}
           />
+          {catalogVisible && offerCatalog && offerCatalog.length === 0 && (
+            <p className="text-sm text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 mt-2">
+              No hay productos con oferta vigente {categoryId ? 'en esta categoría' : ''}{query.trim() ? ' que coincidan con la búsqueda' : ''}.
+            </p>
+          )}
           {catalogVisible && displayResults.length > 0 && (
             // No es "absolute": si flotara sobre el carrito de abajo, con la lista de
             // resultados abierta se llegaba a tapar productos que el cajero ya había
